@@ -17,6 +17,11 @@
 //!
 //! The `x-request-id` and `x-caller` headers fill the audit record's
 //! context. Neither is authenticated yet.
+//!
+//! Every error reply is JSON, `{"request_id": .., "error": ..}`. A body that
+//! isn't a well-formed check, including one with unknown fields or with
+//! both or neither subject, is rejected before it is decided, so it isn't
+//! audited.
 
 use std::{
     sync::{
@@ -28,7 +33,7 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
@@ -90,19 +95,16 @@ pub struct Zookie {
     pub revision: u64,
 }
 
+/// The subject is two optional keys rather than a flattened enum, because
+/// `deny_unknown_fields` doesn't work with `flatten` and a flattened enum
+/// silently keeps the first of two subjects.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CheckBody {
     set: String,
-    #[serde(flatten)]
-    subject: SubjectBody,
+    identity: Option<String>,
+    subjectset: Option<String>,
     zookie: Option<Zookie>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum SubjectBody {
-    Identity(String),
-    Subjectset(String),
 }
 
 #[derive(Serialize)]
@@ -122,10 +124,14 @@ struct ErrorReply {
 async fn check(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(body): Json<CheckBody>,
+    body: Result<Json<CheckBody>, JsonRejection>,
 ) -> Response {
     let context = state.context(&headers);
     let request_id = context.request_id.clone();
+    let body = match body {
+        Ok(Json(body)) => body,
+        Err(rejection) => return failure(rejection.status(), request_id, rejection.body_text()),
+    };
     let request = match body.into_request() {
         Ok(request) => request,
         Err(error) => return failure(StatusCode::BAD_REQUEST, request_id, error),
@@ -175,9 +181,9 @@ fn failure(status: StatusCode, request_id: String, error: String) -> Response {
 impl CheckBody {
     fn into_request(self) -> Result<CheckRequest, String> {
         let (theory, resource, relation) = split_subjectset(&self.set)?;
-        let subject = match self.subject {
-            SubjectBody::Identity(identity) => SubjectName::Identity(identity),
-            SubjectBody::Subjectset(set) => {
+        let subject = match (self.identity, self.subjectset) {
+            (Some(identity), None) => SubjectName::Identity(identity),
+            (None, Some(set)) => {
                 let (theory, resource, relation) = split_subjectset(&set)?;
                 SubjectName::Subjectset {
                     theory,
@@ -185,6 +191,7 @@ impl CheckBody {
                     relation,
                 }
             }
+            _ => return Err("expected exactly one of identity or subjectset".to_owned()),
         };
         Ok(CheckRequest {
             theory,

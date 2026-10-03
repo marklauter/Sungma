@@ -24,8 +24,8 @@
      inkscape:deskcolor="#d1d1d1"
      inkscape:document-units="mm"
      inkscape:zoom="0.73512619"
-     inkscape:cx="-273.42245"
-     inkscape:cy="699.87984"
+     inkscape:cx="568.60986"
+     inkscape:cy="255.05825"
      inkscape:window-width="3440"
      inkscape:window-height="1369"
      inkscape:window-x="-8"
@@ -39,31 +39,8 @@
      inkscape:groupmode="layer"
      id="layer1">
     <g
-       id="g4">
-      <path
-         id="path4"
-         style="fill:#666666;fill-opacity:0.998783;stroke:none;stroke-width:0.264583"
-         d="M 71.875716 97.229207 A 21.377892 21.377892 0 0 0 71.443184 101.5075 A 21.377892 21.377892 0 0 0 78.780721 117.62796 L 106.86118 117.62796 A 21.377892 21.377892 0 0 0 114.19871 101.5075 A 21.377892 21.377892 0 0 0 113.7667 97.229207 L 71.875716 97.229207 z M 78.781238 119.96735 A 21.377892 21.377892 0 0 0 71.443184 136.08833 A 21.377892 21.377892 0 0 0 78.780721 152.20931 L 106.86169 152.20931 A 21.377892 21.377892 0 0 0 114.19923 136.08833 A 21.377892 21.377892 0 0 0 106.86066 119.96735 L 78.781238 119.96735 z M 78.781238 154.54871 A 21.377892 21.377892 0 0 0 71.443184 170.66969 A 21.377892 21.377892 0 0 0 71.875716 174.94798 L 113.7667 174.94798 A 21.377892 21.377892 0 0 0 114.19871 170.66969 A 21.377892 21.377892 0 0 0 106.86066 154.54871 L 78.781238 154.54871 z " />
-      <rect
-         style="opacity:1;fill:#666666;fill-opacity:0.998783;stroke:none;stroke-width:0.264583"
-         id="rect4"
-         width="42.110119"
-         height="2.3394508"
-         x="71.766068"
-         y="92.550308"
-         ry="0" />
-      <rect
-         style="fill:#666666;fill-opacity:0.998783;stroke:none;stroke-width:0.264583"
-         id="rect4-2"
-         width="42.110119"
-         height="2.3394508"
-         x="71.766068"
-         y="177.28743"
-         ry="0" />
-    </g>
-    <g
        id="g4-9"
-       transform="translate(155.86084,99.771698)">
+       transform="translate(279.31187,103.37085)">
       <path
          id="path4-3"
          style="fill:#666666;fill-opacity:0.998783;stroke:none;stroke-width:0.264583"
@@ -88,58 +65,344 @@
     <circle
        style="fill:#999999;fill-opacity:0.998783;stroke:none;stroke-width:0.264583"
        id="path4-89"
-       cx="243.07825"
-       cy="128.66759"
+       cx="366.52927"
+       cy="132.26674"
        r="21.377892" />
     <path
        id="path4-8-2"
        style="fill:#999999;fill-opacity:0.998783;stroke:none;stroke-width:0.264583"
-       d="m 222.13301,89.808275 a 21.377892,21.377892 0 0 0 -0.43253,4.2783 21.377892,21.377892 0 0 0 21.37802,21.377535 21.377892,21.377892 0 0 0 21.37752,-21.377535 21.377892,21.377892 0 0 0 -0.43202,-4.2783 z" />
+       d="m 345.58404,93.40743 a 21.377892,21.377892 0 0 0 -0.43253,4.2783 21.377892,21.377892 0 0 0 21.37802,21.37754 21.377892,21.377892 0 0 0 21.37752,-21.37754 21.377892,21.377892 0 0 0 -0.43202,-4.2783 z" />
     <path
        id="path4-8-1-7"
        style="fill:#999999;fill-opacity:0.998783;stroke:none;stroke-width:0.264583"
-       d="m 222.13301,167.52685 a 21.377892,21.377892 0 0 1 -0.43253,-4.27828 21.377892,21.377892 0 0 1 21.37802,-21.37752 21.377892,21.377892 0 0 1 21.37752,21.37752 21.377892,21.377892 0 0 1 -0.43202,4.27828 z" />
+       d="m 345.58404,171.12601 a 21.377892,21.377892 0 0 1 -0.43253,-4.27828 21.377892,21.377892 0 0 1 21.37802,-21.37752 21.377892,21.377892 0 0 1 21.37752,21.37752 21.377892,21.377892 0 0 1 -0.43202,4.27828 z" />
     <rect
        style="fill:#999999;fill-opacity:0.998783;stroke:none;stroke-width:0.264583"
        id="rect4-9"
        width="42.110119"
        height="2.3394508"
-       x="222.02318"
-       y="85.40432"
+       x="345.47421"
+       y="89.003471"
        ry="1.1697254" />
     <rect
        style="fill:#999999;fill-opacity:0.998783;stroke:none;stroke-width:0.264583"
        id="rect4-23-5"
        width="42.110119"
        height="2.3394508"
-       x="222.09232"
-       y="110.20718"
+       x="345.54333"
+       y="113.80633"
        ry="0" />
     <rect
        style="fill:#999999;fill-opacity:0.998783;stroke:none;stroke-width:0.264583"
        id="rect4-23-8-4"
        width="42.110119"
        height="2.3394508"
-       x="221.60349"
-       y="144.78854"
+       x="345.0545"
+       y="148.3877"
        ry="0" />
     <rect
        style="fill:#999999;fill-opacity:0.998783;stroke:none;stroke-width:0.264583"
        id="rect4-2-3"
        width="42.110119"
        height="2.3394508"
-       x="222.02318"
-       y="169.59137"
+       x="345.47421"
+       y="173.19052"
        ry="1.1697254" />
+    <g
+       id="g1"
+       transform="translate(339.76026,23.394509)">
+      <g
+         id="g4">
+        <path
+           id="path4"
+           style="fill:#666666;fill-opacity:0.998783;stroke:none;stroke-width:0.264583"
+           d="m 71.875716,97.229207 a 21.377892,21.377892 0 0 0 -0.432532,4.278293 21.377892,21.377892 0 0 0 7.337537,16.12046 h 28.080459 a 21.377892,21.377892 0 0 0 7.33753,-16.12046 21.377892,21.377892 0 0 0 -0.43201,-4.278293 z m 6.905522,22.738143 a 21.377892,21.377892 0 0 0 -7.338054,16.12098 21.377892,21.377892 0 0 0 7.337537,16.12098 h 28.080969 a 21.377892,21.377892 0 0 0 7.33754,-16.12098 21.377892,21.377892 0 0 0 -7.33857,-16.12098 z m 0,34.58136 a 21.377892,21.377892 0 0 0 -7.338054,16.12098 21.377892,21.377892 0 0 0 0.432532,4.27829 H 113.7667 a 21.377892,21.377892 0 0 0 0.43201,-4.27829 21.377892,21.377892 0 0 0 -7.33805,-16.12098 z" />
+        <rect
+           style="opacity:1;fill:#666666;fill-opacity:0.998783;stroke:none;stroke-width:0.264583"
+           id="rect4"
+           width="42.110119"
+           height="2.3394508"
+           x="71.766068"
+           y="92.550308"
+           ry="0" />
+        <rect
+           style="fill:#666666;fill-opacity:0.998783;stroke:none;stroke-width:0.264583"
+           id="rect4-2"
+           width="42.110119"
+           height="2.3394508"
+           x="71.766068"
+           y="177.28743"
+           ry="0" />
+      </g>
+      <path
+         id="path5"
+         style="opacity:1;fill:#666666;fill-opacity:0.998783;stroke:none;stroke-width:0.290108"
+         d="m 92.820964,2.2004903 c 0,0 -3.834613,12.0835447 -4.132048,21.6189517 -0.618694,19.834601 3.175,66.391419 3.175,66.391419 h 1.914612 c 0,0 3.793587,-46.552645 3.175,-66.385165 C 96.656048,14.288197 92.820964,2.2004903 92.820964,2.2004903 Z"
+         sodipodi:nodetypes="csccsc" />
+      <path
+         id="rect5"
+         style="opacity:1;fill:#666666;fill-opacity:0.998783;stroke:none;stroke-width:0.290108"
+         d="m 92.820963,269.9767 c 0,0 -3.83461,-12.08355 -4.13205,-21.61895 -0.61869,-19.8346 3.175,-66.39142 3.175,-66.39142 h 1.91462 c 0,0 3.79358,46.55264 3.175,66.38516 -0.29748,9.5375 -4.13257,21.62521 -4.13257,21.62521 z"
+         sodipodi:nodetypes="csccsc" />
+    </g>
+    <g
+       id="g8"
+       transform="translate(60.46581,-214.14974)">
+      <rect
+         style="fill:#666666;fill-opacity:0.998783;stroke-width:0.337961"
+         id="rect2"
+         width="21.594931"
+         height="44.629524"
+         x="52.208778"
+         y="100.57237" />
+      <rect
+         style="fill:#666666;fill-opacity:0.998783;stroke-width:0.264583"
+         id="rect3"
+         width="7.8894601"
+         height="27.740358"
+         x="81.693169"
+         y="109.01695" />
+      <path
+         id="path3"
+         style="fill:#666666;fill-opacity:0.998783;stroke-width:0.299856"
+         d="m 97.472087,101.12748 v 43.51931 h 57.895173 v -43.51931 z m 7.889443,7.88944 h 42.11629 v 27.74043 h -42.11629 z"
+         sodipodi:nodetypes="cccccccccc" />
+      <rect
+         style="fill:#666666;fill-opacity:0.998783;stroke-width:0.382309"
+         id="rect6"
+         width="7.8894601"
+         height="57.918606"
+         x="118.9424"
+         y="-171.16907"
+         transform="rotate(90)" />
+      <path
+         id="path6"
+         style="fill:#666666;fill-opacity:0.998783;stroke-width:0.299856"
+         d="m 28.540393,101.12748 v 43.51931 H -29.35478 v -43.51931 z m -7.889443,7.88944 h -42.11629 v 27.74043 h 42.11629 z"
+         sodipodi:nodetypes="cccccccccc" />
+      <rect
+         style="fill:#666666;fill-opacity:0.998783;stroke-width:0.382309"
+         id="rect7"
+         width="7.8894601"
+         height="57.918606"
+         x="118.9424"
+         y="-45.156586"
+         transform="matrix(0,1,1,0,0,0)" />
+      <rect
+         style="fill:#666666;fill-opacity:0.998783;stroke-width:0.264583"
+         id="rect8"
+         width="7.8894601"
+         height="27.740358"
+         x="36.429855"
+         y="109.01695" />
+    </g>
+    <g
+       id="g2"
+       transform="matrix(0.65027118,0,0,0.65027118,66.539536,27.20012)">
+      <rect
+         style="fill:#666666;fill-opacity:0.998783;stroke-width:0.337961"
+         id="rect1"
+         width="21.594931"
+         height="44.629524"
+         x="52.208778"
+         y="100.57237" />
+      <rect
+         style="fill:#666666;fill-opacity:0.998783;stroke-width:0.264583"
+         id="rect2-8"
+         width="7.8894601"
+         height="27.740358"
+         x="81.693169"
+         y="109.01695" />
+      <path
+         id="rect2-2"
+         style="fill:#666666;fill-opacity:0.998783;stroke-width:0.299856"
+         d="m 97.472087,101.12748 v 43.51931 h 57.895173 v -43.51931 z m 7.889443,7.88944 h 42.11629 v 27.74043 h -42.11629 z"
+         sodipodi:nodetypes="cccccccccc" />
+      <rect
+         style="fill:#666666;fill-opacity:0.998783;stroke-width:0.382309"
+         id="rect2-2-2-6-3"
+         width="7.8894601"
+         height="57.918606"
+         x="118.9424"
+         y="-171.16907"
+         transform="rotate(90)" />
+      <path
+         id="rect2-2-6"
+         style="fill:#666666;fill-opacity:0.998783;stroke-width:0.299856"
+         d="m 28.540393,101.12748 v 43.51931 H -29.35478 v -43.51931 z m -7.889443,7.88944 h -42.11629 v 27.74043 h 42.11629 z"
+         sodipodi:nodetypes="cccccccccc" />
+      <rect
+         style="fill:#666666;fill-opacity:0.998783;stroke-width:0.382309"
+         id="rect2-2-2-6-3-6"
+         width="7.8894601"
+         height="57.918606"
+         x="118.9424"
+         y="-45.156586"
+         transform="matrix(0,1,1,0,0,0)" />
+      <rect
+         style="fill:#666666;fill-opacity:0.998783;stroke-width:0.264583"
+         id="rect2-1-0"
+         width="7.8894601"
+         height="27.740358"
+         x="36.429855"
+         y="109.01695" />
+    </g>
+    <rect
+       style="fill:#ff7f2a;fill-opacity:0.998783;stroke-width:0.337961"
+       id="rect1-6"
+       width="21.594931"
+       height="44.629524"
+       x="347.25174"
+       y="-29.983564" />
+    <rect
+       style="fill:#ff7f2a;fill-opacity:0.998783;stroke-width:0.264583"
+       id="rect2-8-3"
+       width="7.8894601"
+       height="27.740358"
+       x="376.73615"
+       y="-21.538984" />
     <path
-       id="path5"
-       style="opacity:1;fill:#666666;fill-opacity:0.998783;stroke:none;stroke-width:0.290108"
-       d="m 92.820964,2.2004903 c 0,0 -3.834613,12.0835447 -4.132048,21.6189517 -0.618694,19.834601 3.175,66.391419 3.175,66.391419 h 1.914612 c 0,0 3.793587,-46.552645 3.175,-66.385165 C 96.656048,14.288197 92.820964,2.2004903 92.820964,2.2004903 Z"
-       sodipodi:nodetypes="csccsc" />
+       id="rect2-2-7"
+       style="fill:#666666;fill-opacity:0.998783;stroke-width:0.299856"
+       d="m 392.51506,-29.428456 v 43.51931 h 57.89517 v -43.51931 z m 7.88944,7.88944 h 42.11629 V 6.2014136 H 400.4045 Z"
+       sodipodi:nodetypes="cccccccccc" />
+    <rect
+       style="fill:#666666;fill-opacity:0.998783;stroke-width:0.382309"
+       id="rect2-2-2-6-3-8"
+       width="7.8894601"
+       height="57.918606"
+       x="-11.613537"
+       y="-466.21204"
+       transform="rotate(90)" />
     <path
-       id="rect5"
-       style="opacity:1;fill:#666666;fill-opacity:0.998783;stroke:none;stroke-width:0.290108"
-       d="m 92.820963,269.9767 c 0,0 -3.83461,-12.08355 -4.13205,-21.61895 -0.61869,-19.8346 3.175,-66.39142 3.175,-66.39142 h 1.91462 c 0,0 3.79358,46.55264 3.175,66.38516 -0.29748,9.5375 -4.13257,21.62521 -4.13257,21.62521 z"
-       sodipodi:nodetypes="csccsc" />
+       id="rect2-2-6-8"
+       style="fill:#666666;fill-opacity:0.998783;stroke-width:0.299856"
+       d="m 323.58337,-29.428456 v 43.51931 H 265.6882 v -43.51931 z m -7.88944,7.88944 H 273.57764 V 6.2014136 h 42.11629 z"
+       sodipodi:nodetypes="cccccccccc" />
+    <rect
+       style="fill:#666666;fill-opacity:0.998783;stroke-width:0.382309"
+       id="rect2-2-2-6-3-6-2"
+       width="7.8894601"
+       height="57.918606"
+       x="-11.613538"
+       y="249.8864"
+       transform="matrix(0,1,1,0,0,0)" />
+    <rect
+       style="fill:#ff7f2a;fill-opacity:0.998783;stroke-width:0.264583"
+       id="rect2-1-0-9"
+       width="7.8894601"
+       height="27.740358"
+       x="331.47284"
+       y="-21.538984" />
+    <text
+       xml:space="preserve"
+       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:24.6944px;line-height:0;font-family:Calibri;-inkscape-font-specification:'Calibri, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:center;letter-spacing:1.32292px;word-spacing:2.64583px;writing-mode:lr-tb;direction:ltr;text-anchor:middle;fill:#666666;fill-opacity:0.998783;stroke-width:0.264583"
+       x="276.77505"
+       y="-172.03964"
+       id="text8"><tspan
+         sodipodi:role="line"
+         id="tspan8"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:24.6944px;font-family:Calibri;-inkscape-font-specification:'Calibri, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;stroke-width:0.264583"
+         x="277.43649"
+         y="-172.03964">sungma</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:24.6944px;line-height:0;font-family:'Century Gothic';-inkscape-font-specification:'Century Gothic, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:center;letter-spacing:1.32292px;word-spacing:2.64583px;writing-mode:lr-tb;direction:ltr;text-anchor:middle;fill:#666666;fill-opacity:0.998783;stroke-width:0.264583"
+       x="321.72192"
+       y="-111.47955"
+       id="text8-7"><tspan
+         sodipodi:role="line"
+         id="tspan8-3"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:24.6944px;font-family:'Century Gothic';-inkscape-font-specification:'Century Gothic, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;stroke-width:0.264583"
+         x="322.38339"
+         y="-111.47955">sungma</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:24.6944px;line-height:0;font-family:Calibri;-inkscape-font-specification:'Calibri, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:center;letter-spacing:1.32292px;word-spacing:2.64583px;writing-mode:lr-tb;direction:ltr;text-anchor:middle;fill:#666666;fill-opacity:0.998783;stroke-width:0.264583"
+       x="360.88931"
+       y="-192.26765"
+       id="text8-7-12"><tspan
+         sodipodi:role="line"
+         id="tspan8-3-0"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:24.6944px;font-family:Calibri;-inkscape-font-specification:'Calibri, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;stroke-width:0.264583"
+         x="361.55078"
+         y="-192.26765">sungma</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:42.9008px;line-height:0;font-family:'Tw Cen MT';-inkscape-font-specification:'Tw Cen MT, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:center;letter-spacing:2.29826px;word-spacing:4.59652px;writing-mode:lr-tb;direction:ltr;text-anchor:middle;fill:#666666;fill-opacity:0.998783;stroke-width:0.459652"
+       x="107.75158"
+       y="162.79959"
+       id="text8-7-12-7-12"><tspan
+         sodipodi:role="line"
+         id="tspan8-3-0-3-9"
+         style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:42.9008px;font-family:'Tw Cen MT';-inkscape-font-specification:'Tw Cen MT, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;stroke-width:0.459652"
+         x="108.9007"
+         y="162.79959">SUNGMA</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:52.0282px;line-height:0;font-family:'Tw Cen MT';-inkscape-font-specification:'Tw Cen MT, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:center;letter-spacing:2.78724px;word-spacing:5.57447px;writing-mode:lr-tb;direction:ltr;text-anchor:middle;fill:#666666;fill-opacity:0.998783;stroke-width:0.557447"
+       x="437.83276"
+       y="-270.60641"
+       id="text8-7-12-7-12-7"><tspan
+         sodipodi:role="line"
+         id="tspan8-3-0-3-9-0"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:52.0282px;font-family:'Tw Cen MT';-inkscape-font-specification:'Tw Cen MT, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;stroke-width:0.557447"
+         x="439.22638"
+         y="-270.60641">SUNGMA</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:24.6944px;line-height:0;font-family:Impact;-inkscape-font-specification:'Impact, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:center;letter-spacing:1.32292px;word-spacing:2.64583px;writing-mode:lr-tb;direction:ltr;text-anchor:middle;fill:#666666;fill-opacity:0.998783;stroke-width:0.264583"
+       x="493.85104"
+       y="-145.04068"
+       id="text8-7-12-7-4"><tspan
+         sodipodi:role="line"
+         id="tspan8-3-0-3-2"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:24.6944px;font-family:Impact;-inkscape-font-specification:'Impact, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;stroke-width:0.264583"
+         x="494.51248"
+         y="-145.04068">sungma</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:24.6944px;line-height:0;font-family:Impact;-inkscape-font-specification:'Impact, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:center;letter-spacing:1.32292px;word-spacing:2.64583px;writing-mode:lr-tb;direction:ltr;text-anchor:middle;fill:#666666;fill-opacity:0.998783;stroke-width:0.264583"
+       x="408.65872"
+       y="-151.20294"
+       id="text8-7-12-7-1"><tspan
+         sodipodi:role="line"
+         id="tspan8-3-0-3-5"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:24.6944px;font-family:Impact;-inkscape-font-specification:'Impact, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;stroke-width:0.264583"
+         x="409.32019"
+         y="-151.20294">SUNGMA</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:24.6944px;line-height:0;font-family:Haettenschweiler;-inkscape-font-specification:'Haettenschweiler, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:center;letter-spacing:1.32292px;word-spacing:2.64583px;writing-mode:lr-tb;direction:ltr;text-anchor:middle;fill:#666666;fill-opacity:0.998783;stroke-width:0.264583"
+       x="494.68393"
+       y="-120.84717"
+       id="text8-7-12-7-5"><tspan
+         sodipodi:role="line"
+         id="tspan8-3-0-3-1"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:24.6944px;font-family:Haettenschweiler;-inkscape-font-specification:'Haettenschweiler, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;stroke-width:0.264583"
+         x="495.3454"
+         y="-120.84717">sungma</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:24.6944px;line-height:0;font-family:'Century Gothic';-inkscape-font-specification:'Century Gothic, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:center;letter-spacing:1.32292px;word-spacing:2.64583px;writing-mode:lr-tb;direction:ltr;text-anchor:middle;fill:#666666;fill-opacity:0.998783;stroke-width:0.264583"
+       x="304.73691"
+       y="-141.53482"
+       id="text8-7-1"><tspan
+         sodipodi:role="line"
+         id="tspan8-3-6"
+         style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:24.6944px;font-family:'Century Gothic';-inkscape-font-specification:'Century Gothic, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;stroke-width:0.264583"
+         x="305.39838"
+         y="-141.53482">sungma</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:46.8993px;line-height:0;font-family:'Century Gothic';-inkscape-font-specification:'Century Gothic, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:center;letter-spacing:2.51247px;word-spacing:5.02493px;writing-mode:lr-tb;direction:ltr;text-anchor:middle;fill:#666666;fill-opacity:0.998783;stroke-width:0.502493"
+       x="405.16467"
+       y="-237.49008"
+       id="text8-7-1-0"><tspan
+         sodipodi:role="line"
+         id="tspan8-3-6-7"
+         style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:46.8993px;font-family:'Century Gothic';-inkscape-font-specification:'Century Gothic, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;stroke-width:0.502493"
+         x="406.4209"
+         y="-237.49008">SUNGMA</tspan></text>
   </g>
 </svg>
