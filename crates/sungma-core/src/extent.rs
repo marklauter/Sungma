@@ -3,8 +3,10 @@
 //!
 //! An extent is never built. [`Extent::decide`] judges one membership,
 //! answering at each rewrite node and stopping as soon as the answer is
-//! known, and cites the facts that establish an allowed membership. [`Extent::expand`] materializes one level of the
-//! rewrite tree, leaving referenced subjectsets as leaves.
+//! known, and cites the facts that establish an allowed membership.
+//! [`Extent::contains`] walks the same way without collecting the facts.
+//! [`Extent::expand`] materializes one level of the rewrite tree, leaving
+//! referenced subjectsets as leaves.
 //!
 //! A subjectset whose theory or relation isn't declared has no rewrite, and
 //! its extent is empty.
@@ -56,8 +58,48 @@ pub enum Expansion {
 /// steps return their futures boxed.
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// The facts that establish a membership, or `None` when there is none.
-type Grounds = Option<Vec<Fact>>;
+/// What a membership check collects as it succeeds: the facts that
+/// establish it for [`Extent::decide`], or nothing for [`Extent::contains`].
+trait Proof: Send + Sized {
+    fn empty() -> Self;
+    /// A fact stored under the subjectset in hand.
+    fn fact(fact: Fact) -> Self;
+    /// The fact that led to a subjectset, followed by the proof found there.
+    fn cite(fact: Fact, proof: Self) -> Self;
+    /// Adds the proof of another intersection operand.
+    fn join(&mut self, proof: Self);
+}
+
+impl Proof for Vec<Fact> {
+    fn empty() -> Self {
+        Vec::new()
+    }
+
+    fn fact(fact: Fact) -> Self {
+        vec![fact]
+    }
+
+    fn cite(fact: Fact, proof: Self) -> Self {
+        let mut cited = Vec::with_capacity(proof.len() + 1);
+        cited.push(fact);
+        cited.extend(proof);
+        cited
+    }
+
+    fn join(&mut self, proof: Self) {
+        self.extend(proof);
+    }
+}
+
+impl Proof for () {
+    fn empty() -> Self {}
+
+    fn fact(_: Fact) -> Self {}
+
+    fn cite(_: Fact, _: Self) -> Self {}
+
+    fn join(&mut self, _: Self) {}
+}
 
 pub struct Extent<'a, F> {
     theories: &'a Theories,
@@ -96,9 +138,13 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
         })
     }
 
-    /// Whether `subject` is in the extent.
+    /// Whether `subject` is in the extent. The fast path: the same walk as
+    /// [`Extent::decide`], but it collects no grounds, so it allocates no
+    /// facts. For callers that need many verdicts and no audit, such as
+    /// filtering a list.
     pub async fn contains(&self, subject: Subject) -> Result<bool, ExtentError> {
-        Ok(self.decide(subject).await?.outcome.is_allowed())
+        let proof: Option<()> = self.contains_at(self.subjectset, subject, &[]).await?;
+        Ok(proof.is_some())
     }
 
     /// One level of the rewrite tree, with the facts read at the revision.
@@ -120,12 +166,12 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
     /// `path` holds the subjectsets being evaluated, outermost first. The
     /// subject is the same throughout one check, so a subjectset on the
     /// path is a cycle.
-    fn contains_at<'b>(
+    fn contains_at<'b, P: Proof + 'b>(
         &'b self,
         set: Subjectset,
         subject: Subject,
         path: &'b [Subjectset],
-    ) -> BoxFuture<'b, Result<Grounds, ExtentError>> {
+    ) -> BoxFuture<'b, Result<Option<P>, ExtentError>> {
         Box::pin(async move {
             if path.contains(&set) {
                 return Ok(None);
@@ -141,13 +187,13 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
         })
     }
 
-    fn contains_node<'b>(
+    fn contains_node<'b, P: Proof + 'b>(
         &'b self,
         rewrite: &'b Rewrite,
         set: Subjectset,
         subject: Subject,
         path: &'b [Subjectset],
-    ) -> BoxFuture<'b, Result<Grounds, ExtentError>> {
+    ) -> BoxFuture<'b, Result<Option<P>, ExtentError>> {
         Box::pin(async move {
             match rewrite {
                 Rewrite::This => self.contains_this(set, subject, path).await,
@@ -160,38 +206,40 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
                 }
                 Rewrite::FactTo { factset, computed } => {
                     for (fact, target) in self.fact_targets(set, *factset, *computed).await? {
-                        if let Some(grounds) = self.contains_at(target, subject, path).await? {
-                            return Ok(Some(cite(fact, grounds)));
+                        if let Some(proof) = self.contains_at(target, subject, path).await? {
+                            return Ok(Some(P::cite(fact, proof)));
                         }
                     }
                     Ok(None)
                 }
                 Rewrite::Union(operands) => {
                     for operand in operands {
-                        let grounds = self.contains_node(operand, set, subject, path).await?;
-                        if grounds.is_some() {
-                            return Ok(grounds);
+                        let proof = self.contains_node(operand, set, subject, path).await?;
+                        if proof.is_some() {
+                            return Ok(proof);
                         }
                     }
                     Ok(None)
                 }
                 Rewrite::Intersection(operands) => {
-                    let mut all = Vec::new();
+                    let mut all = P::empty();
                     for operand in operands {
-                        let Some(grounds) = self.contains_node(operand, set, subject, path).await?
+                        let Some(proof) = self.contains_node(operand, set, subject, path).await?
                         else {
                             return Ok(None);
                         };
-                        all.extend(grounds);
+                        all.join(proof);
                     }
                     Ok(Some(all))
                 }
                 Rewrite::Exclusion(base, excluded) => {
-                    let Some(grounds) = self.contains_node(base, set, subject, path).await? else {
+                    let Some(proof) = self.contains_node(base, set, subject, path).await? else {
                         return Ok(None);
                     };
-                    let excluded = self.contains_node(excluded, set, subject, path).await?;
-                    Ok(excluded.is_none().then_some(grounds))
+                    // Only whether the excluded side holds matters.
+                    let excluded: Option<()> =
+                        self.contains_node(excluded, set, subject, path).await?;
+                    Ok(excluded.is_none().then_some(proof))
                 }
             }
         })
@@ -199,25 +247,25 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
 
     /// The subject is stored under `set` directly, found by a point lookup,
     /// or is a member of a subjectset stored there.
-    async fn contains_this(
+    async fn contains_this<P: Proof>(
         &self,
         set: Subjectset,
         subject: Subject,
         path: &[Subjectset],
-    ) -> Result<Grounds, ExtentError> {
+    ) -> Result<Option<P>, ExtentError> {
         if self.facts.contains(set, subject, self.revision).await? {
-            return Ok(Some(vec![Fact {
+            return Ok(Some(P::fact(Fact {
                 subjectset: set,
                 subject,
-            }]));
+            })));
         }
         for nested in self.facts.subjectsets(set, self.revision).await? {
-            if let Some(grounds) = self.contains_at(nested, subject, path).await? {
+            if let Some(proof) = self.contains_at(nested, subject, path).await? {
                 let fact = Fact {
                     subjectset: set,
                     subject: Subject::Subjectset(nested),
                 };
-                return Ok(Some(cite(fact, grounds)));
+                return Ok(Some(P::cite(fact, proof)));
             }
         }
         Ok(None)
@@ -303,13 +351,4 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
             })
             .collect())
     }
-}
-
-/// The fact that led to a subjectset, followed by the facts that
-/// established membership there.
-fn cite(fact: Fact, grounds: Vec<Fact>) -> Vec<Fact> {
-    let mut cited = Vec::with_capacity(grounds.len() + 1);
-    cited.push(fact);
-    cited.extend(grounds);
-    cited
 }

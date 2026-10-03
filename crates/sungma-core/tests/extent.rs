@@ -6,8 +6,10 @@ use common::{World, head, identity, subjectset, world};
 use sungma_core::{
     extent::{Expansion, Extent, ExtentError, MAX_DEPTH},
     fixture::{self, FixtureError},
-    model::{Revision, Subject},
+    memory::MemoryFactStore,
+    model::{Revision, Subject, Subjectset},
     rewrite::Rewrite::{Intersection, Union},
+    store::{FactStore, StoreError},
     theory::TheoryError,
 };
 
@@ -22,9 +24,27 @@ async fn check_at(
     else {
         return Ok(false);
     };
-    Extent::new(&world.theories, &world.facts, set, revision)
-        .contains(subject)
-        .await
+    agree(
+        &Extent::new(&world.theories, &world.facts, set, revision),
+        subject,
+    )
+    .await
+}
+
+/// [`Extent::contains`], checked against [`Extent::decide`]: the same
+/// verdict, or both fail.
+async fn agree<F: FactStore + Sync>(
+    extent: &Extent<'_, F>,
+    subject: Subject,
+) -> Result<bool, ExtentError> {
+    let fast = extent.contains(subject).await;
+    let decided = extent.decide(subject).await;
+    match (&fast, &decided) {
+        (Ok(fast), Ok(decided)) => assert_eq!(*fast, decided.outcome.is_allowed()),
+        (Err(_), Err(_)) => {}
+        _ => panic!("contains {fast:?} and decide {decided:?} disagree"),
+    }
+    fast
 }
 
 /// [`check_at`] the latest revision.
@@ -204,6 +224,159 @@ async fn late_bound_relation_missing_on_target_is_empty() {
             .await
             .unwrap()
     );
+}
+
+#[tokio::test]
+async fn a_parent_of_an_undeclared_theory_is_empty() {
+    let mut world = world();
+    let fact = r#"[{ "set": "file:haunted.md#parent", "resource": "ghost:attic" }]"#;
+    fixture::load_facts(fact, &mut world.dictionary, &mut world.facts).unwrap();
+    assert!(
+        !check(&world, "file:haunted.md#viewer", "alice")
+            .await
+            .unwrap()
+    );
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Read {
+    Contains,
+    Subjectsets,
+    Subjects,
+}
+
+/// The docs store, failing one kind of read of one subjectset.
+struct FailingStore<'a> {
+    facts: &'a MemoryFactStore,
+    set: Subjectset,
+    read: Read,
+}
+
+impl FailingStore<'_> {
+    fn fail(&self, set: Subjectset, read: Read) -> Result<(), StoreError> {
+        if (set, read) == (self.set, self.read) {
+            return Err(StoreError("injected".to_owned()));
+        }
+        Ok(())
+    }
+}
+
+impl FactStore for FailingStore<'_> {
+    async fn head(&self) -> Result<Revision, StoreError> {
+        self.facts.head().await
+    }
+
+    async fn contains(
+        &self,
+        set: Subjectset,
+        subject: Subject,
+        revision: Revision,
+    ) -> Result<bool, StoreError> {
+        self.fail(set, Read::Contains)?;
+        self.facts.contains(set, subject, revision).await
+    }
+
+    async fn subjectsets(
+        &self,
+        set: Subjectset,
+        revision: Revision,
+    ) -> Result<Vec<Subjectset>, StoreError> {
+        self.fail(set, Read::Subjectsets)?;
+        self.facts.subjectsets(set, revision).await
+    }
+
+    async fn subjects(
+        &self,
+        set: Subjectset,
+        revision: Revision,
+    ) -> Result<Vec<Subject>, StoreError> {
+        self.fail(set, Read::Subjects)?;
+        self.facts.subjects(set, revision).await
+    }
+}
+
+/// An [`Extent`] over `checked` whose store fails `read` of `failed`.
+async fn failing<'a>(
+    world: &'a World,
+    store: &'a mut Option<FailingStore<'a>>,
+    checked: &str,
+    failed: &str,
+    read: Read,
+) -> Extent<'a, FailingStore<'a>> {
+    let set = subjectset(world, failed).await.unwrap();
+    let store = store.insert(FailingStore {
+        facts: &world.facts,
+        set,
+        read,
+    });
+    let checked = subjectset(world, checked).await.unwrap();
+    Extent::new(&world.theories, store, checked, head(world).await)
+}
+
+#[tokio::test]
+async fn a_store_error_anywhere_on_the_walk_fails_the_check() {
+    let world = world();
+    let alice = identity(&world, "alice").await.unwrap();
+    let cases = [
+        (
+            "file:design.md#viewer",
+            "file:design.md#viewer",
+            Read::Contains,
+        ),
+        (
+            "file:design.md#viewer",
+            "file:design.md#viewer",
+            Read::Subjectsets,
+        ),
+        (
+            "file:design.md#viewer",
+            "file:design.md#parent",
+            Read::Subjects,
+        ),
+        ("file:design.md#viewer", "group:eng#member", Read::Contains),
+        (
+            "file:design.md#viewer",
+            "file:design.md#banned",
+            Read::Contains,
+        ),
+        (
+            "file:design.md#auditor",
+            "file:design.md#viewer",
+            Read::Contains,
+        ),
+    ];
+    for (checked, failed, read) in cases {
+        let mut store = None;
+        let extent = failing(&world, &mut store, checked, failed, read).await;
+        let result = agree(&extent, alice).await;
+        assert!(
+            matches!(result, Err(ExtentError::Store(_))),
+            "{checked} failing on {failed}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_store_error_anywhere_in_the_tree_fails_expand() {
+    let mut world = world();
+    // The docs theories exclude only computed subjectsets, which expand
+    // leaves as references without a read.
+    let json = r#"{ "file": { "unowned": { "exclusion": [{ "computed": "owner" }, "this"] } } }"#;
+    fixture::load_theories(json, &mut world.dictionary, &mut world.theories).unwrap();
+    let cases = [
+        ("file:design.md#viewer", "file:design.md#viewer"),
+        ("file:design.md#viewer", "file:design.md#parent"),
+        ("file:design.md#unowned", "file:design.md#unowned"),
+        ("file:design.md#auditor", "file:design.md#auditor"),
+    ];
+    for (checked, failed) in cases {
+        let mut store = None;
+        let extent = failing(&world, &mut store, checked, failed, Read::Subjects).await;
+        assert!(
+            matches!(extent.expand().await, Err(ExtentError::Store(_))),
+            "{checked} failing on {failed}"
+        );
+    }
 }
 
 #[tokio::test]
