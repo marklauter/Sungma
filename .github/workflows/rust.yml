@@ -3,10 +3,8 @@ name: Rust
 on:
   push:
     branches: [ "main" ]
-    paths: [ "crates/**", "Cargo.toml", "Cargo.lock", ".github/workflows/rust.yml", ".github/actions/setup-rust/action.yml" ]
   pull_request:
     branches: [ "main" ]
-    paths: [ "crates/**", "Cargo.toml", "Cargo.lock", ".github/workflows/rust.yml", ".github/actions/setup-rust/action.yml" ]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -61,3 +59,13 @@ jobs:
 
     - name: Test
       run: cargo test --workspace --locked --profile ${{ matrix.profile }}
+
+  # The single required status check: the ruleset names this job, not the matrix legs.
+  passed:
+    if: always()
+    needs: [ format, lint, test ]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Require every job to succeed
+      if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+      run: exit 1
