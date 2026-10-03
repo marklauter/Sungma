@@ -75,7 +75,7 @@ A relation declared without a rewrite is `this`. A relation the theory doesn't d
 
 ## Sample
 
-A theory for documents: files sit in folders, folders in folders, and groups hold members.
+Three theories for documents: files sit in folders, folders sit in folders, and groups hold members.
 
 ```yaml
 file:
