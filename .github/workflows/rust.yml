@@ -1,0 +1,63 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "main" ]
+    paths: [ "crates/**", "Cargo.toml", "Cargo.lock", ".github/workflows/rust.yml", ".github/actions/setup-rust/action.yml" ]
+  pull_request:
+    branches: [ "main" ]
+    paths: [ "crates/**", "Cargo.toml", "Cargo.lock", ".github/workflows/rust.yml", ".github/actions/setup-rust/action.yml" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: ./.github/actions/setup-rust
+      with:
+        components: rustfmt
+
+    - name: Verify formatting
+      run: cargo fmt --all --check
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: ./.github/actions/setup-rust
+      with:
+        components: clippy
+
+    - name: Clippy
+      run: cargo clippy --workspace --all-targets --all-features --locked
+
+    - name: Docs
+      run: cargo doc --workspace --no-deps --locked
+
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+        profile: [ dev, release ]
+    steps:
+    - uses: actions/checkout@v7
+    - uses: ./.github/actions/setup-rust
+
+    - name: Build
+      run: cargo build --workspace --all-targets --locked --profile ${{ matrix.profile }}
+
+    - name: Test
+      run: cargo test --workspace --locked --profile ${{ matrix.profile }}
