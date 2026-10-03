@@ -17,5 +17,8 @@
   { "set": "folder:loop_a#parent", "resource": "folder:loop_b" },
   { "set": "folder:loop_b#parent", "resource": "folder:loop_a" },
 
-  { "set": "file:stray.md#parent", "resource": "group:eng" }
+  { "set": "file:stray.md#parent", "resource": "group:eng" },
+
+  { "set": "file:notes.md#parent", "subjectset": "folder:specs#owner" },
+  { "set": "file:notes.md#parent", "identity": "frank" }
 ]

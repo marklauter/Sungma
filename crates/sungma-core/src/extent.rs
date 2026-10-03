@@ -225,8 +225,9 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
     }
 
     /// `(factset, computed)`: the `computed` subjectset of each resource
-    /// named by a fact under `factset`. Only resource members name a
-    /// resource; other subjects are skipped.
+    /// named by a fact under `factset`. A resource member names its
+    /// resource and a subjectset names the resource it belongs to, as in
+    /// Zanzibar; identities name no resource and are skipped.
     async fn fact_targets(
         &self,
         set: Subjectset,
@@ -241,11 +242,12 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
         Ok(subjects
             .into_iter()
             .filter_map(|subject| match subject {
-                Subject::ResourceMember(resource) => Some(Subjectset {
+                Subject::ResourceMember(resource)
+                | Subject::Subjectset(Subjectset { resource, .. }) => Some(Subjectset {
                     resource,
                     relation: computed,
                 }),
-                _ => None,
+                Subject::Identity(_) => None,
             })
             .collect())
     }

@@ -148,6 +148,21 @@ async fn group_member_views_through_parent_chain() {
 }
 
 #[tokio::test]
+async fn fact_to_subjectset_follows_the_resource_of_a_stored_subjectset() {
+    let world = world();
+    assert!(
+        check(&world, "file:notes.md#viewer", "alice")
+            .await
+            .unwrap()
+    );
+    assert!(
+        !check(&world, "file:notes.md#viewer", "frank")
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
 async fn banned_is_excluded() {
     let world = world();
     assert!(check(&world, "folder:specs#viewer", "bob").await.unwrap());
