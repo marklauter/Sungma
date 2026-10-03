@@ -3,18 +3,18 @@
 //! touching the fact store.
 
 use crate::{
-    model::{IdentityId, NamespaceId, RelationId, Resource, ResourceId, Subjectset},
+    model::{IdentityId, RelationId, Resource, ResourceId, Subjectset, TheoryId},
     store::{Dictionary, StoreError},
 };
 
 pub async fn subjectset<D: Dictionary>(
     dictionary: &D,
-    namespace: &str,
+    theory: &str,
     id: &str,
     relation: &str,
 ) -> Result<Option<Subjectset>, StoreError> {
-    let (Some(namespace), Some(id), Some(relation)) = (
-        dictionary.lookup(namespace).await?,
+    let (Some(theory), Some(id), Some(relation)) = (
+        dictionary.lookup(theory).await?,
         dictionary.lookup(id).await?,
         dictionary.lookup(relation).await?,
     ) else {
@@ -22,7 +22,7 @@ pub async fn subjectset<D: Dictionary>(
     };
     Ok(Some(Subjectset {
         resource: Resource {
-            namespace: NamespaceId(namespace),
+            theory: TheoryId(theory),
             id: ResourceId(id),
         },
         relation: RelationId(relation),

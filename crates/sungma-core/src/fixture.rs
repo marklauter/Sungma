@@ -5,32 +5,32 @@
 //!
 //! ```json
 //! [
-//!   { "set": "docs/file:readme#owner", "identity": "alice" },
-//!   { "set": "docs/file:readme#parent", "resource": "docs/folder:root" },
-//!   { "set": "docs/folder:root#viewer", "subjectset": "docs/group:eng#member" }
+//!   { "set": "file:readme#owner", "identity": "alice" },
+//!   { "set": "file:readme#parent", "resource": "folder:root" },
+//!   { "set": "folder:root#viewer", "subjectset": "group:eng#member" }
 //! ]
 //! ```
 //!
 //! Resource ids are opaque, but the text still splits unambiguously:
-//! namespace paths contain no `:` and relation names contain no `#`.
+//! theory names contain no `:` and relation names contain no `#`.
 
 use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
     memory::{MemoryDictionary, MemoryFactStore},
-    model::{Fact, IdentityId, NamespaceId, RelationId, Resource, ResourceId, Subject, Subjectset},
+    model::{Fact, IdentityId, RelationId, Resource, ResourceId, Subject, Subjectset, TheoryId},
     rewrite::Rewrite,
-    theory::{Theory, TheoryError},
+    theory::{Theories, TheoryError},
 };
 
 #[derive(Debug, Error)]
 pub enum FixtureError {
     #[error(transparent)]
     Json(#[from] serde_json::Error),
-    #[error("malformed resource {0:?}, expected namespace:id")]
+    #[error("malformed resource {0:?}, expected theory:id")]
     Resource(String),
-    #[error("malformed subjectset {0:?}, expected namespace:id#relation")]
+    #[error("malformed subjectset {0:?}, expected theory:id#relation")]
     Subjectset(String),
 }
 
@@ -49,18 +49,21 @@ enum SubjectDto {
     Subjectset(String),
 }
 
-/// Declares `namespace#relation` with a rewrite that names its relations.
+/// Declares `relation` in `theory` with a rewrite that names its relations.
 pub fn declare(
-    theory: &mut Theory,
+    theories: &mut Theories,
     dictionary: &mut MemoryDictionary,
-    namespace: &str,
+    theory: &str,
     relation: &str,
     rewrite: Rewrite<&str>,
 ) -> Result<(), TheoryError> {
-    let namespace = NamespaceId(dictionary.intern(namespace));
+    let theory = TheoryId(dictionary.intern(theory));
     let relation = RelationId(dictionary.intern(relation));
     let rewrite = rewrite.map(&mut |name| RelationId(dictionary.intern(name)));
-    theory.declare(namespace, relation, rewrite)
+    theories
+        .entry(theory)
+        .or_default()
+        .declare(relation, rewrite)
 }
 
 pub fn load_facts(
@@ -93,11 +96,11 @@ fn intern_resource(
     dictionary: &mut MemoryDictionary,
     text: &str,
 ) -> Result<Resource, FixtureError> {
-    let (namespace, id) = text
+    let (theory, id) = text
         .split_once(':')
         .ok_or_else(|| FixtureError::Resource(text.to_owned()))?;
     Ok(Resource {
-        namespace: NamespaceId(dictionary.intern(namespace)),
+        theory: TheoryId(dictionary.intern(theory)),
         id: ResourceId(dictionary.intern(id)),
     })
 }

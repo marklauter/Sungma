@@ -1,21 +1,21 @@
 [
-  { "set": "docs/group:eng#member", "identity": "alice" },
-  { "set": "docs/group:eng#member", "identity": "bob" },
+  { "set": "group:eng#member", "identity": "alice" },
+  { "set": "group:eng#member", "identity": "bob" },
 
-  { "set": "docs/folder:root#viewer", "subjectset": "docs/group:eng#member" },
-  { "set": "docs/folder:root#viewer", "identity": "erin" },
+  { "set": "folder:root#viewer", "subjectset": "group:eng#member" },
+  { "set": "folder:root#viewer", "identity": "erin" },
 
-  { "set": "docs/folder:specs#parent", "resource": "docs/folder:root" },
-  { "set": "docs/folder:specs#banned", "identity": "erin" },
+  { "set": "folder:specs#parent", "resource": "folder:root" },
+  { "set": "folder:specs#banned", "identity": "erin" },
 
-  { "set": "docs/file:design.md#parent", "resource": "docs/folder:specs" },
-  { "set": "docs/file:design.md#owner", "identity": "carol" },
-  { "set": "docs/file:design.md#banned", "identity": "bob" },
-  { "set": "docs/file:design.md#auditor", "identity": "alice" },
-  { "set": "docs/file:design.md#auditor", "identity": "dave" },
+  { "set": "file:design.md#parent", "resource": "folder:specs" },
+  { "set": "file:design.md#owner", "identity": "carol" },
+  { "set": "file:design.md#banned", "identity": "bob" },
+  { "set": "file:design.md#auditor", "identity": "alice" },
+  { "set": "file:design.md#auditor", "identity": "dave" },
 
-  { "set": "docs/folder:loop_a#parent", "resource": "docs/folder:loop_b" },
-  { "set": "docs/folder:loop_b#parent", "resource": "docs/folder:loop_a" },
+  { "set": "folder:loop_a#parent", "resource": "folder:loop_b" },
+  { "set": "folder:loop_b#parent", "resource": "folder:loop_a" },
 
-  { "set": "docs/file:stray.md#parent", "resource": "docs/group:eng" }
+  { "set": "file:stray.md#parent", "resource": "group:eng" }
 ]

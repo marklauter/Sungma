@@ -8,10 +8,10 @@ use std::{future::Future, pin::Pin};
 use thiserror::Error;
 
 use crate::{
-    model::{NamespaceId, RelationId, Subject, Subjectset},
+    model::{RelationId, Subject, Subjectset, TheoryId},
     rewrite::Rewrite,
     store::{FactStore, StoreError},
-    theory::Theory,
+    theory::Theories,
 };
 
 /// How many subjectsets one check may pass through. Also stops cycles.
@@ -19,9 +19,11 @@ pub const MAX_DEPTH: usize = 100;
 
 #[derive(Debug, Error)]
 pub enum CheckError {
-    #[error("namespace {namespace:?} does not declare relation {relation:?}")]
+    #[error("theory {0:?} is not declared")]
+    UndeclaredTheory(TheoryId),
+    #[error("theory {theory:?} does not declare relation {relation:?}")]
     UndeclaredRelation {
-        namespace: NamespaceId,
+        theory: TheoryId,
         relation: RelationId,
     },
     #[error("check passed through more than {0} subjectsets")]
@@ -35,13 +37,13 @@ pub enum CheckError {
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 pub struct Checker<'a, F> {
-    theory: &'a Theory,
+    theories: &'a Theories,
     facts: &'a F,
 }
 
 impl<'a, F: FactStore + Sync> Checker<'a, F> {
-    pub fn new(theory: &'a Theory, facts: &'a F) -> Self {
-        Self { theory, facts }
+    pub fn new(theories: &'a Theories, facts: &'a F) -> Self {
+        Self { theories, facts }
     }
 
     pub async fn check(&self, set: Subjectset, subject: Subject) -> Result<bool, CheckError> {
@@ -58,13 +60,16 @@ impl<'a, F: FactStore + Sync> Checker<'a, F> {
             if depth > MAX_DEPTH {
                 return Err(CheckError::DepthExceeded(MAX_DEPTH));
             }
-            let namespace = set.resource.namespace;
-            let rewrite = self.theory.rewrite(namespace, set.relation).ok_or(
-                CheckError::UndeclaredRelation {
-                    namespace,
+            let theory = set.resource.theory;
+            let rewrite = self
+                .theories
+                .get(&theory)
+                .ok_or(CheckError::UndeclaredTheory(theory))?
+                .rewrite(set.relation)
+                .ok_or(CheckError::UndeclaredRelation {
+                    theory,
                     relation: set.relation,
-                },
-            )?;
+                })?;
             self.eval(rewrite, set, subject, depth).await
         })
     }

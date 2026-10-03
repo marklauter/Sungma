@@ -1,11 +1,12 @@
-//! The declared relations of every namespace, and their rewrites.
+//! A theory: the declared relations of one kind of resource, and their
+//! rewrites.
 
 use std::collections::HashMap;
 
 use thiserror::Error;
 
 use crate::{
-    model::{NamespaceId, RelationId},
+    model::{RelationId, TheoryId},
     rewrite::Rewrite,
 };
 
@@ -18,24 +19,22 @@ pub enum TheoryError {
 /// A relation declared without a rewrite is declared with [`Rewrite::This`].
 #[derive(Debug, Default)]
 pub struct Theory {
-    relations: HashMap<(NamespaceId, RelationId), Rewrite>,
+    relations: HashMap<RelationId, Rewrite>,
 }
 
+/// Every theory Check can reach, by id. A lookup, not a domain concept.
+pub type Theories = HashMap<TheoryId, Theory>;
+
 impl Theory {
-    pub fn declare(
-        &mut self,
-        namespace: NamespaceId,
-        relation: RelationId,
-        rewrite: Rewrite,
-    ) -> Result<(), TheoryError> {
+    pub fn declare(&mut self, relation: RelationId, rewrite: Rewrite) -> Result<(), TheoryError> {
         validate(&rewrite)?;
-        self.relations.insert((namespace, relation), rewrite);
+        self.relations.insert(relation, rewrite);
         Ok(())
     }
 
-    /// `None` when the namespace doesn't declare the relation.
-    pub fn rewrite(&self, namespace: NamespaceId, relation: RelationId) -> Option<&Rewrite> {
-        self.relations.get(&(namespace, relation))
+    /// `None` when the theory doesn't declare the relation.
+    pub fn rewrite(&self, relation: RelationId) -> Option<&Rewrite> {
+        self.relations.get(&relation)
     }
 }
 

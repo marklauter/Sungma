@@ -1,8 +1,8 @@
 //! Facts and their parts, over interned integer ids.
 
-/// An interned namespace path, `theory/namespace`.
+/// An interned theory name.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct NamespaceId(pub u32);
+pub struct TheoryId(pub u32);
 
 /// An interned relation name.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -16,14 +16,14 @@ pub struct ResourceId(pub u32);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct IdentityId(pub u32);
 
-/// `namespace:id`
+/// `theory:id`
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Resource {
-    pub namespace: NamespaceId,
+    pub theory: TheoryId,
     pub id: ResourceId,
 }
 
-/// `namespace:id#relation`
+/// `theory:id#relation`
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Subjectset {
     pub resource: Resource,
@@ -35,7 +35,7 @@ pub struct Subjectset {
 pub enum Subject {
     Identity(IdentityId),
     Subjectset(Subjectset),
-    /// `namespace:id#...`, the resource itself.
+    /// `theory:id#...`, the resource itself.
     ResourceMember(Resource),
 }
 
