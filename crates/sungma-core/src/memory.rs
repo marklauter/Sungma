@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    model::{Fact, Subject, Subjectset},
+    model::{Fact, Pin, Subject, Subjectset},
     store::{Dictionary, FactStore, StoreError},
 };
 
@@ -26,22 +26,38 @@ impl Dictionary for MemoryDictionary {
     }
 }
 
+/// Each insert advances the head pin by one, and a fact is visible at
+/// every pin from the one it was written at.
 #[derive(Debug, Default)]
 pub struct MemoryFactStore {
-    facts: HashMap<Subjectset, Vec<Subject>>,
+    facts: HashMap<Subjectset, Vec<(Pin, Subject)>>,
+    head: u64,
 }
 
 impl MemoryFactStore {
-    pub fn insert(&mut self, fact: Fact) {
+    /// Returns the pin the fact was written at.
+    pub fn insert(&mut self, fact: Fact) -> Pin {
+        self.head += 1;
+        let written = Pin(self.head);
         self.facts
             .entry(fact.subjectset)
             .or_default()
-            .push(fact.subject);
+            .push((written, fact.subject));
+        written
+    }
+
+    /// The pin of the latest write.
+    pub fn head(&self) -> Pin {
+        Pin(self.head)
     }
 }
 
 impl FactStore for MemoryFactStore {
-    async fn subjects(&self, set: Subjectset) -> Result<Vec<Subject>, StoreError> {
-        Ok(self.facts.get(&set).cloned().unwrap_or_default())
+    async fn subjects(&self, set: Subjectset, pin: Pin) -> Result<Vec<Subject>, StoreError> {
+        let visible = self.facts.get(&set).into_iter().flatten();
+        Ok(visible
+            .filter(|(written, _)| *written <= pin)
+            .map(|(_, subject)| *subject)
+            .collect())
     }
 }

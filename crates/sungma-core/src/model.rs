@@ -16,6 +16,11 @@ pub struct ResourceId(pub u32);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct IdentityId(pub u32);
 
+/// A point-in-time snapshot of the facts. Facts written after the pin are
+/// not visible at it.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct Pin(pub u64);
+
 /// `theory:id`
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Resource {

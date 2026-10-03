@@ -1,4 +1,4 @@
-//! Check against the file, folder and group theories:
+//! Contains and Expand against the file, folder and group theories:
 //!
 //! ```yaml
 //! file:
@@ -18,10 +18,10 @@
 //! ```
 
 use sungma_core::{
-    check::{CheckError, Checker, MAX_DEPTH},
+    extent::{Expansion, Extent, ExtentError, MAX_DEPTH},
     fixture,
     memory::{MemoryDictionary, MemoryFactStore},
-    model::Subject,
+    model::{Pin, Subject, Subjectset},
     resolve,
     rewrite::Rewrite::{self, Computed, Exclusion, FactTo, Intersection, This, Union},
     theory::{Theories, TheoryError},
@@ -83,19 +83,36 @@ fn world() -> World {
     }
 }
 
-/// Checks `theory:id#relation` for an identity, resolving names first.
-async fn check(world: &World, set: &str, identity: &str) -> Result<bool, CheckError> {
-    let (resource, relation) = set.rsplit_once('#').unwrap();
+/// Resolves `theory:id#relation`; `None` if any name was never interned.
+async fn subjectset(world: &World, text: &str) -> Option<Subjectset> {
+    let (resource, relation) = text.rsplit_once('#').unwrap();
     let (theory, id) = resource.split_once(':').unwrap();
-    let Some(set) = resolve::subjectset(&world.dictionary, theory, id, relation).await? else {
-        return Ok(false);
-    };
-    let Some(identity) = resolve::identity(&world.dictionary, identity).await? else {
-        return Ok(false);
-    };
-    Checker::new(&world.theories, &world.facts)
-        .check(set, Subject::Identity(identity))
+    resolve::subjectset(&world.dictionary, theory, id, relation)
         .await
+        .unwrap()
+}
+
+async fn identity(world: &World, identity: &str) -> Option<Subject> {
+    let identity = resolve::identity(&world.dictionary, identity)
+        .await
+        .unwrap();
+    identity.map(Subject::Identity)
+}
+
+/// Whether an identity is in the extent of `theory:id#relation` at `pin`.
+async fn check_at(world: &World, set: &str, who: &str, pin: Pin) -> Result<bool, ExtentError> {
+    let (Some(set), Some(subject)) = (subjectset(world, set).await, identity(world, who).await)
+    else {
+        return Ok(false);
+    };
+    Extent::new(&world.theories, &world.facts, set, pin)
+        .contains(subject)
+        .await
+}
+
+/// [`check_at`] the latest pin.
+async fn check(world: &World, set: &str, who: &str) -> Result<bool, ExtentError> {
+    check_at(world, set, who, world.facts.head()).await
 }
 
 #[tokio::test]
@@ -178,14 +195,17 @@ async fn unknown_names_are_denied() {
 async fn cycle_exceeds_depth() {
     let world = world();
     let result = check(&world, "folder:loop_a#viewer", "alice").await;
-    assert!(matches!(result, Err(CheckError::DepthExceeded(MAX_DEPTH))));
+    assert!(matches!(result, Err(ExtentError::DepthExceeded(MAX_DEPTH))));
 }
 
 #[tokio::test]
 async fn late_bound_relation_missing_on_target_is_an_error() {
     let world = world();
     let result = check(&world, "file:stray.md#viewer", "alice").await;
-    assert!(matches!(result, Err(CheckError::UndeclaredRelation { .. })));
+    assert!(matches!(
+        result,
+        Err(ExtentError::UndeclaredRelation { .. })
+    ));
 }
 
 #[test]
@@ -199,4 +219,69 @@ fn empty_union_is_refused() {
         Union(vec![]),
     );
     assert_eq!(result, Err(TheoryError::EmptyOperator("union")));
+}
+
+#[tokio::test]
+async fn facts_written_after_the_pin_are_not_visible() {
+    let mut world = world();
+    let before = world.facts.head();
+    let fact = r#"[{ "set": "file:design.md#viewer", "identity": "zed" }]"#;
+    fixture::load_facts(fact, &mut world.dictionary, &mut world.facts).unwrap();
+    assert!(
+        !check_at(&world, "file:design.md#viewer", "zed", before)
+            .await
+            .unwrap()
+    );
+    assert!(check(&world, "file:design.md#viewer", "zed").await.unwrap());
+}
+
+#[tokio::test]
+async fn expand_leaves_referenced_subjectsets_as_leaves() {
+    let world = world();
+    let set = |text| subjectset(&world, text);
+    let viewer = set("file:design.md#viewer").await.unwrap();
+    let expansion = Extent::new(&world.theories, &world.facts, viewer, world.facts.head())
+        .expand()
+        .await
+        .unwrap();
+    let expected = Expansion::Exclusion(
+        Box::new(Expansion::Union(vec![
+            Expansion::Subjects(vec![]),
+            Expansion::Reference(set("file:design.md#editor").await.unwrap()),
+            Expansion::Union(vec![Expansion::Reference(
+                set("folder:specs#viewer").await.unwrap(),
+            )]),
+        ])),
+        Box::new(Expansion::Reference(
+            set("file:design.md#banned").await.unwrap(),
+        )),
+    );
+    assert_eq!(expansion, expected);
+}
+
+#[tokio::test]
+async fn expand_lists_direct_subjects_including_subjectsets() {
+    let world = world();
+    let root_viewer = subjectset(&world, "folder:root#viewer").await.unwrap();
+    let expansion = Extent::new(
+        &world.theories,
+        &world.facts,
+        root_viewer,
+        world.facts.head(),
+    )
+    .expand()
+    .await
+    .unwrap();
+    let Expansion::Exclusion(base, _) = expansion else {
+        panic!("viewer is an exclusion");
+    };
+    let Expansion::Union(operands) = *base else {
+        panic!("its base is a union");
+    };
+    let eng = subjectset(&world, "group:eng#member").await.unwrap();
+    let erin = identity(&world, "erin").await.unwrap();
+    assert_eq!(
+        operands[0],
+        Expansion::Subjects(vec![Subject::Subjectset(eng), erin])
+    );
 }

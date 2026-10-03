@@ -1,9 +1,10 @@
-//! Sungma core: the fact model, rewrite trees, and the Check evaluator.
+//! Sungma core: the fact model, rewrite trees, and the extent of a
+//! subjectset, which answers Contains and Expand.
 //!
 //! Everything in the core works on interned integer ids. Strings are
 //! resolved to ids at the edge, through a [`store::Dictionary`].
 
-pub mod check;
+pub mod extent;
 pub mod fixture;
 pub mod memory;
 pub mod model;
