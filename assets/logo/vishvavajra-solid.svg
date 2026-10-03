@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-12 -12 264 264" fill="#1a1a1a">
+  <defs>
+    <g id="half" transform="translate(60 -12)">
+      <path fill-rule="evenodd" d="M46 96 C16 82 16 46 60 14 C104 46 104 82 74 96 Z
+        M55 86 C38 76 36 54 56 32 L54 62 Z
+        M65 86 C82 76 84 54 64 32 L66 62 Z"/>
+      <rect x="52" y="95" width="16" height="13"/>
+    </g>
+  </defs>
+  <use href="#half" transform="rotate(0 120 120)"/>
+  <use href="#half" transform="rotate(90 120 120)"/>
+  <use href="#half" transform="rotate(180 120 120)"/>
+  <use href="#half" transform="rotate(270 120 120)"/>
+  <circle cx="120" cy="120" r="25"/>
+</svg>

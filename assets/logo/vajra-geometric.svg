@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 240" fill="none" stroke="#1a1a1a" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+  <defs>
+    <g id="half">
+      <path d="M50 98 L32 58 L60 18 L88 58 L70 98"/>
+      <path d="M60 18 V98"/>
+      <path d="M44 98 H76"/>
+    </g>
+  </defs>
+  <use href="#half"/>
+  <use href="#half" transform="translate(0 240) scale(1 -1)"/>
+  <rect x="49" y="109" width="22" height="22" transform="rotate(45 60 120)" fill="#1a1a1a" stroke="none"/>
+</svg>

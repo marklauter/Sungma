@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-12 -12 264 264" fill="none" stroke="#1a1a1a" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+  <defs>
+    <g id="half" transform="translate(60 -12)">
+      <path d="M50 98 L32 58 L60 18 L88 58 L70 98"/>
+      <path d="M60 18 V98"/>
+      <path d="M44 98 H76"/>
+    </g>
+  </defs>
+  <use href="#half" transform="rotate(0 120 120)"/>
+  <use href="#half" transform="rotate(90 120 120)"/>
+  <use href="#half" transform="rotate(180 120 120)"/>
+  <use href="#half" transform="rotate(270 120 120)"/>
+  <rect x="102" y="102" width="36" height="36" transform="rotate(45 120 120)" fill="#1a1a1a" stroke="none"/>
+</svg>
