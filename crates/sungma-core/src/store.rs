@@ -22,8 +22,27 @@ pub trait Dictionary {
     fn lookup(&self, name: &str) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send;
 }
 
+/// Facts keyed the way a wide-column store keys them: the subjectset is the
+/// partition key and the subject is the sort key. Every read is as of a
+/// revision.
 pub trait FactStore {
-    /// The subjects of the facts stored under `set`, as of `revision`.
+    /// Point lookup: whether `set@subject` is stored.
+    fn contains(
+        &self,
+        set: Subjectset,
+        subject: Subject,
+        revision: Revision,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+
+    /// The subjectsets stored under `set`: a sort-key range read that skips
+    /// identities and resource members.
+    fn subjectsets(
+        &self,
+        set: Subjectset,
+        revision: Revision,
+    ) -> impl Future<Output = Result<Vec<Subjectset>, StoreError>> + Send;
+
+    /// Every subject stored under `set`.
     fn subjects(
         &self,
         set: Subjectset,

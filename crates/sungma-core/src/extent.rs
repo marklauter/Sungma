@@ -158,21 +158,19 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
         })
     }
 
-    /// The subject is stored under `set` directly, or is a member of a
-    /// subjectset stored there.
+    /// The subject is stored under `set` directly, found by a point lookup,
+    /// or is a member of a subjectset stored there.
     async fn contains_this(
         &self,
         set: Subjectset,
         subject: Subject,
         depth: usize,
     ) -> Result<bool, ExtentError> {
-        for fact_subject in self.facts.subjects(set, self.revision).await? {
-            if fact_subject == subject {
-                return Ok(true);
-            }
-            if let Subject::Subjectset(nested) = fact_subject
-                && self.contains_at(nested, subject, depth + 1).await?
-            {
+        if self.facts.contains(set, subject, self.revision).await? {
+            return Ok(true);
+        }
+        for nested in self.facts.subjectsets(set, self.revision).await? {
+            if self.contains_at(nested, subject, depth + 1).await? {
                 return Ok(true);
             }
         }

@@ -314,6 +314,6 @@ async fn expand_lists_direct_subjects_including_subjectsets() {
     let erin = identity(&world, "erin").await.unwrap();
     assert_eq!(
         operands[0],
-        Expansion::Subjects(vec![Subject::Subjectset(eng), erin])
+        Expansion::Subjects(vec![erin, Subject::Subjectset(eng)])
     );
 }

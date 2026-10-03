@@ -1,6 +1,6 @@
 //! In-memory simulations of the storage ports.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::{
     model::{Fact, Revision, Subject, Subjectset},
@@ -26,23 +26,27 @@ impl Dictionary for MemoryDictionary {
     }
 }
 
-/// Each insert produces the next revision.
+/// Each insert produces the next revision. Subjects are kept sorted under
+/// their subjectset, like sort keys under a partition key, each with the
+/// revision it was written at.
 #[derive(Debug, Default)]
 pub struct MemoryFactStore {
-    facts: HashMap<Subjectset, Vec<(Revision, Subject)>>,
+    facts: HashMap<Subjectset, BTreeMap<Subject, Revision>>,
     head: u64,
 }
 
 impl MemoryFactStore {
-    /// Returns the revision the fact was written at.
+    /// Returns the revision the fact was written at. Rewriting a stored
+    /// fact keeps its original revision.
     pub fn insert(&mut self, fact: Fact) -> Revision {
         self.head += 1;
         let written = Revision(self.head);
-        self.facts
+        *self
+            .facts
             .entry(fact.subjectset)
             .or_default()
-            .push((written, fact.subject));
-        written
+            .entry(fact.subject)
+            .or_insert(written)
     }
 
     /// The revision of the latest write.
@@ -51,16 +55,50 @@ impl MemoryFactStore {
     }
 }
 
+impl MemoryFactStore {
+    fn visible(&self, set: Subjectset, revision: Revision) -> impl Iterator<Item = Subject> + '_ {
+        self.facts
+            .get(&set)
+            .into_iter()
+            .flatten()
+            .filter(move |(_, written)| **written <= revision)
+            .map(|(subject, _)| *subject)
+    }
+}
+
 impl FactStore for MemoryFactStore {
+    async fn contains(
+        &self,
+        set: Subjectset,
+        subject: Subject,
+        revision: Revision,
+    ) -> Result<bool, StoreError> {
+        let written = self
+            .facts
+            .get(&set)
+            .and_then(|subjects| subjects.get(&subject));
+        Ok(written.is_some_and(|written| *written <= revision))
+    }
+
+    async fn subjectsets(
+        &self,
+        set: Subjectset,
+        revision: Revision,
+    ) -> Result<Vec<Subjectset>, StoreError> {
+        Ok(self
+            .visible(set, revision)
+            .filter_map(|subject| match subject {
+                Subject::Subjectset(nested) => Some(nested),
+                _ => None,
+            })
+            .collect())
+    }
+
     async fn subjects(
         &self,
         set: Subjectset,
         revision: Revision,
     ) -> Result<Vec<Subject>, StoreError> {
-        let visible = self.facts.get(&set).into_iter().flatten();
-        Ok(visible
-            .filter(|(written, _)| *written <= revision)
-            .map(|(_, subject)| *subject)
-            .collect())
+        Ok(self.visible(set, revision).collect())
     }
 }
