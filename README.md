@@ -73,7 +73,9 @@ Each term names a set of subjects:
 
 A relation declared without a rewrite is `this`. A relation the theory doesn't declare, such as one reached through a fact-to-subjectset whose target theory lacks it, names the empty set.
 
-For example:
+## Sample
+
+Three theories for documents: files sit in folders, folders sit in folders, and groups hold members.
 
 ```yaml
 file:
@@ -89,10 +91,32 @@ folder:
   - parent
   - viewer: (this | (parent, viewer)) ! banned
   - banned
+
+group:
+  - member
 ```
 
-A trace: is Alice a viewer of file:design.md?
+Some facts under it, written in the fact notation above:
 
+```text
+group:eng#member@alice
+group:eng#member@bob
+folder:root#viewer@group:eng#member
+folder:root#viewer@erin
+folder:specs#parent@folder:root#...
+folder:specs#banned@erin
+file:design.md#parent@folder:specs#...
+file:design.md#owner@carol
+file:design.md#banned@bob
+file:design.md#auditor@alice
+file:design.md#auditor@dave
+```
+
+So for `file:design.md#viewer`: carol is a viewer through `editor` and `owner`, alice through the folders and group eng, bob is in eng but banned on the file, erin is a viewer of root but banned on specs, and dave is no viewer, so not an auditor either.
+
+A trace: is alice a viewer of file:design.md?
+
+```text
 file:design.md#viewer   (this | editor | (parent, viewer)) ! banned
 ├─ this                → no direct facts                     false
 ├─ editor              → file:design.md#editor (this | owner) false
@@ -105,3 +129,4 @@ file:design.md#viewer   (this | editor | (parent, viewer)) ! banned
       ! folder:root#banned  → false  ⇒ true
    ! folder:specs#banned    → false  ⇒ true
 ! file:design.md#banned     → false  ⇒ true
+```
