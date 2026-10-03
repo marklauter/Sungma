@@ -204,13 +204,24 @@ async fn cycle_exceeds_depth() {
 }
 
 #[tokio::test]
-async fn late_bound_relation_missing_on_target_is_an_error() {
+async fn late_bound_relation_missing_on_target_is_empty() {
     let world = world();
-    let result = check(&world, "file:stray.md#viewer", "alice").await;
-    assert!(matches!(
-        result,
-        Err(ExtentError::UndeclaredRelation { .. })
-    ));
+    assert!(
+        !check(&world, "file:stray.md#viewer", "alice")
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn expand_of_an_undeclared_relation_is_none() {
+    let world = world();
+    let viewer = subjectset(&world, "group:eng#viewer").await.unwrap();
+    let expansion = Extent::new(&world.theories, &world.facts, viewer, world.facts.head())
+        .expand()
+        .await
+        .unwrap();
+    assert_eq!(expansion, None);
 }
 
 #[test]
@@ -248,6 +259,7 @@ async fn expand_leaves_referenced_subjectsets_as_leaves() {
     let expansion = Extent::new(&world.theories, &world.facts, viewer, world.facts.head())
         .expand()
         .await
+        .unwrap()
         .unwrap();
     let expected = Expansion::Exclusion(
         Box::new(Expansion::Union(vec![
@@ -277,7 +289,7 @@ async fn expand_lists_direct_subjects_including_subjectsets() {
     .expand()
     .await
     .unwrap();
-    let Expansion::Exclusion(base, _) = expansion else {
+    let Some(Expansion::Exclusion(base, _)) = expansion else {
         panic!("viewer is an exclusion");
     };
     let Expansion::Union(operands) = *base else {

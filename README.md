@@ -57,7 +57,7 @@ Each term names a set of subjects:
 - A computed subjectset is a relation evaluated on the resource in hand.
 - A fact-to-subjectset reads the facts under the factset, then evaluates the computed subjectset on each resource those facts name, under that resource's theory.
 
-A relation declared without a rewrite is `this`. A relation reached through a fact-to-subjectset that the target theory doesn't declare is an error.
+A relation declared without a rewrite is `this`. A relation the theory doesn't declare, such as one reached through a fact-to-subjectset whose target theory lacks it, names the empty set.
 
 For example:
 

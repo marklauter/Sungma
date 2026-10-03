@@ -5,13 +5,16 @@
 //! answering yes or no at each rewrite node and stopping as soon as the
 //! answer is known. [`Extent::expand`] materializes one level of the
 //! rewrite tree, leaving referenced subjectsets as leaves.
+//!
+//! A subjectset whose theory or relation isn't declared has no rewrite, and
+//! its extent is empty.
 
 use std::{future::Future, pin::Pin};
 
 use thiserror::Error;
 
 use crate::{
-    model::{RelationId, Revision, Subject, Subjectset, TheoryId},
+    model::{RelationId, Revision, Subject, Subjectset},
     rewrite::Rewrite,
     store::{FactStore, StoreError},
     theory::Theories,
@@ -23,13 +26,6 @@ pub const MAX_DEPTH: usize = 100;
 
 #[derive(Debug, Error)]
 pub enum ExtentError {
-    #[error("theory {0:?} is not declared")]
-    UndeclaredTheory(TheoryId),
-    #[error("theory {theory:?} does not declare relation {relation:?}")]
-    UndeclaredRelation {
-        theory: TheoryId,
-        relation: RelationId,
-    },
     #[error("membership check passed through more than {0} subjectsets")]
     DepthExceeded(usize),
     #[error(transparent)]
@@ -81,21 +77,19 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
     }
 
     /// One level of the rewrite tree, with the facts read at the revision.
-    pub async fn expand(&self) -> Result<Expansion, ExtentError> {
-        let rewrite = self.rewrite(self.subjectset)?;
-        self.expand_node(rewrite, self.subjectset).await
+    /// `None` when the subjectset has no rewrite.
+    pub async fn expand(&self) -> Result<Option<Expansion>, ExtentError> {
+        let Some(rewrite) = self.rewrite(self.subjectset) else {
+            return Ok(None);
+        };
+        Ok(Some(self.expand_node(rewrite, self.subjectset).await?))
     }
 
-    fn rewrite(&self, set: Subjectset) -> Result<&'a Rewrite, ExtentError> {
-        let theory = set.resource.theory;
+    /// `None` when the theory or the relation isn't declared.
+    fn rewrite(&self, set: Subjectset) -> Option<&'a Rewrite> {
         self.theories
-            .get(&theory)
-            .ok_or(ExtentError::UndeclaredTheory(theory))?
+            .get(&set.resource.theory)?
             .rewrite(set.relation)
-            .ok_or(ExtentError::UndeclaredRelation {
-                theory,
-                relation: set.relation,
-            })
     }
 
     fn contains_at(
@@ -108,7 +102,9 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
             if depth > MAX_DEPTH {
                 return Err(ExtentError::DepthExceeded(MAX_DEPTH));
             }
-            let rewrite = self.rewrite(set)?;
+            let Some(rewrite) = self.rewrite(set) else {
+                return Ok(false);
+            };
             self.contains_node(rewrite, set, subject, depth).await
         })
     }
