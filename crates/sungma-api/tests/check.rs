@@ -157,3 +157,74 @@ fn load_reports_bad_json() {
     assert!(AppState::load("{", FACTS).is_err());
     assert!(AppState::load(THEORIES, "[{}]").is_err());
 }
+
+#[tokio::test]
+async fn two_subjects_are_rejected() {
+    let state = state();
+    let (status, reply) = check(
+        &state,
+        json!({ "set": "folder:root#viewer", "identity": "alice", "subjectset": "group:eng#member" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(reply["request_id"], "sungma-1");
+    assert!(reply["error"].is_string());
+    assert!(state.audit.records().is_empty());
+}
+
+#[tokio::test]
+async fn no_subject_is_rejected() {
+    let state = state();
+    let (status, reply) = check(&state, json!({ "set": "folder:root#viewer" })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(reply["error"].is_string());
+}
+
+/// Sends a raw body, so the JSON extractor can reject it.
+async fn post_raw(
+    state: &Arc<AppState>,
+    body: &str,
+    content_type: Option<&str>,
+) -> (StatusCode, Value) {
+    let mut request = Request::post("/check");
+    if let Some(content_type) = content_type {
+        request = request.header("content-type", content_type);
+    }
+    let request = request.body(Body::from(body.to_owned())).unwrap();
+    let response = router(state.clone()).oneshot(request).await.unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let reply = serde_json::from_slice(&bytes)
+        .unwrap_or_else(|_| panic!("not JSON: {}", String::from_utf8_lossy(&bytes)));
+    (status, reply)
+}
+
+#[tokio::test]
+async fn rejected_bodies_get_json_errors() {
+    let state = state();
+    let json = Some("application/json");
+    let cases = [
+        (
+            r#"{"set":"file:design.md#viewer","identity":"alice"}"#,
+            None,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        ),
+        ("{", json, StatusCode::BAD_REQUEST),
+        (
+            r#"{"identity":"alice"}"#,
+            json,
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            r#"{"set":"file:design.md#viewer","identty":"alice"}"#,
+            json,
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+    ];
+    for (body, content_type, expected) in cases {
+        let (status, reply) = post_raw(&state, body, content_type).await;
+        assert_eq!(status, expected, "{body}");
+        assert!(reply["request_id"].as_str().unwrap().starts_with("sungma-"));
+        assert!(reply["error"].is_string());
+    }
+}
