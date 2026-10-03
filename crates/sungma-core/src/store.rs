@@ -26,6 +26,9 @@ pub trait Dictionary {
 /// partition key and the subject is the sort key. Every read is as of a
 /// revision.
 pub trait FactStore {
+    /// The revision of the latest write.
+    fn head(&self) -> impl Future<Output = Result<Revision, StoreError>> + Send;
+
     /// Point lookup: whether `set@subject` is stored.
     fn contains(
         &self,

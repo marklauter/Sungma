@@ -1,9 +1,9 @@
-//! The extent of a subjectset: the set of subjects derivable for it from
+//! The extent of (closure over) a subjectset: the set of subjects derivable for it from
 //! the facts under the theories, fixed at one revision.
 //!
-//! An extent is never built. [`Extent::contains`] judges one membership,
-//! answering yes or no at each rewrite node and stopping as soon as the
-//! answer is known. [`Extent::expand`] materializes one level of the
+//! An extent is never built. [`Extent::decide`] judges one membership,
+//! answering at each rewrite node and stopping as soon as the answer is
+//! known, and cites the facts that establish an allowed membership. [`Extent::expand`] materializes one level of the
 //! rewrite tree, leaving referenced subjectsets as leaves.
 //!
 //! A subjectset whose theory or relation isn't declared has no rewrite, and
@@ -14,7 +14,8 @@ use std::{future::Future, pin::Pin};
 use thiserror::Error;
 
 use crate::{
-    model::{RelationId, Revision, Subject, Subjectset},
+    decision::{Decision, Outcome, SEMANTICS},
+    model::{Fact, RelationId, Revision, Subject, Subjectset},
     rewrite::Rewrite,
     store::{FactStore, StoreError},
     theory::Theories,
@@ -49,6 +50,9 @@ pub enum Expansion {
 /// steps return their futures boxed.
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+/// The facts that establish a membership, or `None` when there is none.
+type Grounds = Option<Vec<Fact>>;
+
 pub struct Extent<'a, F> {
     theories: &'a Theories,
     facts: &'a F,
@@ -71,9 +75,24 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
         }
     }
 
+    /// Judges whether `subject` is in the extent.
+    pub async fn decide(&self, subject: Subject) -> Result<Decision, ExtentError> {
+        let outcome = match self.contains_at(self.subjectset, subject, 0).await? {
+            Some(grounds) => Outcome::Allowed { grounds },
+            None => Outcome::Denied,
+        };
+        Ok(Decision {
+            subjectset: self.subjectset,
+            subject,
+            revision: self.revision,
+            semantics: SEMANTICS,
+            outcome,
+        })
+    }
+
     /// Whether `subject` is in the extent.
     pub async fn contains(&self, subject: Subject) -> Result<bool, ExtentError> {
-        self.contains_at(self.subjectset, subject, 0).await
+        Ok(self.decide(subject).await?.outcome.is_allowed())
     }
 
     /// One level of the rewrite tree, with the facts read at the revision.
@@ -97,13 +116,13 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
         set: Subjectset,
         subject: Subject,
         depth: usize,
-    ) -> BoxFuture<'_, Result<bool, ExtentError>> {
+    ) -> BoxFuture<'_, Result<Grounds, ExtentError>> {
         Box::pin(async move {
             if depth > MAX_DEPTH {
                 return Err(ExtentError::DepthExceeded(MAX_DEPTH));
             }
             let Some(rewrite) = self.rewrite(set) else {
-                return Ok(false);
+                return Ok(None);
             };
             self.contains_node(rewrite, set, subject, depth).await
         })
@@ -115,7 +134,7 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
         set: Subjectset,
         subject: Subject,
         depth: usize,
-    ) -> BoxFuture<'b, Result<bool, ExtentError>> {
+    ) -> BoxFuture<'b, Result<Grounds, ExtentError>> {
         Box::pin(async move {
             match rewrite {
                 Rewrite::This => self.contains_this(set, subject, depth).await,
@@ -127,32 +146,40 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
                     self.contains_at(computed, subject, depth + 1).await
                 }
                 Rewrite::FactTo { factset, computed } => {
-                    for target in self.fact_targets(set, *factset, *computed).await? {
-                        if self.contains_at(target, subject, depth + 1).await? {
-                            return Ok(true);
+                    for (fact, target) in self.fact_targets(set, *factset, *computed).await? {
+                        if let Some(grounds) = self.contains_at(target, subject, depth + 1).await? {
+                            return Ok(Some(cite(fact, grounds)));
                         }
                     }
-                    Ok(false)
+                    Ok(None)
                 }
                 Rewrite::Union(operands) => {
                     for operand in operands {
-                        if self.contains_node(operand, set, subject, depth).await? {
-                            return Ok(true);
+                        let grounds = self.contains_node(operand, set, subject, depth).await?;
+                        if grounds.is_some() {
+                            return Ok(grounds);
                         }
                     }
-                    Ok(false)
+                    Ok(None)
                 }
                 Rewrite::Intersection(operands) => {
+                    let mut all = Vec::new();
                     for operand in operands {
-                        if !self.contains_node(operand, set, subject, depth).await? {
-                            return Ok(false);
-                        }
+                        let Some(grounds) =
+                            self.contains_node(operand, set, subject, depth).await?
+                        else {
+                            return Ok(None);
+                        };
+                        all.extend(grounds);
                     }
-                    Ok(true)
+                    Ok(Some(all))
                 }
                 Rewrite::Exclusion(base, excluded) => {
-                    Ok(self.contains_node(base, set, subject, depth).await?
-                        && !self.contains_node(excluded, set, subject, depth).await?)
+                    let Some(grounds) = self.contains_node(base, set, subject, depth).await? else {
+                        return Ok(None);
+                    };
+                    let excluded = self.contains_node(excluded, set, subject, depth).await?;
+                    Ok(excluded.is_none().then_some(grounds))
                 }
             }
         })
@@ -165,16 +192,23 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
         set: Subjectset,
         subject: Subject,
         depth: usize,
-    ) -> Result<bool, ExtentError> {
+    ) -> Result<Grounds, ExtentError> {
         if self.facts.contains(set, subject, self.revision).await? {
-            return Ok(true);
+            return Ok(Some(vec![Fact {
+                subjectset: set,
+                subject,
+            }]));
         }
         for nested in self.facts.subjectsets(set, self.revision).await? {
-            if self.contains_at(nested, subject, depth + 1).await? {
-                return Ok(true);
+            if let Some(grounds) = self.contains_at(nested, subject, depth + 1).await? {
+                let fact = Fact {
+                    subjectset: set,
+                    subject: Subject::Subjectset(nested),
+                };
+                return Ok(Some(cite(fact, grounds)));
             }
         }
-        Ok(false)
+        Ok(None)
     }
 
     fn expand_node<'b>(
@@ -195,7 +229,7 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
                     self.fact_targets(set, *factset, *computed)
                         .await?
                         .into_iter()
-                        .map(Expansion::Reference)
+                        .map(|(_, target)| Expansion::Reference(target))
                         .collect(),
                 ),
                 Rewrite::Union(operands) => Expansion::Union(self.expand_all(operands, set).await?),
@@ -222,16 +256,17 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
         Ok(expanded)
     }
 
-    /// `(factset, computed)`: the `computed` subjectset of each resource
-    /// named by a fact under `factset`. A resource member names its
-    /// resource and a subjectset names the resource it belongs to, as in
-    /// Zanzibar; identities name no resource and are skipped.
+    /// `(factset, computed)`: each fact under `factset` that names a
+    /// resource, paired with that resource's `computed` subjectset. A
+    /// resource member names its resource and a subjectset names the
+    /// resource it belongs to, as in Zanzibar; identities name no resource
+    /// and are skipped.
     async fn fact_targets(
         &self,
         set: Subjectset,
         factset: RelationId,
         computed: RelationId,
-    ) -> Result<Vec<Subjectset>, ExtentError> {
+    ) -> Result<Vec<(Fact, Subjectset)>, ExtentError> {
         let factset = Subjectset {
             relation: factset,
             ..set
@@ -241,12 +276,28 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
             .into_iter()
             .filter_map(|subject| match subject {
                 Subject::ResourceMember(resource)
-                | Subject::Subjectset(Subjectset { resource, .. }) => Some(Subjectset {
-                    resource,
-                    relation: computed,
-                }),
+                | Subject::Subjectset(Subjectset { resource, .. }) => {
+                    let fact = Fact {
+                        subjectset: factset,
+                        subject,
+                    };
+                    let target = Subjectset {
+                        resource,
+                        relation: computed,
+                    };
+                    Some((fact, target))
+                }
                 Subject::Identity(_) => None,
             })
             .collect())
     }
+}
+
+/// The fact that led to a subjectset, followed by the facts that
+/// established membership there.
+fn cite(fact: Fact, grounds: Vec<Fact>) -> Vec<Fact> {
+    let mut cited = Vec::with_capacity(grounds.len() + 1);
+    cited.push(fact);
+    cited.extend(grounds);
+    cited
 }
