@@ -8,6 +8,12 @@
 //!
 //! A subjectset whose theory or relation isn't declared has no rewrite, and
 //! its extent is empty.
+//!
+//! Cycles end without an error. A membership check that reaches a
+//! subjectset it is already evaluating finds nothing on that branch, and
+//! the other branches go on. Evaluating a subjectset again from inside
+//! itself would repeat the same steps forever, so the branch can't
+//! contribute a derivation.
 
 use std::{future::Future, pin::Pin};
 
@@ -21,8 +27,8 @@ use crate::{
     theory::Theories,
 };
 
-/// How many subjectsets one membership check may pass through. Also stops
-/// cycles.
+/// How many subjectsets one membership check may pass through without
+/// repeating one.
 pub const MAX_DEPTH: usize = 100;
 
 #[derive(Debug, Error)]
@@ -77,7 +83,7 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
 
     /// Judges whether `subject` is in the extent.
     pub async fn decide(&self, subject: Subject) -> Result<Decision, ExtentError> {
-        let outcome = match self.contains_at(self.subjectset, subject, 0).await? {
+        let outcome = match self.contains_at(self.subjectset, subject, &[]).await? {
             Some(grounds) => Outcome::Allowed { grounds },
             None => Outcome::Denied,
         };
@@ -111,20 +117,27 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
             .rewrite(set.relation)
     }
 
-    fn contains_at(
-        &self,
+    /// `path` holds the subjectsets being evaluated, outermost first. The
+    /// subject is the same throughout one check, so a subjectset on the
+    /// path is a cycle.
+    fn contains_at<'b>(
+        &'b self,
         set: Subjectset,
         subject: Subject,
-        depth: usize,
-    ) -> BoxFuture<'_, Result<Grounds, ExtentError>> {
+        path: &'b [Subjectset],
+    ) -> BoxFuture<'b, Result<Grounds, ExtentError>> {
         Box::pin(async move {
-            if depth > MAX_DEPTH {
+            if path.contains(&set) {
+                return Ok(None);
+            }
+            if path.len() > MAX_DEPTH {
                 return Err(ExtentError::DepthExceeded(MAX_DEPTH));
             }
             let Some(rewrite) = self.rewrite(set) else {
                 return Ok(None);
             };
-            self.contains_node(rewrite, set, subject, depth).await
+            let path = [path, &[set]].concat();
+            self.contains_node(rewrite, set, subject, &path).await
         })
     }
 
@@ -133,21 +146,21 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
         rewrite: &'b Rewrite,
         set: Subjectset,
         subject: Subject,
-        depth: usize,
+        path: &'b [Subjectset],
     ) -> BoxFuture<'b, Result<Grounds, ExtentError>> {
         Box::pin(async move {
             match rewrite {
-                Rewrite::This => self.contains_this(set, subject, depth).await,
+                Rewrite::This => self.contains_this(set, subject, path).await,
                 Rewrite::Computed(relation) => {
                     let computed = Subjectset {
                         relation: *relation,
                         ..set
                     };
-                    self.contains_at(computed, subject, depth + 1).await
+                    self.contains_at(computed, subject, path).await
                 }
                 Rewrite::FactTo { factset, computed } => {
                     for (fact, target) in self.fact_targets(set, *factset, *computed).await? {
-                        if let Some(grounds) = self.contains_at(target, subject, depth + 1).await? {
+                        if let Some(grounds) = self.contains_at(target, subject, path).await? {
                             return Ok(Some(cite(fact, grounds)));
                         }
                     }
@@ -155,7 +168,7 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
                 }
                 Rewrite::Union(operands) => {
                     for operand in operands {
-                        let grounds = self.contains_node(operand, set, subject, depth).await?;
+                        let grounds = self.contains_node(operand, set, subject, path).await?;
                         if grounds.is_some() {
                             return Ok(grounds);
                         }
@@ -165,8 +178,7 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
                 Rewrite::Intersection(operands) => {
                     let mut all = Vec::new();
                     for operand in operands {
-                        let Some(grounds) =
-                            self.contains_node(operand, set, subject, depth).await?
+                        let Some(grounds) = self.contains_node(operand, set, subject, path).await?
                         else {
                             return Ok(None);
                         };
@@ -175,10 +187,10 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
                     Ok(Some(all))
                 }
                 Rewrite::Exclusion(base, excluded) => {
-                    let Some(grounds) = self.contains_node(base, set, subject, depth).await? else {
+                    let Some(grounds) = self.contains_node(base, set, subject, path).await? else {
                         return Ok(None);
                     };
-                    let excluded = self.contains_node(excluded, set, subject, depth).await?;
+                    let excluded = self.contains_node(excluded, set, subject, path).await?;
                     Ok(excluded.is_none().then_some(grounds))
                 }
             }
@@ -191,7 +203,7 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
         &self,
         set: Subjectset,
         subject: Subject,
-        depth: usize,
+        path: &[Subjectset],
     ) -> Result<Grounds, ExtentError> {
         if self.facts.contains(set, subject, self.revision).await? {
             return Ok(Some(vec![Fact {
@@ -200,7 +212,7 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
             }]));
         }
         for nested in self.facts.subjectsets(set, self.revision).await? {
-            if let Some(grounds) = self.contains_at(nested, subject, depth + 1).await? {
+            if let Some(grounds) = self.contains_at(nested, subject, path).await? {
                 let fact = Fact {
                     subjectset: set,
                     subject: Subject::Subjectset(nested),
