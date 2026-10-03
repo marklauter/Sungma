@@ -115,6 +115,8 @@ struct CheckReply {
     zookie: Option<Zookie>,
 }
 
+// TODO: move to RFC 9457 Problem Details (application/problem+json), with
+// request_id as an extension member.
 #[derive(Serialize)]
 struct ErrorReply {
     request_id: String,
