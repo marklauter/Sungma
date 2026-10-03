@@ -1,5 +1,17 @@
-//! Test fixtures: theories and facts written with readable strings and
-//! interned on load, so the core never sees a string.
+//! Fixtures: theories and facts written with readable strings and interned
+//! on load, so the core never sees a string.
+//!
+//! Theory JSON maps each theory to its relations, and each relation to its
+//! rewrite in the JSON form described on [`Rewrite`]:
+//!
+//! ```json
+//! {
+//!   "file": {
+//!     "owner": "this",
+//!     "editor": { "union": ["this", { "computed": "owner" }] }
+//!   }
+//! }
+//! ```
 //!
 //! Fact JSON is a list of objects, each with a `set` and one subject key:
 //!
@@ -13,6 +25,8 @@
 //!
 //! Resource ids are opaque, but the text still splits unambiguously:
 //! theory names contain no `:` and relation names contain no `#`.
+
+use std::collections::BTreeMap;
 
 use serde::Deserialize;
 use thiserror::Error;
@@ -28,6 +42,8 @@ use crate::{
 pub enum FixtureError {
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Theory(#[from] TheoryError),
     #[error("malformed resource {0:?}, expected theory:id")]
     Resource(String),
     #[error("malformed subjectset {0:?}, expected theory:id#relation")]
@@ -57,13 +73,40 @@ pub fn declare(
     relation: &str,
     rewrite: Rewrite<&str>,
 ) -> Result<(), TheoryError> {
+    declare_named(theories, dictionary, theory, relation, rewrite)
+}
+
+/// [`declare`] for any owned or borrowed relation names. A separate
+/// function so `declare(.., This)` still infers `&str`.
+fn declare_named(
+    theories: &mut Theories,
+    dictionary: &mut MemoryDictionary,
+    theory: &str,
+    relation: &str,
+    rewrite: Rewrite<impl AsRef<str>>,
+) -> Result<(), TheoryError> {
     let theory = TheoryId(dictionary.intern(theory));
     let relation = RelationId(dictionary.intern(relation));
-    let rewrite = rewrite.map(&mut |name| RelationId(dictionary.intern(name)));
+    let rewrite = rewrite.map(&mut |name| RelationId(dictionary.intern(name.as_ref())));
     theories
         .entry(theory)
         .or_default()
         .declare(relation, rewrite)
+}
+
+/// The JSON is read in name order, so ids are interned in a fixed order.
+pub fn load_theories(
+    json: &str,
+    dictionary: &mut MemoryDictionary,
+    theories: &mut Theories,
+) -> Result<(), FixtureError> {
+    let parsed: BTreeMap<String, BTreeMap<String, Rewrite<String>>> = serde_json::from_str(json)?;
+    for (theory, relations) in parsed {
+        for (relation, rewrite) in relations {
+            declare_named(theories, dictionary, &theory, &relation, rewrite)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn load_facts(

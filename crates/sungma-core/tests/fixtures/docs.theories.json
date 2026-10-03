@@ -1,0 +1,40 @@
+{
+  "file": {
+    "owner": "this",
+    "parent": "this",
+    "editor": { "union": ["this", { "computed": "owner" }] },
+    "viewer": {
+      "exclusion": [
+        {
+          "union": [
+            "this",
+            { "computed": "editor" },
+            { "fact_to": { "factset": "parent", "computed": "viewer" } }
+          ]
+        },
+        { "computed": "banned" }
+      ]
+    },
+    "auditor": { "intersection": ["this", { "computed": "viewer" }] },
+    "banned": "this"
+  },
+  "folder": {
+    "owner": "this",
+    "parent": "this",
+    "viewer": {
+      "exclusion": [
+        {
+          "union": [
+            "this",
+            { "fact_to": { "factset": "parent", "computed": "viewer" } }
+          ]
+        },
+        { "computed": "banned" }
+      ]
+    },
+    "banned": "this"
+  },
+  "group": {
+    "member": "this"
+  }
+}

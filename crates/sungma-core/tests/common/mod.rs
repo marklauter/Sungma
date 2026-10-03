@@ -1,5 +1,5 @@
 //! The file, folder and group theories and their facts, shared by the
-//! integration tests:
+//! integration tests. `docs.theories.json` declares:
 //!
 //! ```yaml
 //! file:
@@ -26,7 +26,6 @@ use sungma_core::{
     memory::{MemoryDictionary, MemoryFactStore},
     model::{Revision, Subject, Subjectset},
     resolve,
-    rewrite::Rewrite::{self, Computed, Exclusion, FactTo, Intersection, This, Union},
     store::FactStore,
     theory::Theories,
 };
@@ -40,42 +39,15 @@ pub struct World {
 pub fn world() -> World {
     let mut dictionary = MemoryDictionary::default();
     let mut theories = Theories::default();
-    let viewable = |base: Vec<Rewrite<&'static str>>| {
-        Exclusion(Box::new(Union(base)), Box::new(Computed("banned")))
-    };
-    let parent_viewer = || FactTo {
-        factset: "parent",
-        computed: "viewer",
-    };
-
-    let relations = [
-        ("file", "owner", This),
-        ("file", "parent", This),
-        ("file", "editor", Union(vec![This, Computed("owner")])),
-        (
-            "file",
-            "viewer",
-            viewable(vec![This, Computed("editor"), parent_viewer()]),
-        ),
-        (
-            "file",
-            "auditor",
-            Intersection(vec![This, Computed("viewer")]),
-        ),
-        ("file", "banned", This),
-        ("folder", "owner", This),
-        ("folder", "parent", This),
-        ("folder", "viewer", viewable(vec![This, parent_viewer()])),
-        ("folder", "banned", This),
-        ("group", "member", This),
-    ];
-    for (theory, relation, rewrite) in relations {
-        fixture::declare(&mut theories, &mut dictionary, theory, relation, rewrite).unwrap();
-    }
-
+    fixture::load_theories(
+        include_str!("../fixtures/docs.theories.json"),
+        &mut dictionary,
+        &mut theories,
+    )
+    .unwrap();
     let mut facts = MemoryFactStore::default();
     fixture::load_facts(
-        include_str!("../fixtures/docs.json"),
+        include_str!("../fixtures/docs.facts.json"),
         &mut dictionary,
         &mut facts,
     )

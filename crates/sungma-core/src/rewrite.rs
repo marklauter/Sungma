@@ -1,5 +1,7 @@
 //! The rewrite tree a relation evaluates.
 
+use serde::Deserialize;
+
 use crate::model::RelationId;
 
 /// A relation's rewrite.
@@ -7,7 +9,13 @@ use crate::model::RelationId;
 /// Generic over how relations are named: the core uses interned
 /// [`RelationId`]s, and tests write `Rewrite<&str>` and intern it with
 /// [`Rewrite::map`].
-#[derive(Clone, PartialEq, Eq, Debug)]
+///
+/// In JSON each node is externally tagged: `"this"`, `{"computed": "owner"}`,
+/// `{"fact_to": {"factset": "parent", "computed": "viewer"}}`,
+/// `{"union": [..]}`, `{"intersection": [..]}` and
+/// `{"exclusion": [base, excluded]}`.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Rewrite<R = RelationId> {
     /// The subjects of the facts stored under the subjectset in hand.
     This,

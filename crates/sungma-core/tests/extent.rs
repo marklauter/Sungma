@@ -5,7 +5,7 @@ mod common;
 use common::{World, head, identity, subjectset, world};
 use sungma_core::{
     extent::{Expansion, Extent, ExtentError, MAX_DEPTH},
-    fixture,
+    fixture::{self, FixtureError},
     model::{Revision, Subject},
     rewrite::Rewrite::{Intersection, Union},
     theory::TheoryError,
@@ -175,6 +175,17 @@ fn empty_intersection_is_refused() {
         Intersection(vec![]),
     );
     assert_eq!(result, Err(TheoryError::EmptyOperator("intersection")));
+}
+
+#[test]
+fn theory_json_refuses_an_empty_operator() {
+    let mut world = world();
+    let json = r#"{ "file": { "odd": { "union": [] } } }"#;
+    let result = fixture::load_theories(json, &mut world.dictionary, &mut world.theories);
+    assert!(matches!(
+        result,
+        Err(FixtureError::Theory(TheoryError::EmptyOperator("union")))
+    ));
 }
 
 #[tokio::test]
