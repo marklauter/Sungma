@@ -1,0 +1,6 @@
+# Normalize all text files to LF on checkout and commit.
+* text=auto eol=lf
+
+# Explicit binaries
+*.png binary
+*.pdf binary
