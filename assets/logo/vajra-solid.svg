@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 240" fill="#1a1a1a">
+  <defs>
+    <g id="half">
+      <path fill-rule="evenodd" d="M46 96 C16 82 16 46 60 14 C104 46 104 82 74 96 Z
+        M55 86 C38 76 36 54 56 32 L54 62 Z
+        M65 86 C82 76 84 54 64 32 L66 62 Z"/>
+      <rect x="52" y="95" width="16" height="13"/>
+    </g>
+  </defs>
+  <use href="#half"/>
+  <use href="#half" transform="translate(0 240) scale(1 -1)"/>
+  <circle cx="60" cy="120" r="11"/>
+</svg>

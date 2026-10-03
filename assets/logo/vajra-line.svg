@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 240" fill="#1a1a1a">
+  <defs>
+    <g id="half">
+      <path d="M52 94 C30 80 24 50 60 20 M68 94 C90 80 96 50 60 20" fill="none" stroke="#1a1a1a" stroke-width="7" stroke-linecap="round"/>
+      <path d="M60 16 L65 60 L62 94 L58 94 L55 60 Z"/>
+      <rect x="44" y="94" width="32" height="8" rx="4"/>
+      <rect x="52" y="101" width="16" height="7"/>
+    </g>
+  </defs>
+  <use href="#half"/>
+  <use href="#half" transform="translate(0 240) scale(1 -1)"/>
+  <circle cx="60" cy="120" r="11"/>
+</svg>

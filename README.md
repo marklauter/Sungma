@@ -4,6 +4,20 @@ Sungma: spirits bound by oath to protect the sacred teachings of the Dharma.
 
 Sungma is a ReBAC. WIP.
 
+## Check API
+
+```sh
+F=crates/sungma-core/tests/fixtures
+cargo run -p sungma-api -- $F/docs.theories.json $F/docs.facts.json
+
+curl -d '{"set": "file:design.md#viewer", "identity": "alice"}'   -H 'content-type: application/json' localhost:8080/check
+# {"request_id":"sungma-1","verdict":"allowed","zookie":{"revision":16}}
+```
+
+The subject is an `identity` or a `subjectset`; an optional
+`"zookie": {"revision": n}` asks for a revision at least that fresh.
+`SUNGMA_ADDR` sets the listen address.
+
 ## Facts
 
 A fact binds a subject to a subjectset. A theory names a kind of resource and declares its relations.
