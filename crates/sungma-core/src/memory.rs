@@ -48,11 +48,6 @@ impl MemoryFactStore {
             .entry(fact.subject)
             .or_insert(written)
     }
-
-    /// The revision of the latest write.
-    pub fn head(&self) -> Revision {
-        Revision(self.head)
-    }
 }
 
 impl MemoryFactStore {
@@ -67,6 +62,10 @@ impl MemoryFactStore {
 }
 
 impl FactStore for MemoryFactStore {
+    async fn head(&self) -> Result<Revision, StoreError> {
+        Ok(Revision(self.head))
+    }
+
     async fn contains(
         &self,
         set: Subjectset,

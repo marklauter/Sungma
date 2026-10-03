@@ -76,3 +76,18 @@ folder:
   - viewer: (this | (parent, viewer)) ! banned
   - banned
 ```
+
+A trace: is Alice a viewer of file:design.md?
+
+file:design.md#viewer   (this | editor | (parent, viewer)) ! banned
+├─ this                → no direct facts                     false
+├─ editor              → file:design.md#editor (this | owner) false
+└─ (parent, viewer)    → parent fact names folder:specs
+   folder:specs#viewer   (this | (parent, viewer)) ! banned
+   └─ (parent, viewer) → folder:root
+      folder:root#viewer
+      └─ this          → subjectset group:eng#member
+         group:eng#member → this: alice                       TRUE
+      ! folder:root#banned  → false  ⇒ true
+   ! folder:specs#banned    → false  ⇒ true
+! file:design.md#banned     → false  ⇒ true

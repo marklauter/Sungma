@@ -60,10 +60,24 @@ jobs:
     - name: Test
       run: cargo test --workspace --locked --profile ${{ matrix.profile }}
 
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: ./.github/actions/setup-rust
+      with:
+        components: llvm-tools-preview
+    - uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-llvm-cov
+
+    - name: Coverage (fails under 95% of lines)
+      run: cargo llvm-cov --workspace --locked --fail-under-lines 95
+
   # The single required status check: the ruleset names this job, not the matrix legs.
   passed:
     if: always()
-    needs: [ format, lint, test ]
+    needs: [ format, lint, test, coverage ]
     runs-on: ubuntu-latest
     steps:
     - name: Require every job to succeed

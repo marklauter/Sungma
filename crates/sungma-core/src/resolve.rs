@@ -7,24 +7,37 @@ use crate::{
     store::{Dictionary, StoreError},
 };
 
+pub async fn resource<D: Dictionary>(
+    dictionary: &D,
+    theory: &str,
+    id: &str,
+) -> Result<Option<Resource>, StoreError> {
+    let (Some(theory), Some(id)) = (
+        dictionary.lookup(theory).await?,
+        dictionary.lookup(id).await?,
+    ) else {
+        return Ok(None);
+    };
+    Ok(Some(Resource {
+        theory: TheoryId(theory),
+        id: ResourceId(id),
+    }))
+}
+
 pub async fn subjectset<D: Dictionary>(
     dictionary: &D,
     theory: &str,
     id: &str,
     relation: &str,
 ) -> Result<Option<Subjectset>, StoreError> {
-    let (Some(theory), Some(id), Some(relation)) = (
-        dictionary.lookup(theory).await?,
-        dictionary.lookup(id).await?,
+    let (Some(resource), Some(relation)) = (
+        resource(dictionary, theory, id).await?,
         dictionary.lookup(relation).await?,
     ) else {
         return Ok(None);
     };
     Ok(Some(Subjectset {
-        resource: Resource {
-            theory: TheoryId(theory),
-            id: ResourceId(id),
-        },
+        resource,
         relation: RelationId(relation),
     }))
 }

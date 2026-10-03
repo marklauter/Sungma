@@ -1,103 +1,15 @@
-//! Contains and Expand against the file, folder and group theories:
-//!
-//! ```yaml
-//! file:
-//!   - owner
-//!   - parent
-//!   - editor: this | owner
-//!   - viewer: (this | editor | (parent, viewer)) ! banned
-//!   - auditor: this & viewer
-//!   - banned
-//! folder:
-//!   - owner
-//!   - parent
-//!   - viewer: (this | (parent, viewer)) ! banned
-//!   - banned
-//! group:
-//!   - member
-//! ```
+//! Contains and Expand against the theories in [`common`].
 
+mod common;
+
+use common::{World, head, identity, subjectset, world};
 use sungma_core::{
     extent::{Expansion, Extent, ExtentError, MAX_DEPTH},
     fixture,
-    memory::{MemoryDictionary, MemoryFactStore},
-    model::{Revision, Subject, Subjectset},
-    resolve,
-    rewrite::Rewrite::{self, Computed, Exclusion, FactTo, Intersection, This, Union},
-    theory::{Theories, TheoryError},
+    model::{Revision, Subject},
+    rewrite::Rewrite::{Intersection, Union},
+    theory::TheoryError,
 };
-
-struct World {
-    dictionary: MemoryDictionary,
-    theories: Theories,
-    facts: MemoryFactStore,
-}
-
-fn world() -> World {
-    let mut dictionary = MemoryDictionary::default();
-    let mut theories = Theories::default();
-    let viewable = |base: Vec<Rewrite<&'static str>>| {
-        Exclusion(Box::new(Union(base)), Box::new(Computed("banned")))
-    };
-    let parent_viewer = || FactTo {
-        factset: "parent",
-        computed: "viewer",
-    };
-
-    let relations = [
-        ("file", "owner", This),
-        ("file", "parent", This),
-        ("file", "editor", Union(vec![This, Computed("owner")])),
-        (
-            "file",
-            "viewer",
-            viewable(vec![This, Computed("editor"), parent_viewer()]),
-        ),
-        (
-            "file",
-            "auditor",
-            Intersection(vec![This, Computed("viewer")]),
-        ),
-        ("file", "banned", This),
-        ("folder", "owner", This),
-        ("folder", "parent", This),
-        ("folder", "viewer", viewable(vec![This, parent_viewer()])),
-        ("folder", "banned", This),
-        ("group", "member", This),
-    ];
-    for (theory, relation, rewrite) in relations {
-        fixture::declare(&mut theories, &mut dictionary, theory, relation, rewrite).unwrap();
-    }
-
-    let mut facts = MemoryFactStore::default();
-    fixture::load_facts(
-        include_str!("fixtures/docs.json"),
-        &mut dictionary,
-        &mut facts,
-    )
-    .unwrap();
-    World {
-        dictionary,
-        theories,
-        facts,
-    }
-}
-
-/// Resolves `theory:id#relation`; `None` if any name was never interned.
-async fn subjectset(world: &World, text: &str) -> Option<Subjectset> {
-    let (resource, relation) = text.rsplit_once('#').unwrap();
-    let (theory, id) = resource.split_once(':').unwrap();
-    resolve::subjectset(&world.dictionary, theory, id, relation)
-        .await
-        .unwrap()
-}
-
-async fn identity(world: &World, identity: &str) -> Option<Subject> {
-    let identity = resolve::identity(&world.dictionary, identity)
-        .await
-        .unwrap();
-    identity.map(Subject::Identity)
-}
 
 /// Whether an identity is in the extent of `theory:id#relation` at `revision`.
 async fn check_at(
@@ -117,7 +29,7 @@ async fn check_at(
 
 /// [`check_at`] the latest revision.
 async fn check(world: &World, set: &str, who: &str) -> Result<bool, ExtentError> {
-    check_at(world, set, who, world.facts.head()).await
+    check_at(world, set, who, head(world).await).await
 }
 
 #[tokio::test]
@@ -232,7 +144,7 @@ async fn late_bound_relation_missing_on_target_is_empty() {
 async fn expand_of_an_undeclared_relation_is_none() {
     let world = world();
     let viewer = subjectset(&world, "group:eng#viewer").await.unwrap();
-    let expansion = Extent::new(&world.theories, &world.facts, viewer, world.facts.head())
+    let expansion = Extent::new(&world.theories, &world.facts, viewer, head(&world).await)
         .expand()
         .await
         .unwrap();
@@ -252,10 +164,41 @@ fn empty_union_is_refused() {
     assert_eq!(result, Err(TheoryError::EmptyOperator("union")));
 }
 
-#[tokio::test]
-async fn facts_written_after_the_pin_are_not_visible() {
+#[test]
+fn empty_intersection_is_refused() {
     let mut world = world();
-    let before = world.facts.head();
+    let result = fixture::declare(
+        &mut world.theories,
+        &mut world.dictionary,
+        "file",
+        "odd",
+        Intersection(vec![]),
+    );
+    assert_eq!(result, Err(TheoryError::EmptyOperator("intersection")));
+}
+
+#[tokio::test]
+async fn expand_keeps_an_intersection() {
+    let world = world();
+    let auditor = subjectset(&world, "file:design.md#auditor").await.unwrap();
+    let expansion = Extent::new(&world.theories, &world.facts, auditor, head(&world).await)
+        .expand()
+        .await
+        .unwrap();
+    let alice = identity(&world, "alice").await.unwrap();
+    let dave = identity(&world, "dave").await.unwrap();
+    let viewer = subjectset(&world, "file:design.md#viewer").await.unwrap();
+    let expected = Expansion::Intersection(vec![
+        Expansion::Subjects(vec![alice, dave]),
+        Expansion::Reference(viewer),
+    ]);
+    assert_eq!(expansion, Some(expected));
+}
+
+#[tokio::test]
+async fn facts_written_after_the_revision_are_not_visible() {
+    let mut world = world();
+    let before = head(&world).await;
     let fact = r#"[{ "set": "file:design.md#viewer", "identity": "zed" }]"#;
     fixture::load_facts(fact, &mut world.dictionary, &mut world.facts).unwrap();
     assert!(
@@ -271,7 +214,7 @@ async fn expand_leaves_referenced_subjectsets_as_leaves() {
     let world = world();
     let set = |text| subjectset(&world, text);
     let viewer = set("file:design.md#viewer").await.unwrap();
-    let expansion = Extent::new(&world.theories, &world.facts, viewer, world.facts.head())
+    let expansion = Extent::new(&world.theories, &world.facts, viewer, head(&world).await)
         .expand()
         .await
         .unwrap()
@@ -299,7 +242,7 @@ async fn expand_lists_direct_subjects_including_subjectsets() {
         &world.theories,
         &world.facts,
         root_viewer,
-        world.facts.head(),
+        head(&world).await,
     )
     .expand()
     .await
