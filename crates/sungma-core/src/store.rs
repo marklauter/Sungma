@@ -10,7 +10,7 @@ use std::future::Future;
 
 use thiserror::Error;
 
-use crate::model::{Pin, Subject, Subjectset};
+use crate::model::{Revision, Subject, Subjectset};
 
 #[derive(Debug, Error)]
 #[error("store failure: {0}")]
@@ -23,10 +23,10 @@ pub trait Dictionary {
 }
 
 pub trait FactStore {
-    /// The subjects of the facts stored under `set`, as of `pin`.
+    /// The subjects of the facts stored under `set`, as of `revision`.
     fn subjects(
         &self,
         set: Subjectset,
-        pin: Pin,
+        revision: Revision,
     ) -> impl Future<Output = Result<Vec<Subject>, StoreError>> + Send;
 }

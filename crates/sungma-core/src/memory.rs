@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    model::{Fact, Pin, Subject, Subjectset},
+    model::{Fact, Revision, Subject, Subjectset},
     store::{Dictionary, FactStore, StoreError},
 };
 
@@ -26,19 +26,18 @@ impl Dictionary for MemoryDictionary {
     }
 }
 
-/// Each insert advances the head pin by one, and a fact is visible at
-/// every pin from the one it was written at.
+/// Each insert produces the next revision.
 #[derive(Debug, Default)]
 pub struct MemoryFactStore {
-    facts: HashMap<Subjectset, Vec<(Pin, Subject)>>,
+    facts: HashMap<Subjectset, Vec<(Revision, Subject)>>,
     head: u64,
 }
 
 impl MemoryFactStore {
-    /// Returns the pin the fact was written at.
-    pub fn insert(&mut self, fact: Fact) -> Pin {
+    /// Returns the revision the fact was written at.
+    pub fn insert(&mut self, fact: Fact) -> Revision {
         self.head += 1;
-        let written = Pin(self.head);
+        let written = Revision(self.head);
         self.facts
             .entry(fact.subjectset)
             .or_default()
@@ -46,17 +45,21 @@ impl MemoryFactStore {
         written
     }
 
-    /// The pin of the latest write.
-    pub fn head(&self) -> Pin {
-        Pin(self.head)
+    /// The revision of the latest write.
+    pub fn head(&self) -> Revision {
+        Revision(self.head)
     }
 }
 
 impl FactStore for MemoryFactStore {
-    async fn subjects(&self, set: Subjectset, pin: Pin) -> Result<Vec<Subject>, StoreError> {
+    async fn subjects(
+        &self,
+        set: Subjectset,
+        revision: Revision,
+    ) -> Result<Vec<Subject>, StoreError> {
         let visible = self.facts.get(&set).into_iter().flatten();
         Ok(visible
-            .filter(|(written, _)| *written <= pin)
+            .filter(|(written, _)| *written <= revision)
             .map(|(_, subject)| *subject)
             .collect())
     }

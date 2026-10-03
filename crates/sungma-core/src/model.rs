@@ -16,10 +16,10 @@ pub struct ResourceId(pub u32);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct IdentityId(pub u32);
 
-/// A point-in-time snapshot of the facts. Facts written after the pin are
-/// not visible at it.
+/// Each write produces the next revision, and a read at a revision sees
+/// every fact written at or before it.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct Pin(pub u64);
+pub struct Revision(pub u64);
 
 /// `theory:id`
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

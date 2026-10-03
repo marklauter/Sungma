@@ -1,17 +1,17 @@
 //! The extent of a subjectset: the set of subjects derivable for it from
-//! the facts under the theories, fixed by one pin.
+//! the facts under the theories, fixed at one revision.
 //!
 //! An extent is never built. [`Extent::contains`] judges one membership,
 //! answering yes or no at each rewrite node and stopping as soon as the
 //! answer is known. [`Extent::expand`] materializes one level of the
 //! rewrite tree, leaving referenced subjectsets as leaves.
 
-use std::future::Future;
+use std::{future::Future, pin::Pin};
 
 use thiserror::Error;
 
 use crate::{
-    model::{Pin, RelationId, Subject, Subjectset, TheoryId},
+    model::{RelationId, Revision, Subject, Subjectset, TheoryId},
     rewrite::Rewrite,
     store::{FactStore, StoreError},
     theory::Theories,
@@ -50,24 +50,28 @@ pub enum Expansion {
 }
 
 /// A recursive `async fn` has a future of infinite size, so the recursive
-/// steps return their futures boxed. Spelled out in full because
-/// `std::pin::Pin` would collide with our [`Pin`].
-type BoxFuture<'a, T> = std::pin::Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+/// steps return their futures boxed.
+type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 pub struct Extent<'a, F> {
     theories: &'a Theories,
     facts: &'a F,
     subjectset: Subjectset,
-    pin: Pin,
+    revision: Revision,
 }
 
 impl<'a, F: FactStore + Sync> Extent<'a, F> {
-    pub fn new(theories: &'a Theories, facts: &'a F, subjectset: Subjectset, pin: Pin) -> Self {
+    pub fn new(
+        theories: &'a Theories,
+        facts: &'a F,
+        subjectset: Subjectset,
+        revision: Revision,
+    ) -> Self {
         Self {
             theories,
             facts,
             subjectset,
-            pin,
+            revision,
         }
     }
 
@@ -76,7 +80,7 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
         self.contains_at(self.subjectset, subject, 0).await
     }
 
-    /// One level of the rewrite tree, with the facts read at the pin.
+    /// One level of the rewrite tree, with the facts read at the revision.
     pub async fn expand(&self) -> Result<Expansion, ExtentError> {
         let rewrite = self.rewrite(self.subjectset)?;
         self.expand_node(rewrite, self.subjectset).await
@@ -166,7 +170,7 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
         subject: Subject,
         depth: usize,
     ) -> Result<bool, ExtentError> {
-        for fact_subject in self.facts.subjects(set, self.pin).await? {
+        for fact_subject in self.facts.subjects(set, self.revision).await? {
             if fact_subject == subject {
                 return Ok(true);
             }
@@ -186,7 +190,9 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
     ) -> BoxFuture<'b, Result<Expansion, ExtentError>> {
         Box::pin(async move {
             Ok(match rewrite {
-                Rewrite::This => Expansion::Subjects(self.facts.subjects(set, self.pin).await?),
+                Rewrite::This => {
+                    Expansion::Subjects(self.facts.subjects(set, self.revision).await?)
+                }
                 Rewrite::Computed(relation) => Expansion::Reference(Subjectset {
                     relation: *relation,
                     ..set
@@ -235,7 +241,7 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
             relation: factset,
             ..set
         };
-        let subjects = self.facts.subjects(factset, self.pin).await?;
+        let subjects = self.facts.subjects(factset, self.revision).await?;
         Ok(subjects
             .into_iter()
             .filter_map(|subject| match subject {

@@ -21,7 +21,7 @@ use sungma_core::{
     extent::{Expansion, Extent, ExtentError, MAX_DEPTH},
     fixture,
     memory::{MemoryDictionary, MemoryFactStore},
-    model::{Pin, Subject, Subjectset},
+    model::{Revision, Subject, Subjectset},
     resolve,
     rewrite::Rewrite::{self, Computed, Exclusion, FactTo, Intersection, This, Union},
     theory::{Theories, TheoryError},
@@ -99,18 +99,23 @@ async fn identity(world: &World, identity: &str) -> Option<Subject> {
     identity.map(Subject::Identity)
 }
 
-/// Whether an identity is in the extent of `theory:id#relation` at `pin`.
-async fn check_at(world: &World, set: &str, who: &str, pin: Pin) -> Result<bool, ExtentError> {
+/// Whether an identity is in the extent of `theory:id#relation` at `revision`.
+async fn check_at(
+    world: &World,
+    set: &str,
+    who: &str,
+    revision: Revision,
+) -> Result<bool, ExtentError> {
     let (Some(set), Some(subject)) = (subjectset(world, set).await, identity(world, who).await)
     else {
         return Ok(false);
     };
-    Extent::new(&world.theories, &world.facts, set, pin)
+    Extent::new(&world.theories, &world.facts, set, revision)
         .contains(subject)
         .await
 }
 
-/// [`check_at`] the latest pin.
+/// [`check_at`] the latest revision.
 async fn check(world: &World, set: &str, who: &str) -> Result<bool, ExtentError> {
     check_at(world, set, who, world.facts.head()).await
 }
