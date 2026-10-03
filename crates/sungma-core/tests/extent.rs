@@ -7,7 +7,7 @@ use sungma_core::{
     extent::{Expansion, Extent, ExtentError, MAX_DEPTH},
     fixture,
     model::{Revision, Subject},
-    rewrite::Rewrite::Union,
+    rewrite::Rewrite::{Intersection, Union},
     theory::TheoryError,
 };
 
@@ -164,8 +164,39 @@ fn empty_union_is_refused() {
     assert_eq!(result, Err(TheoryError::EmptyOperator("union")));
 }
 
+#[test]
+fn empty_intersection_is_refused() {
+    let mut world = world();
+    let result = fixture::declare(
+        &mut world.theories,
+        &mut world.dictionary,
+        "file",
+        "odd",
+        Intersection(vec![]),
+    );
+    assert_eq!(result, Err(TheoryError::EmptyOperator("intersection")));
+}
+
 #[tokio::test]
-async fn facts_written_after_the_pin_are_not_visible() {
+async fn expand_keeps_an_intersection() {
+    let world = world();
+    let auditor = subjectset(&world, "file:design.md#auditor").await.unwrap();
+    let expansion = Extent::new(&world.theories, &world.facts, auditor, head(&world).await)
+        .expand()
+        .await
+        .unwrap();
+    let alice = identity(&world, "alice").await.unwrap();
+    let dave = identity(&world, "dave").await.unwrap();
+    let viewer = subjectset(&world, "file:design.md#viewer").await.unwrap();
+    let expected = Expansion::Intersection(vec![
+        Expansion::Subjects(vec![alice, dave]),
+        Expansion::Reference(viewer),
+    ]);
+    assert_eq!(expansion, Some(expected));
+}
+
+#[tokio::test]
+async fn facts_written_after_the_revision_are_not_visible() {
     let mut world = world();
     let before = head(&world).await;
     let fact = r#"[{ "set": "file:design.md#viewer", "identity": "zed" }]"#;

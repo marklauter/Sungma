@@ -225,13 +225,17 @@ async fn check_records_unknown_names_and_failures() {
     let verdict = service.check(context("r1"), unknown).await.unwrap();
     assert_eq!(verdict, Verdict::Unknown);
 
+    let nowhere = request("file:nowhere.md", "viewer", person("alice"));
+    let verdict = service.check(context("r1"), nowhere).await.unwrap();
+    assert_eq!(verdict, Verdict::Unknown);
+
     let mut ahead = request("file:design.md", "viewer", person("alice"));
     ahead.zookie = Some(Revision(head(&world).await.0 + 1));
     let verdict = service.check(context("r2"), ahead).await.unwrap();
     assert!(matches!(verdict, Verdict::Failed(_)));
 
     let verdicts: Vec<_> = audit.records().into_iter().map(|r| r.verdict).collect();
-    assert_eq!(verdicts, [Verdict::Unknown, verdict]);
+    assert_eq!(verdicts, [Verdict::Unknown, Verdict::Unknown, verdict]);
 }
 
 #[tokio::test]
