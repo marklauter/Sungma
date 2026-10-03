@@ -1,0 +1,21 @@
+[
+  { "set": "docs/group:eng#member", "identity": "alice" },
+  { "set": "docs/group:eng#member", "identity": "bob" },
+
+  { "set": "docs/folder:root#viewer", "subjectset": "docs/group:eng#member" },
+  { "set": "docs/folder:root#viewer", "identity": "erin" },
+
+  { "set": "docs/folder:specs#parent", "resource": "docs/folder:root" },
+  { "set": "docs/folder:specs#banned", "identity": "erin" },
+
+  { "set": "docs/file:design.md#parent", "resource": "docs/folder:specs" },
+  { "set": "docs/file:design.md#owner", "identity": "carol" },
+  { "set": "docs/file:design.md#banned", "identity": "bob" },
+  { "set": "docs/file:design.md#auditor", "identity": "alice" },
+  { "set": "docs/file:design.md#auditor", "identity": "dave" },
+
+  { "set": "docs/folder:loop_a#parent", "resource": "docs/folder:loop_b" },
+  { "set": "docs/folder:loop_b#parent", "resource": "docs/folder:loop_a" },
+
+  { "set": "docs/file:stray.md#parent", "resource": "docs/group:eng" }
+]
