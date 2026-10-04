@@ -2,6 +2,10 @@
 //! that is the shape of the real stores; the in-memory versions in
 //! [`crate::memory`] simulate them.
 //!
+//! Reads and writes are separate ports: Check only reads, so it takes a
+//! [`Dictionary`] and a [`FactStore`], and writes take an [`Interner`] and
+//! a [`FactWriter`].
+//!
 //! `fn ... -> impl Future<Output = ...> + Send` is an `async fn` in a trait
 //! that also promises its future can move between threads. Implementations
 //! still write a plain `async fn`.
@@ -11,7 +15,7 @@ use std::{future::Future, sync::Arc};
 use thiserror::Error;
 
 use crate::{
-    model::{RelationId, Revision, Subject, Subjectset, TheoryId},
+    model::{Fact, RelationId, Revision, Subject, Subjectset, TheoryId},
     rewrite::Rewrite,
 };
 
@@ -23,6 +27,13 @@ pub struct StoreError(pub String);
 pub trait Dictionary {
     /// `None` when the name was never interned.
     fn lookup(&self, name: &str) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send;
+}
+
+/// Mints ids for names. An id, once minted, always names the same string
+/// and is never reused.
+pub trait Interner: Dictionary {
+    /// The name's id, minted if the name is new.
+    fn intern(&self, name: &str) -> impl Future<Output = Result<u32, StoreError>> + Send;
 }
 
 /// Facts keyed the way a wide-column store keys them: the subjectset is the
@@ -54,6 +65,34 @@ pub trait FactStore {
         set: Subjectset,
         revision: Revision,
     ) -> impl Future<Output = Result<Vec<Subject>, StoreError>> + Send;
+}
+
+/// One change to the stored facts.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FactWrite {
+    /// Stores the fact. Storing a fact already stored changes nothing.
+    Insert(Fact),
+    /// Deletes the fact. Deleting a fact not stored changes nothing.
+    Delete(Fact),
+}
+
+/// Writes facts. Sungma keeps the history itself rather than relying on the
+/// store's own versioning: a fact is stored with the revision that wrote it
+/// and, once deleted, the revision that deleted it, and is never removed.
+/// A read at revision R sees the facts written at or before R and not
+/// deleted at or before R, so a replay can read any past revision.
+///
+/// Revisions are issued in commit order. Once a write returns revision R, a
+/// read at R sees that write and every write before it, and no write after
+/// it. An adapter meets this however its store allows: SQLite's single
+/// writer, a counter updated in the write's transaction, or commit
+/// timestamps.
+pub trait FactWriter: FactStore {
+    /// Applies `writes` atomically at the next revision and returns it.
+    fn write(
+        &self,
+        writes: &[FactWrite],
+    ) -> impl Future<Output = Result<Revision, StoreError>> + Send;
 }
 
 /// The rewrite of each declared relation, by theory. Not versioned yet:
