@@ -18,8 +18,7 @@ use crate::{
     extent::Extent,
     model::{Revision, Subject},
     resolve,
-    store::{Dictionary, FactStore, StoreError},
-    theory::Theories,
+    store::{Dictionary, FactStore, StoreError, TheoryStore},
 };
 
 /// A subject named by strings, as a caller sends it.
@@ -104,20 +103,21 @@ impl AuditLog for MemoryAuditLog {
     }
 }
 
-pub struct CheckService<'a, D, F, A> {
+pub struct CheckService<'a, D, T, F, A> {
     dictionary: &'a D,
-    theories: &'a Theories,
+    theories: &'a T,
     facts: &'a F,
     audit: &'a A,
 }
 
-impl<'a, D, F, A> CheckService<'a, D, F, A>
+impl<'a, D, T, F, A> CheckService<'a, D, T, F, A>
 where
     D: Dictionary + Sync,
+    T: TheoryStore + Sync,
     F: FactStore + Sync,
     A: AuditLog + Sync,
 {
-    pub fn new(dictionary: &'a D, theories: &'a Theories, facts: &'a F, audit: &'a A) -> Self {
+    pub fn new(dictionary: &'a D, theories: &'a T, facts: &'a F, audit: &'a A) -> Self {
         Self {
             dictionary,
             theories,

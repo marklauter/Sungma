@@ -2,12 +2,15 @@
 
 mod common;
 
+use std::sync::Arc;
+
 use common::{World, head, identity, subjectset, world};
 use sungma_core::{
     extent::{Expansion, Extent, ExtentError, MAX_DEPTH},
     fixture::{self, FixtureError},
-    model::{Revision, Subject},
-    rewrite::Rewrite::{Intersection, Union},
+    model::{RelationId, Resource, Revision, Subject, Subjectset, TheoryId},
+    rewrite::Rewrite::{self, Computed, Exclusion, Intersection, This, Union},
+    store::{FactStore, StoreError, TheoryStore},
     theory::TheoryError,
 };
 
@@ -22,9 +25,27 @@ async fn check_at(
     else {
         return Ok(false);
     };
-    Extent::new(&world.theories, &world.facts, set, revision)
-        .contains(subject)
-        .await
+    agree(
+        &Extent::new(&world.theories, &world.facts, set, revision),
+        subject,
+    )
+    .await
+}
+
+/// [`Extent::contains`], checked against [`Extent::decide`]: the same
+/// verdict, or both fail.
+async fn agree<T: TheoryStore + Sync, F: FactStore + Sync>(
+    extent: &Extent<'_, T, F>,
+    subject: Subject,
+) -> Result<bool, ExtentError> {
+    let fast = extent.contains(subject).await;
+    let decided = extent.decide(subject).await;
+    match (&fast, &decided) {
+        (Ok(fast), Ok(decided)) => assert_eq!(*fast, decided.outcome.is_allowed()),
+        (Err(_), Err(_)) => {}
+        _ => panic!("contains {fast:?} and decide {decided:?} disagree"),
+    }
+    fast
 }
 
 /// [`check_at`] the latest revision.
@@ -204,6 +225,209 @@ async fn late_bound_relation_missing_on_target_is_empty() {
             .await
             .unwrap()
     );
+}
+
+#[tokio::test]
+async fn a_parent_of_an_undeclared_theory_is_empty() {
+    let mut world = world();
+    let fact = r#"[{ "set": "file:haunted.md#parent", "resource": "ghost:attic" }]"#;
+    fixture::load_facts(fact, &mut world.dictionary, &mut world.facts).unwrap();
+    assert!(
+        !check(&world, "file:haunted.md#viewer", "alice")
+            .await
+            .unwrap()
+    );
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Read {
+    Contains,
+    Subjectsets,
+    Subjects,
+    /// The rewrite of the subjectset's theory and relation, for any resource.
+    Rewrite,
+}
+
+/// The docs theory and fact stores, failing one kind of read of one
+/// subjectset.
+struct FailingStore<'a> {
+    world: &'a World,
+    set: Subjectset,
+    read: Read,
+}
+
+impl FailingStore<'_> {
+    fn fail(&self, set: Subjectset, read: Read) -> Result<(), StoreError> {
+        if (set, read) == (self.set, self.read) {
+            return Err(StoreError("injected".to_owned()));
+        }
+        Ok(())
+    }
+}
+
+impl TheoryStore for FailingStore<'_> {
+    async fn rewrite(
+        &self,
+        theory: TheoryId,
+        relation: RelationId,
+    ) -> Result<Option<Arc<Rewrite>>, StoreError> {
+        let set = Subjectset {
+            relation,
+            resource: Resource {
+                theory,
+                ..self.set.resource
+            },
+        };
+        self.fail(set, Read::Rewrite)?;
+        self.world.theories.rewrite(theory, relation).await
+    }
+}
+
+impl FactStore for FailingStore<'_> {
+    async fn head(&self) -> Result<Revision, StoreError> {
+        self.world.facts.head().await
+    }
+
+    async fn contains(
+        &self,
+        set: Subjectset,
+        subject: Subject,
+        revision: Revision,
+    ) -> Result<bool, StoreError> {
+        self.fail(set, Read::Contains)?;
+        self.world.facts.contains(set, subject, revision).await
+    }
+
+    async fn subjectsets(
+        &self,
+        set: Subjectset,
+        revision: Revision,
+    ) -> Result<Vec<Subjectset>, StoreError> {
+        self.fail(set, Read::Subjectsets)?;
+        self.world.facts.subjectsets(set, revision).await
+    }
+
+    async fn subjects(
+        &self,
+        set: Subjectset,
+        revision: Revision,
+    ) -> Result<Vec<Subject>, StoreError> {
+        self.fail(set, Read::Subjects)?;
+        self.world.facts.subjects(set, revision).await
+    }
+}
+
+/// An [`Extent`] over `checked` whose stores fail `read` of `failed`.
+async fn failing<'a>(
+    world: &'a World,
+    store: &'a mut Option<FailingStore<'a>>,
+    checked: &str,
+    failed: &str,
+    read: Read,
+) -> Extent<'a, FailingStore<'a>, FailingStore<'a>> {
+    let set = subjectset(world, failed).await.unwrap();
+    let store = store.insert(FailingStore { world, set, read });
+    let checked = subjectset(world, checked).await.unwrap();
+    Extent::new(store, store, checked, head(world).await)
+}
+
+#[tokio::test]
+async fn a_store_error_anywhere_on_the_walk_fails_the_check() {
+    let world = world();
+    let alice = identity(&world, "alice").await.unwrap();
+    let cases = [
+        (
+            "file:design.md#viewer",
+            "file:design.md#viewer",
+            Read::Contains,
+        ),
+        (
+            "file:design.md#viewer",
+            "file:design.md#viewer",
+            Read::Subjectsets,
+        ),
+        (
+            "file:design.md#viewer",
+            "file:design.md#parent",
+            Read::Subjects,
+        ),
+        ("file:design.md#viewer", "group:eng#member", Read::Contains),
+        (
+            "file:design.md#viewer",
+            "file:design.md#banned",
+            Read::Contains,
+        ),
+        (
+            "file:design.md#auditor",
+            "file:design.md#viewer",
+            Read::Contains,
+        ),
+        (
+            "file:design.md#viewer",
+            "folder:specs#viewer",
+            Read::Rewrite,
+        ),
+    ];
+    for (checked, failed, read) in cases {
+        let mut store = None;
+        let extent = failing(&world, &mut store, checked, failed, read).await;
+        let result = agree(&extent, alice).await;
+        assert!(
+            matches!(result, Err(ExtentError::Store(_))),
+            "{checked} failing on {failed}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_store_error_anywhere_in_the_tree_fails_expand() {
+    let mut world = world();
+    // The docs theories exclude only computed subjectsets, which expand
+    // leaves as references without a read.
+    let unowned = Exclusion(Box::new(Computed("owner")), Box::new(This));
+    fixture::declare(
+        &mut world.theories,
+        &mut world.dictionary,
+        "file",
+        "unowned",
+        unowned,
+    )
+    .unwrap();
+    let cases = [
+        (
+            "file:design.md#viewer",
+            "file:design.md#viewer",
+            Read::Subjects,
+        ),
+        (
+            "file:design.md#viewer",
+            "file:design.md#parent",
+            Read::Subjects,
+        ),
+        (
+            "file:design.md#unowned",
+            "file:design.md#unowned",
+            Read::Subjects,
+        ),
+        (
+            "file:design.md#auditor",
+            "file:design.md#auditor",
+            Read::Subjects,
+        ),
+        (
+            "file:design.md#viewer",
+            "file:design.md#viewer",
+            Read::Rewrite,
+        ),
+    ];
+    for (checked, failed, read) in cases {
+        let mut store = None;
+        let extent = failing(&world, &mut store, checked, failed, read).await;
+        assert!(
+            matches!(extent.expand().await, Err(ExtentError::Store(_))),
+            "{checked} failing on {failed}"
+        );
+    }
 }
 
 #[tokio::test]

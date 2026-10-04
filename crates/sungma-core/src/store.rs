@@ -6,11 +6,14 @@
 //! that also promises its future can move between threads. Implementations
 //! still write a plain `async fn`.
 
-use std::future::Future;
+use std::{future::Future, sync::Arc};
 
 use thiserror::Error;
 
-use crate::model::{Revision, Subject, Subjectset};
+use crate::{
+    model::{RelationId, Revision, Subject, Subjectset, TheoryId},
+    rewrite::Rewrite,
+};
 
 #[derive(Debug, Error)]
 #[error("store failure: {0}")]
@@ -51,4 +54,16 @@ pub trait FactStore {
         set: Subjectset,
         revision: Revision,
     ) -> impl Future<Output = Result<Vec<Subject>, StoreError>> + Send;
+}
+
+/// The rewrite of each declared relation, by theory. Not versioned yet:
+/// every read sees the current theories. A rewrite is shared, so a cache
+/// can evict it while a check still walks it.
+pub trait TheoryStore {
+    /// `None` when the theory or the relation isn't declared.
+    fn rewrite(
+        &self,
+        theory: TheoryId,
+        relation: RelationId,
+    ) -> impl Future<Output = Result<Option<Arc<Rewrite>>, StoreError>> + Send;
 }

@@ -42,16 +42,15 @@ use serde::{Deserialize, Serialize};
 use sungma_core::{
     check::{CheckRequest, CheckService, MemoryAuditLog, RequestContext, SubjectName, Verdict},
     fixture::{self, FixtureError},
-    memory::{MemoryDictionary, MemoryFactStore},
+    memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore},
     model::Revision,
-    theory::Theories,
 };
 
 /// What every request reads, shared across them.
 #[derive(Debug, Default)]
 pub struct AppState {
     pub dictionary: MemoryDictionary,
-    pub theories: Theories,
+    pub theories: MemoryTheoryStore,
     pub facts: MemoryFactStore,
     pub audit: MemoryAuditLog,
     /// Numbers requests that arrive without an `x-request-id`.
@@ -115,6 +114,8 @@ struct CheckReply {
     zookie: Option<Zookie>,
 }
 
+// TODO: move to RFC 9457 Problem Details (application/problem+json), with
+// request_id as an extension member.
 #[derive(Serialize)]
 struct ErrorReply {
     request_id: String,

@@ -26,16 +26,19 @@
 //! Resource ids are opaque, but the text still splits unambiguously:
 //! theory names contain no `:` and relation names contain no `#`.
 
-use std::collections::BTreeMap;
+use std::{collections::HashSet, fmt, marker::PhantomData};
 
-use serde::Deserialize;
+use serde::{
+    Deserialize, Deserializer,
+    de::{MapAccess, Visitor},
+};
 use thiserror::Error;
 
 use crate::{
-    memory::{MemoryDictionary, MemoryFactStore},
+    memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore},
     model::{Fact, IdentityId, RelationId, Resource, ResourceId, Subject, Subjectset, TheoryId},
     rewrite::Rewrite,
-    theory::{Theories, TheoryError},
+    theory::{self, Theory, TheoryError},
 };
 
 #[derive(Debug, Error)]
@@ -44,6 +47,8 @@ pub enum FixtureError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Theory(#[from] TheoryError),
+    #[error("theory '{0}' is declared more than once")]
+    DuplicateTheory(String),
     #[error("malformed resource {0:?}, expected theory:id")]
     Resource(String),
     #[error("malformed subjectset {0:?}, expected theory:id#relation")]
@@ -65,48 +70,87 @@ enum SubjectDto {
     Subjectset(String),
 }
 
-/// Declares `relation` in `theory` with a rewrite that names its relations.
+/// Declares `relation` in `theory` with a rewrite that names its relations,
+/// keeping the theory's other relations. The theory is checked whole, and
+/// its errors name relations by id.
 pub fn declare(
-    theories: &mut Theories,
+    theories: &mut MemoryTheoryStore,
     dictionary: &mut MemoryDictionary,
     theory: &str,
     relation: &str,
     rewrite: Rewrite<&str>,
 ) -> Result<(), TheoryError> {
-    declare_named(theories, dictionary, theory, relation, rewrite)
-}
-
-/// [`declare`] for any owned or borrowed relation names. A separate
-/// function so `declare(.., This)` still infers `&str`.
-fn declare_named(
-    theories: &mut Theories,
-    dictionary: &mut MemoryDictionary,
-    theory: &str,
-    relation: &str,
-    rewrite: Rewrite<impl AsRef<str>>,
-) -> Result<(), TheoryError> {
     let theory = TheoryId(dictionary.intern(theory));
     let relation = RelationId(dictionary.intern(relation));
-    let rewrite = rewrite.map(&mut |name| RelationId(dictionary.intern(name.as_ref())));
-    theories
-        .entry(theory)
-        .or_default()
-        .declare(relation, rewrite)
+    let rewrite = rewrite.map(&mut |name| RelationId(dictionary.intern(name)));
+    let mut relations: Vec<_> = theories
+        .theory(theory)
+        .into_iter()
+        .flat_map(Theory::relations)
+        .filter(|(declared, _)| *declared != relation)
+        .map(|(declared, rewrite)| (declared, rewrite.clone()))
+        .collect();
+    relations.push((relation, rewrite));
+    theories.declare(theory, Theory::new(relations)?);
+    Ok(())
 }
 
-/// The JSON is read in name order, so ids are interned in a fixed order.
+/// Declares each theory whole, replacing any earlier declaration. Each is
+/// checked by name before its names are interned, in document order.
 pub fn load_theories(
     json: &str,
     dictionary: &mut MemoryDictionary,
-    theories: &mut Theories,
+    theories: &mut MemoryTheoryStore,
 ) -> Result<(), FixtureError> {
-    let parsed: BTreeMap<String, BTreeMap<String, Rewrite<String>>> = serde_json::from_str(json)?;
-    for (theory, relations) in parsed {
-        for (relation, rewrite) in relations {
-            declare_named(theories, dictionary, &theory, &relation, rewrite)?;
+    let Entries(parsed) = serde_json::from_str::<Entries<Entries<Rewrite<String>>>>(json)?;
+    let mut seen = HashSet::new();
+    for (theory, Entries(relations)) in parsed {
+        if !seen.insert(theory.clone()) {
+            return Err(FixtureError::DuplicateTheory(theory));
         }
+        theory::validate(&relations)?;
+        let id = TheoryId(dictionary.intern(&theory));
+        let relations = relations
+            .into_iter()
+            .map(|(relation, rewrite)| {
+                let relation = RelationId(dictionary.intern(&relation));
+                (
+                    relation,
+                    rewrite.map(&mut |name| RelationId(dictionary.intern(&name))),
+                )
+            })
+            .collect();
+        theories.declare(id, Theory::new(relations)?);
     }
     Ok(())
+}
+
+/// A JSON object read as its entries in document order, duplicates kept,
+/// so validation sees a duplicate a map would hide.
+struct Entries<V>(Vec<(String, V)>);
+
+impl<'de, V: Deserialize<'de>> Deserialize<'de> for Entries<V> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visit<V>(PhantomData<V>);
+
+        impl<'de, V: Deserialize<'de>> Visitor<'de> for Visit<V> {
+            type Value = Entries<V>;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("an object")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut entries = Vec::new();
+                while let Some(entry) = map.next_entry()? {
+                    entries.push(entry);
+                }
+                Ok(Entries(entries))
+            }
+        }
+
+        deserializer.deserialize_map(Visit(PhantomData))
+    }
 }
 
 pub fn load_facts(

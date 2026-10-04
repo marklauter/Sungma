@@ -73,6 +73,8 @@ Each term names a set of subjects:
 
 A relation declared without a rewrite is `this`. A relation the theory doesn't declare, such as one reached through a fact-to-subjectset whose target theory lacks it, names the empty set.
 
+A theory is checked whole when it is declared. It is refused if a relation is declared twice, a union or intersection is empty, a rewrite nests more than 100 levels deep, a computed subjectset or factset names a relation the theory doesn't declare, or computed subjectsets form a cycle, such as `viewer: this ! viewer`. A cycle through a fact-to-subjectset, like folders inside folders, reads a fact at each step and is allowed.
+
 ## Sample
 
 Three theories for documents: files sit in folders, folders sit in folders, and groups hold members.

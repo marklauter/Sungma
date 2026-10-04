@@ -8,8 +8,7 @@
 use crate::{
     decision::{Decision, SEMANTICS, Semantics},
     extent::{Extent, ExtentError},
-    store::FactStore,
-    theory::Theories,
+    store::{FactStore, TheoryStore},
 };
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -24,9 +23,9 @@ pub enum Replay {
     SemanticsChanged { recorded: Semantics, now: Decision },
 }
 
-pub async fn replay<F: FactStore + Sync>(
+pub async fn replay<T: TheoryStore + Sync, F: FactStore + Sync>(
     decision: &Decision,
-    theories: &Theories,
+    theories: &T,
     facts: &F,
 ) -> Result<Replay, ExtentError> {
     let now = Extent::new(theories, facts, decision.subjectset, decision.revision)
