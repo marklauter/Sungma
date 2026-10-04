@@ -60,9 +60,7 @@ pub fn world() -> World {
 
 /// Resolves `theory:id#relation`; `None` if any name was never interned.
 pub async fn subjectset(world: &World, text: &str) -> Option<Subjectset> {
-    let (resource, relation) = text.rsplit_once('#').unwrap();
-    let (theory, id) = resource.split_once(':').unwrap();
-    resolve::subjectset(&world.dictionary, theory, id, relation)
+    resolve::subjectset(&world.dictionary, &text.parse().unwrap())
         .await
         .unwrap()
 }

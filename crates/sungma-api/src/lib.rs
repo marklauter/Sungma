@@ -44,6 +44,7 @@ use sungma_core::{
     fixture::{self, FixtureError},
     memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore},
     model::Revision,
+    name::{NameError, SubjectsetName},
 };
 
 /// What every request reads, shared across them.
@@ -181,33 +182,20 @@ fn failure(status: StatusCode, request_id: String, error: String) -> Response {
 
 impl CheckBody {
     fn into_request(self) -> Result<CheckRequest, String> {
-        let (theory, resource, relation) = split_subjectset(&self.set)?;
+        let set = parse(&self.set)?;
         let subject = match (self.identity, self.subjectset) {
             (Some(identity), None) => SubjectName::Identity(identity),
-            (None, Some(set)) => {
-                let (theory, resource, relation) = split_subjectset(&set)?;
-                SubjectName::Subjectset {
-                    theory,
-                    resource,
-                    relation,
-                }
-            }
+            (None, Some(set)) => SubjectName::Subjectset(parse(&set)?),
             _ => return Err("expected exactly one of identity or subjectset".to_owned()),
         };
         Ok(CheckRequest {
-            theory,
-            resource,
-            relation,
+            set,
             subject,
             zookie: self.zookie.map(|zookie| Revision(zookie.revision)),
         })
     }
 }
 
-/// `theory:id#relation`, split at the first `:` and the last `#`.
-fn split_subjectset(text: &str) -> Result<(String, String, String), String> {
-    let malformed = || format!("malformed subjectset {text:?}, expected theory:id#relation");
-    let (resource, relation) = text.rsplit_once('#').ok_or_else(malformed)?;
-    let (theory, id) = resource.split_once(':').ok_or_else(malformed)?;
-    Ok((theory.to_owned(), id.to_owned(), relation.to_owned()))
+fn parse(text: &str) -> Result<SubjectsetName, String> {
+    text.parse().map_err(|error: NameError| error.to_string())
 }

@@ -134,7 +134,7 @@ async fn headers_fill_the_audit_context() {
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].context.request_id, "r-42");
     assert_eq!(records[0].context.caller, "docs-service");
-    assert_eq!(records[0].request.resource, "design.md");
+    assert_eq!(records[0].request.set.resource().id(), "design.md");
 }
 
 #[tokio::test]

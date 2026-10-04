@@ -17,26 +17,22 @@ use crate::{
     decision::Decision,
     extent::Extent,
     model::{Revision, Subject},
+    name::SubjectsetName,
     resolve,
     store::{Dictionary, FactStore, StoreError, TheoryStore},
 };
 
-/// A subject named by strings, as a caller sends it.
+/// A subject named as a caller sends it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum SubjectName {
     Identity(String),
-    Subjectset {
-        theory: String,
-        resource: String,
-        relation: String,
-    },
+    Subjectset(SubjectsetName),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CheckRequest {
-    pub theory: String,
-    pub resource: String,
-    pub relation: String,
+    /// Whether the subject is in this subjectset.
+    pub set: SubjectsetName,
     pub subject: SubjectName,
     /// Decide at a revision at least this fresh. `None` takes the latest.
     pub zookie: Option<Revision>,
@@ -155,14 +151,9 @@ where
 
     /// `Ok(None)` when a name was never interned.
     async fn try_decide(&self, request: &CheckRequest) -> Result<Option<Decision>, String> {
-        let Some(set) = resolve::subjectset(
-            self.dictionary,
-            &request.theory,
-            &request.resource,
-            &request.relation,
-        )
-        .await
-        .map_err(|e| e.to_string())?
+        let Some(set) = resolve::subjectset(self.dictionary, &request.set)
+            .await
+            .map_err(|e| e.to_string())?
         else {
             return Ok(None);
         };
@@ -182,11 +173,7 @@ where
             SubjectName::Identity(identity) => resolve::identity(self.dictionary, identity)
                 .await
                 .map(|id| id.map(Subject::Identity)),
-            SubjectName::Subjectset {
-                theory,
-                resource,
-                relation,
-            } => resolve::subjectset(self.dictionary, theory, resource, relation)
+            SubjectName::Subjectset(set) => resolve::subjectset(self.dictionary, set)
                 .await
                 .map(|set| set.map(Subject::Subjectset)),
         };
