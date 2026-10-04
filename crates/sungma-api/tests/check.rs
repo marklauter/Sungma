@@ -152,6 +152,19 @@ async fn malformed_names_are_rejected() {
     assert!(state.audit.records().is_empty());
 }
 
+#[tokio::test]
+async fn a_resource_is_not_a_subject() {
+    let state = state();
+    let body = json!({ "set": "file:design.md#parent", "subjectset": "folder:specs#..." });
+    let (status, reply) = check(&state, body).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        reply["error"],
+        r#""folder:specs#..." names a resource, not a subjectset"#
+    );
+    assert!(state.audit.records().is_empty());
+}
+
 #[test]
 fn load_reports_bad_json() {
     assert!(AppState::load("{", FACTS).is_err());

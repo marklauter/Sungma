@@ -97,7 +97,9 @@ pub struct Zookie {
 
 /// The subject is two optional keys rather than a flattened enum, because
 /// `deny_unknown_fields` doesn't work with `flatten` and a flattened enum
-/// silently keeps the first of two subjects.
+/// silently keeps the first of two subjects. There is no resource key: a
+/// fact like `parent` relates resources, but access is only ever checked
+/// for an identity.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CheckBody {

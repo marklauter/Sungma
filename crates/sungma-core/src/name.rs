@@ -4,7 +4,8 @@
 //! `theory:id` names a resource and `theory:id#relation` a subjectset. A
 //! theory name contains no `:` and a relation name no `#`, so the text
 //! splits at the first `:` and the last `#`. The resource id between them
-//! is opaque and may contain either. No part may be empty.
+//! is opaque and may contain either. No part may be empty, and no relation
+//! is named `...`: `theory:id#...` is the resource itself, not a subjectset.
 
 use std::{fmt, str::FromStr};
 
@@ -16,6 +17,8 @@ pub enum NameError {
     Resource(String),
     #[error("malformed subjectset {0:?}, expected theory:id#relation")]
     Subjectset(String),
+    #[error("{0:?} names a resource, not a subjectset")]
+    ResourceMember(String),
 }
 
 /// `theory:id`
@@ -80,6 +83,9 @@ impl FromStr for SubjectsetName {
         let (resource, relation) = text.rsplit_once('#').ok_or_else(malformed)?;
         if relation.is_empty() {
             return Err(malformed());
+        }
+        if relation == "..." {
+            return Err(NameError::ResourceMember(text.to_owned()));
         }
         Ok(Self {
             resource: resource.parse().map_err(|_| malformed())?,

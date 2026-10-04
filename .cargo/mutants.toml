@@ -1,0 +1,7 @@
+# Mutants no test should catch.
+exclude_re = [
+    # Default::default() for a Vec is Vec::new().
+    "impl Proof for Vec<Fact>>::empty",
+    # Only the wording of serde's error for a theory file that isn't an object.
+    "impl Visitor<'de> for Visit<V>>::expecting",
+]

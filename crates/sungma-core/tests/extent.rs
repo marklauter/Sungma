@@ -200,20 +200,30 @@ async fn a_cycle_under_an_exclusion_excludes_nobody() {
     assert!(check(&world, "folder:open#viewer", "alice").await.unwrap());
 }
 
-#[tokio::test]
-async fn a_long_acyclic_chain_exceeds_depth() {
+/// Checks `group:g0#member` down a chain of `length` subjectsets.
+async fn chain(length: usize) -> Result<bool, ExtentError> {
     let mut world = world();
-    let chain: Vec<String> = (0..=MAX_DEPTH)
+    let chain: Vec<String> = (1..length)
         .map(|i| {
             format!(
-                r#"{{ "set": "group:g{i}#member", "subjectset": "group:g{}#member" }}"#,
-                i + 1
+                r#"{{ "set": "group:g{}#member", "subjectset": "group:g{i}#member" }}"#,
+                i - 1
             )
         })
         .collect();
     let facts = format!("[{}]", chain.join(","));
     fixture::load_facts(&facts, &mut world.dictionary, &mut world.facts).unwrap();
-    let result = check(&world, "group:g0#member", "alice").await;
+    check(&world, "group:g0#member", "alice").await
+}
+
+#[tokio::test]
+async fn a_chain_may_be_max_depth_long() {
+    assert!(!chain(MAX_DEPTH).await.unwrap());
+}
+
+#[tokio::test]
+async fn a_longer_chain_exceeds_depth() {
+    let result = chain(MAX_DEPTH + 1).await;
     assert!(matches!(result, Err(ExtentError::DepthExceeded(MAX_DEPTH))));
 }
 

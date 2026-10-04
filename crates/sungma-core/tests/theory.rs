@@ -3,7 +3,7 @@
 use sungma_core::{
     fixture::{self, FixtureError},
     memory::{MemoryDictionary, MemoryTheoryStore},
-    rewrite::Rewrite::{self, Computed, This, Union},
+    rewrite::Rewrite::{self, Computed, Exclusion, This, Union},
     theory::{MAX_REWRITE_DEPTH, TheoryError},
 };
 
@@ -129,7 +129,15 @@ fn relations_sharing_a_target_are_no_cycle() {
 
 /// A chain of single-operand unions, `levels` deep counting the leaf.
 fn nested(levels: usize) -> Rewrite<&'static str> {
-    (1..levels).fold(This, |rewrite, _| Union(vec![rewrite]))
+    nested_in(levels, |rewrite| Union(vec![rewrite]))
+}
+
+/// A chain of `wrap`s around `this`, `levels` deep counting the leaf.
+fn nested_in(
+    levels: usize,
+    wrap: fn(Rewrite<&'static str>) -> Rewrite<&'static str>,
+) -> Rewrite<&'static str> {
+    (1..levels).fold(This, |rewrite, _| wrap(rewrite))
 }
 
 fn declare(rewrite: Rewrite<&str>) -> Result<(), TheoryError> {
@@ -151,6 +159,22 @@ fn a_deeper_rewrite_tree_is_refused() {
         error.to_string(),
         "a rewrite tree deeper than 100 levels is refused"
     );
+}
+
+#[test]
+fn a_deeper_exclusion_base_is_refused() {
+    let base = nested_in(MAX_REWRITE_DEPTH + 1, |rewrite| {
+        Exclusion(Box::new(rewrite), Box::new(This))
+    });
+    assert_eq!(declare(base), Err(TheoryError::TooDeep));
+}
+
+#[test]
+fn a_deeper_excluded_operand_is_refused() {
+    let excluded = nested_in(MAX_REWRITE_DEPTH + 1, |rewrite| {
+        Exclusion(Box::new(This), Box::new(rewrite))
+    });
+    assert_eq!(declare(excluded), Err(TheoryError::TooDeep));
 }
 
 #[test]
