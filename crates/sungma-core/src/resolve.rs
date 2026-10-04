@@ -4,17 +4,17 @@
 
 use crate::{
     model::{IdentityId, RelationId, Resource, ResourceId, Subjectset, TheoryId},
+    name::{ResourceName, SubjectsetName},
     store::{Dictionary, StoreError},
 };
 
 pub async fn resource<D: Dictionary>(
     dictionary: &D,
-    theory: &str,
-    id: &str,
+    name: &ResourceName,
 ) -> Result<Option<Resource>, StoreError> {
     let (Some(theory), Some(id)) = (
-        dictionary.lookup(theory).await?,
-        dictionary.lookup(id).await?,
+        dictionary.lookup(name.theory()).await?,
+        dictionary.lookup(name.id()).await?,
     ) else {
         return Ok(None);
     };
@@ -26,13 +26,11 @@ pub async fn resource<D: Dictionary>(
 
 pub async fn subjectset<D: Dictionary>(
     dictionary: &D,
-    theory: &str,
-    id: &str,
-    relation: &str,
+    name: &SubjectsetName,
 ) -> Result<Option<Subjectset>, StoreError> {
     let (Some(resource), Some(relation)) = (
-        resource(dictionary, theory, id).await?,
-        dictionary.lookup(relation).await?,
+        resource(dictionary, name.resource()).await?,
+        dictionary.lookup(name.relation()).await?,
     ) else {
         return Ok(None);
     };

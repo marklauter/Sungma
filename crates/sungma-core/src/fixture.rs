@@ -23,8 +23,7 @@
 //! ]
 //! ```
 //!
-//! Resource ids are opaque, but the text still splits unambiguously:
-//! theory names contain no `:` and relation names contain no `#`.
+//! Names are parsed as [`crate::name`] describes.
 
 use std::{collections::HashSet, fmt, marker::PhantomData};
 
@@ -37,6 +36,7 @@ use thiserror::Error;
 use crate::{
     memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore},
     model::{Fact, IdentityId, RelationId, Resource, ResourceId, Subject, Subjectset, TheoryId},
+    name::{NameError, ResourceName, SubjectsetName},
     rewrite::Rewrite,
     theory::{self, Theory, TheoryError},
 };
@@ -49,10 +49,8 @@ pub enum FixtureError {
     Theory(#[from] TheoryError),
     #[error("theory '{0}' is declared more than once")]
     DuplicateTheory(String),
-    #[error("malformed resource {0:?}, expected theory:id")]
-    Resource(String),
-    #[error("malformed subjectset {0:?}, expected theory:id#relation")]
-    Subjectset(String),
+    #[error(transparent)]
+    Name(#[from] NameError),
 }
 
 #[derive(Deserialize)]
@@ -179,28 +177,25 @@ pub fn load_facts(
     Ok(())
 }
 
-fn intern_resource(
-    dictionary: &mut MemoryDictionary,
-    text: &str,
-) -> Result<Resource, FixtureError> {
-    let (theory, id) = text
-        .split_once(':')
-        .ok_or_else(|| FixtureError::Resource(text.to_owned()))?;
-    Ok(Resource {
-        theory: TheoryId(dictionary.intern(theory)),
-        id: ResourceId(dictionary.intern(id)),
-    })
+fn intern_resource(dictionary: &mut MemoryDictionary, text: &str) -> Result<Resource, NameError> {
+    let name: ResourceName = text.parse()?;
+    Ok(intern_resource_name(dictionary, &name))
+}
+
+fn intern_resource_name(dictionary: &mut MemoryDictionary, name: &ResourceName) -> Resource {
+    Resource {
+        theory: TheoryId(dictionary.intern(name.theory())),
+        id: ResourceId(dictionary.intern(name.id())),
+    }
 }
 
 fn intern_subjectset(
     dictionary: &mut MemoryDictionary,
     text: &str,
-) -> Result<Subjectset, FixtureError> {
-    let (resource, relation) = text
-        .rsplit_once('#')
-        .ok_or_else(|| FixtureError::Subjectset(text.to_owned()))?;
+) -> Result<Subjectset, NameError> {
+    let name: SubjectsetName = text.parse()?;
     Ok(Subjectset {
-        resource: intern_resource(dictionary, resource)?,
-        relation: RelationId(dictionary.intern(relation)),
+        resource: intern_resource_name(dictionary, name.resource()),
+        relation: RelationId(dictionary.intern(name.relation())),
     })
 }

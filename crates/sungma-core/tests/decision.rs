@@ -27,8 +27,7 @@ async fn fact(world: &World, set: &str, subject: Subject) -> Fact {
 
 /// `theory:id#...`
 async fn member(world: &World, resource: &str) -> Subject {
-    let (theory, id) = resource.split_once(':').unwrap();
-    let resource = resolve::resource(&world.dictionary, theory, id).await;
+    let resource = resolve::resource(&world.dictionary, &resource.parse().unwrap()).await;
     Subject::ResourceMember(resource.unwrap().unwrap())
 }
 
@@ -180,11 +179,8 @@ fn context(request_id: &str) -> RequestContext {
 }
 
 fn request(resource: &str, relation: &str, subject: SubjectName) -> CheckRequest {
-    let (theory, id) = resource.split_once(':').unwrap();
     CheckRequest {
-        theory: theory.to_owned(),
-        resource: id.to_owned(),
-        relation: relation.to_owned(),
+        set: format!("{resource}#{relation}").parse().unwrap(),
         subject,
         zookie: None,
     }
@@ -244,11 +240,7 @@ async fn check_accepts_a_subjectset_as_the_subject() {
     let audit = MemoryAuditLog::default();
     let service = CheckService::new(&world.dictionary, &world.theories, &world.facts, &audit);
 
-    let eng = SubjectName::Subjectset {
-        theory: "group".to_owned(),
-        resource: "eng".to_owned(),
-        relation: "member".to_owned(),
-    };
+    let eng = SubjectName::Subjectset("group:eng#member".parse().unwrap());
     let verdict = service
         .check(context("r1"), request("folder:root", "viewer", eng))
         .await

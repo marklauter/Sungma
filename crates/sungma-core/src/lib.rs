@@ -11,6 +11,7 @@ pub mod extent;
 pub mod fixture;
 pub mod memory;
 pub mod model;
+pub mod name;
 pub mod replay;
 pub mod resolve;
 pub mod rewrite;

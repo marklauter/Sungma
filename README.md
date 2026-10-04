@@ -4,6 +4,14 @@ Sungma: spirits bound by oath to protect the sacred teachings of the Dharma.
 
 Sungma is a ReBAC. WIP.
 
+## Development
+
+`rust-toolchain.toml` installs the stable toolchain with clippy, rustfmt and rust-analyzer. Enable the pre-commit hook, which checks formatting and lints as CI does, once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
 ## Check API
 
 ```sh
