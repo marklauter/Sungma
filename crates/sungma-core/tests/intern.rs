@@ -6,7 +6,12 @@ use std::ops::Range;
 use sungma_core::{
     intern::LeasingInterner,
     memory::MemoryDictionary,
-    store::{Dictionary, Interner, NameStore, StoreError},
+    model::TheoryId,
+    store::{
+        Dictionary, Interner, NameStore,
+        Pool::{self, Identities},
+        StoreError,
+    },
 };
 
 /// One node's view of a shared store. A stale node never finds a name, as
@@ -30,28 +35,28 @@ fn node(store: &MemoryDictionary, block: u32) -> LeasingInterner<Node<'_>> {
 }
 
 impl Dictionary for Node<'_> {
-    async fn lookup(&self, name: &str) -> Result<Option<u32>, StoreError> {
+    async fn lookup(&self, pool: Pool, name: &str) -> Result<Option<u32>, StoreError> {
         if self.stale {
             return Ok(None);
         }
-        self.store.lookup(name).await
+        self.store.lookup(pool, name).await
     }
 
-    async fn name(&self, id: u32) -> Result<Option<String>, StoreError> {
-        self.store.name(id).await
+    async fn name(&self, pool: Pool, id: u32) -> Result<Option<String>, StoreError> {
+        self.store.name(pool, id).await
     }
 }
 
 impl NameStore for Node<'_> {
-    async fn insert_if_absent(&self, name: &str, id: u32) -> Result<u32, StoreError> {
-        self.store.insert_if_absent(name, id).await
+    async fn insert_if_absent(&self, pool: Pool, name: &str, id: u32) -> Result<u32, StoreError> {
+        self.store.insert_if_absent(pool, name, id).await
     }
 
-    async fn lease(&self, count: u32) -> Result<Range<u32>, StoreError> {
+    async fn lease(&self, pool: Pool, count: u32) -> Result<Range<u32>, StoreError> {
         if self.exhausted {
             return Ok(0..0);
         }
-        self.store.lease(count).await
+        self.store.lease(pool, count).await
     }
 }
 
@@ -59,14 +64,40 @@ impl NameStore for Node<'_> {
 async fn a_name_is_minted_once() {
     let store = MemoryDictionary::default();
     let node = node(&store, 10);
-    let alice = node.intern("alice").await.unwrap();
-    let bob = node.intern("bob").await.unwrap();
+    let alice = node.intern(Identities, "alice").await.unwrap();
+    let bob = node.intern(Identities, "bob").await.unwrap();
     assert_ne!(alice, bob);
-    assert_eq!(node.intern("alice").await.unwrap(), alice);
-    assert_eq!(node.lookup("alice").await.unwrap(), Some(alice));
-    assert_eq!(node.lookup("carol").await.unwrap(), None);
-    assert_eq!(node.name(bob).await.unwrap().as_deref(), Some("bob"));
-    assert_eq!(node.name(99).await.unwrap(), None);
+    assert_eq!(node.intern(Identities, "alice").await.unwrap(), alice);
+    assert_eq!(node.lookup(Identities, "alice").await.unwrap(), Some(alice));
+    assert_eq!(node.lookup(Identities, "carol").await.unwrap(), None);
+    assert_eq!(
+        node.name(Identities, bob).await.unwrap().as_deref(),
+        Some("bob")
+    );
+    assert_eq!(node.name(Identities, 99).await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn each_pool_mints_its_own_ids() {
+    let store = MemoryDictionary::default();
+    let node = node(&store, 10);
+    let pools = [
+        Pool::Theories,
+        Pool::Relations,
+        Pool::Resources(TheoryId(0)),
+        Pool::Resources(TheoryId(1)),
+        Identities,
+    ];
+    for pool in pools {
+        assert_eq!(node.intern(pool, "x").await.unwrap(), 0, "{pool:?}");
+    }
+    for pool in pools {
+        assert_eq!(node.intern(pool, &format!("{pool:?}")).await.unwrap(), 1);
+    }
+    for pool in pools {
+        let name = format!("{pool:?}");
+        assert_eq!(node.name(pool, 1).await.unwrap(), Some(name));
+    }
 }
 
 #[tokio::test]
@@ -75,7 +106,7 @@ async fn nodes_mint_from_their_own_blocks() {
     let (a, b) = (node(&store, 2), node(&store, 2));
     let mut ids = Vec::new();
     for (node, name) in [(&a, "w"), (&a, "x"), (&b, "y"), (&a, "z")] {
-        ids.push(node.intern(name).await.unwrap());
+        ids.push(node.intern(Identities, name).await.unwrap());
     }
     assert_eq!(ids, [0, 1, 2, 4]);
 }
@@ -92,10 +123,10 @@ async fn the_first_insert_of_a_name_wins() {
         },
         10,
     );
-    let first = a.intern("alice").await.unwrap();
+    let first = a.intern(Identities, "alice").await.unwrap();
     // b misses a's insert, mints 10 from its own block, and loses.
-    assert_eq!(b.intern("alice").await.unwrap(), first);
-    assert_eq!(store.name(10).await.unwrap(), None);
+    assert_eq!(b.intern(Identities, "alice").await.unwrap(), first);
+    assert_eq!(store.name(Identities, 10).await.unwrap(), None);
 }
 
 #[tokio::test]
@@ -109,14 +140,14 @@ async fn interning_fails_once_the_ids_run_out() {
         },
         10,
     );
-    assert!(node.intern("alice").await.is_err());
+    assert!(node.intern(Identities, "alice").await.is_err());
 }
 
 #[tokio::test]
 async fn setup_ids_and_leased_ids_never_meet() {
     let store = MemoryDictionary::default();
     let node = node(&store, 10);
-    assert_eq!(store.intern("a"), 0);
-    assert_eq!(node.intern("b").await.unwrap(), 1);
-    assert_eq!(store.intern("c"), 11);
+    assert_eq!(store.intern(Identities, "a"), 0);
+    assert_eq!(node.intern(Identities, "b").await.unwrap(), 1);
+    assert_eq!(store.intern(Identities, "c"), 11);
 }

@@ -186,10 +186,11 @@ fn redeclaring_a_relation_checks_the_whole_theory_by_id() {
     };
     declare("owner", This).unwrap();
     declare("editor", Computed("owner")).unwrap();
-    // owner is 1 and editor is 2. The kept editor is checked before the
-    // redeclared owner, which now closes a cycle through it.
+    // Relations have their own pool, so owner is 0 and editor is 1. The
+    // kept editor is checked before the redeclared owner, which now closes
+    // a cycle through it.
     let error = declare("owner", Computed("editor")).unwrap_err();
-    assert_eq!(error, names(&["2", "1", "2"]));
+    assert_eq!(error, names(&["1", "0", "1"]));
 }
 
 #[test]

@@ -38,6 +38,7 @@ use crate::{
     model::{Fact, IdentityId, RelationId, Resource, ResourceId, Subject, Subjectset, TheoryId},
     name::{NameError, ResourceName, SubjectsetName},
     rewrite::Rewrite,
+    store::Pool,
     theory::{self, Theory, TheoryError},
 };
 
@@ -75,9 +76,9 @@ pub fn declare(
     relation: &str,
     rewrite: Rewrite<&str>,
 ) -> Result<(), TheoryError> {
-    let theory = TheoryId(dictionary.intern(theory));
-    let relation = RelationId(dictionary.intern(relation));
-    let rewrite = rewrite.map(&mut |name| RelationId(dictionary.intern(name)));
+    let theory = TheoryId(dictionary.intern(Pool::Theories, theory));
+    let relation = RelationId(dictionary.intern(Pool::Relations, relation));
+    let rewrite = rewrite.map(&mut |name| RelationId(dictionary.intern(Pool::Relations, name)));
     let mut relations: Vec<_> = theories
         .theory(theory)
         .into_iter()
@@ -104,14 +105,14 @@ pub fn load_theories(
             return Err(FixtureError::DuplicateTheory(theory));
         }
         theory::validate(&relations)?;
-        let id = TheoryId(dictionary.intern(&theory));
+        let id = TheoryId(dictionary.intern(Pool::Theories, &theory));
         let relations = relations
             .into_iter()
             .map(|(relation, rewrite)| {
-                let relation = RelationId(dictionary.intern(&relation));
+                let relation = RelationId(dictionary.intern(Pool::Relations, &relation));
                 (
                     relation,
-                    rewrite.map(&mut |name| RelationId(dictionary.intern(&name))),
+                    rewrite.map(&mut |name| RelationId(dictionary.intern(Pool::Relations, &name))),
                 )
             })
             .collect();
@@ -157,7 +158,7 @@ pub fn load_facts(
         let subjectset = intern_subjectset(dictionary, &dto.set)?;
         let subject = match (dto.identity, dto.resource, dto.subjectset) {
             (Some(identity), None, None) => {
-                Subject::Identity(IdentityId(dictionary.intern(&identity)))
+                Subject::Identity(IdentityId(dictionary.intern(Pool::Identities, &identity)))
             }
             (None, Some(resource), None) => {
                 Subject::ResourceMember(intern_resource(dictionary, &resource)?)
@@ -179,9 +180,10 @@ fn intern_resource(dictionary: &mut MemoryDictionary, text: &str) -> Result<Reso
 }
 
 fn intern_resource_name(dictionary: &mut MemoryDictionary, name: &ResourceName) -> Resource {
+    let theory = TheoryId(dictionary.intern(Pool::Theories, name.theory()));
     Resource {
-        theory: TheoryId(dictionary.intern(name.theory())),
-        id: ResourceId(dictionary.intern(name.id())),
+        theory,
+        id: ResourceId(dictionary.intern(Pool::Resources(theory), name.id())),
     }
 }
 
@@ -192,6 +194,6 @@ fn intern_subjectset(
     let name: SubjectsetName = text.parse()?;
     Ok(Subjectset {
         resource: intern_resource_name(dictionary, name.resource()),
-        relation: RelationId(dictionary.intern(name.relation())),
+        relation: RelationId(dictionary.intern(Pool::Relations, name.relation())),
     })
 }

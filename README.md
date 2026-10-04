@@ -30,7 +30,7 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
   - `FactStore`: keyed like a wide-column store, with the subjectset as partition key and the subject as sort key;
   - `TheoryStore`: the rewrite for a theory and relation;
   - `FactWriter`: a batch of inserts and deletes, applied atomically at the next revision;
-  - `Interner`: mints ids for new names.
+  - `Interner`: mints ids for new names, each in its pool: theory names, relation names, the resource ids of each theory, and identities. Relations share one pool because `(parent, viewer)` means `viewer` in whichever theory the parent fact names.
 - Where a guarantee spans nodes, Sungma runs the protocol and a store supplies primitives. A fact keeps the revision that wrote it and the one that deleted it, so reads at any revision work on any store. `LeasingInterner` mints ids over a `NameStore`: each node leases a block of ids from a shared counter, and a conditional insert makes the first node to store a name win.
 - `memory.rs` has in-memory fakes of the stores. There is no real database yet.
 

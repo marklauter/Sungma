@@ -1,25 +1,27 @@
 //! Minting ids across nodes.
 //!
-//! Each node leases a block of ids from the store's shared counter and
-//! mints from it locally, so the counter is touched once per block rather
-//! than once per name. A new name is stored with a conditional insert: when
+//! Each pool has its own shared counter. A node leases a block of ids from
+//! it and mints from the block locally, so the counter is touched once per
+//! block rather than once per name. A new name is stored with a conditional insert: when
 //! two nodes intern the same name at once, the first insert wins, and the
 //! other node takes the winner's id and skips its own. Skipped ids and the
 //! unused rest of a block when a node stops are gaps, which ids may have.
 
 use std::{
+    collections::HashMap,
     ops::Range,
-    sync::{Mutex, PoisonError},
+    sync::{Mutex, MutexGuard, PoisonError},
 };
 
-use crate::store::{Dictionary, Interner, NameStore, StoreError};
+use crate::store::{Dictionary, Interner, NameStore, Pool, StoreError};
 
-/// An [`Interner`] over a [`NameStore`], minting from leased blocks.
+/// An [`Interner`] over a [`NameStore`], minting from a leased block per
+/// pool.
 #[derive(Debug)]
 pub struct LeasingInterner<S> {
     store: S,
     block: u32,
-    lease: Mutex<Range<u32>>,
+    leases: Mutex<HashMap<Pool, Range<u32>>>,
 }
 
 impl<S> LeasingInterner<S> {
@@ -28,17 +30,18 @@ impl<S> LeasingInterner<S> {
         Self {
             store,
             block,
-            lease: Mutex::new(0..0),
+            leases: Mutex::default(),
         }
     }
 
-    /// The next id of the current block, `None` once it's spent. A
-    /// poisoned lock still holds a whole range, so it's used as is.
-    fn take(&self) -> Option<u32> {
-        self.lease
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .next()
+    /// A poisoned lock still holds whole ranges, so they're used as is.
+    fn leases(&self) -> MutexGuard<'_, HashMap<Pool, Range<u32>>> {
+        self.leases.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The next id of `pool`'s current block, `None` once it's spent.
+    fn take(&self, pool: Pool) -> Option<u32> {
+        self.leases().get_mut(&pool)?.next()
     }
 }
 
@@ -46,35 +49,35 @@ impl<S: NameStore + Sync> LeasingInterner<S> {
     /// Takes the next id, leasing a new block when the current one is spent.
     /// Two tasks that find it spent at once each lease a block, and the
     /// block left unused is a gap.
-    async fn next_id(&self) -> Result<u32, StoreError> {
-        if let Some(id) = self.take() {
+    async fn next_id(&self, pool: Pool) -> Result<u32, StoreError> {
+        if let Some(id) = self.take(pool) {
             return Ok(id);
         }
-        let mut block = self.store.lease(self.block).await?;
+        let mut block = self.store.lease(pool, self.block).await?;
         let id = block
             .next()
-            .ok_or_else(|| StoreError("no ids left to lease".to_owned()))?;
-        *self.lease.lock().unwrap_or_else(PoisonError::into_inner) = block;
+            .ok_or_else(|| StoreError(format!("no ids left to lease in {pool:?}")))?;
+        self.leases().insert(pool, block);
         Ok(id)
     }
 }
 
 impl<S: NameStore + Sync> Dictionary for LeasingInterner<S> {
-    async fn lookup(&self, name: &str) -> Result<Option<u32>, StoreError> {
-        self.store.lookup(name).await
+    async fn lookup(&self, pool: Pool, name: &str) -> Result<Option<u32>, StoreError> {
+        self.store.lookup(pool, name).await
     }
 
-    async fn name(&self, id: u32) -> Result<Option<String>, StoreError> {
-        self.store.name(id).await
+    async fn name(&self, pool: Pool, id: u32) -> Result<Option<String>, StoreError> {
+        self.store.name(pool, id).await
     }
 }
 
 impl<S: NameStore + Sync> Interner for LeasingInterner<S> {
-    async fn intern(&self, name: &str) -> Result<u32, StoreError> {
-        if let Some(id) = self.store.lookup(name).await? {
+    async fn intern(&self, pool: Pool, name: &str) -> Result<u32, StoreError> {
+        if let Some(id) = self.store.lookup(pool, name).await? {
             return Ok(id);
         }
-        let id = self.next_id().await?;
-        self.store.insert_if_absent(name, id).await
+        let id = self.next_id(pool).await?;
+        self.store.insert_if_absent(pool, name, id).await
     }
 }

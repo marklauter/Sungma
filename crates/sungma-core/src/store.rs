@@ -28,39 +28,72 @@ use crate::{
 #[error("store failure: {0}")]
 pub struct StoreError(pub String);
 
-/// Maps names to their interned ids and back. Read-only: Check never mints
-/// ids.
-pub trait Dictionary {
-    /// `None` when the name was never interned.
-    fn lookup(&self, name: &str) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send;
-
-    /// The name an id was minted for, `None` when no name has it.
-    fn name(&self, id: u32) -> impl Future<Output = Result<Option<String>, StoreError>> + Send;
+/// The pool a name is interned in. Each pool mints its own ids, so one id
+/// names different strings in different pools.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Pool {
+    Theories,
+    /// One pool for every theory's relations: `(parent, viewer)` evaluates
+    /// `viewer` under whichever theory a parent fact names, so a relation id
+    /// means the same name in every theory.
+    Relations,
+    /// The resource ids of one theory.
+    Resources(TheoryId),
+    Identities,
 }
 
-/// Mints ids for names. Every node that interns a name gets the same id,
-/// and an id, once minted, always names the same string. Ids are unique,
-/// not dense: an id may be skipped and is never reused.
+/// Maps names to their interned ids and back, within a [`Pool`]. Read-only:
+/// Check never mints ids.
+pub trait Dictionary {
+    /// `None` when the name was never interned in `pool`.
+    fn lookup(
+        &self,
+        pool: Pool,
+        name: &str,
+    ) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send;
+
+    /// The name an id was minted for, `None` when no name in `pool` has it.
+    fn name(
+        &self,
+        pool: Pool,
+        id: u32,
+    ) -> impl Future<Output = Result<Option<String>, StoreError>> + Send;
+}
+
+/// Mints ids for names. Every node that interns a name in a pool gets the
+/// same id, and an id, once minted, always names the same string. Ids are
+/// unique within their pool, not dense: an id may be skipped and is never
+/// reused.
 pub trait Interner: Dictionary {
-    /// The name's id, minted if the name is new.
-    fn intern(&self, name: &str) -> impl Future<Output = Result<u32, StoreError>> + Send;
+    /// The name's id in `pool`, minted if the name is new there.
+    fn intern(
+        &self,
+        pool: Pool,
+        name: &str,
+    ) -> impl Future<Output = Result<u32, StoreError>> + Send;
 }
 
 /// The storage an id is minted through. Both writes are atomic in the
 /// store, which is all the coordination minting needs.
 pub trait NameStore: Dictionary {
-    /// Stores `name` as `id` unless the name is stored already, and returns
-    /// the name's id afterwards: `id`, or the id another node stored first.
+    /// Stores `name` as `id` in `pool` unless the name is stored there
+    /// already, and returns the name's id afterwards: `id`, or the id
+    /// another node stored first.
     fn insert_if_absent(
         &self,
+        pool: Pool,
         name: &str,
         id: u32,
     ) -> impl Future<Output = Result<u32, StoreError>> + Send;
 
-    /// Advances the shared id counter by up to `count` and returns the ids
-    /// it passed over, which no other lease will return. Empty once the ids
-    /// run out.
-    fn lease(&self, count: u32) -> impl Future<Output = Result<Range<u32>, StoreError>> + Send;
+    /// Advances `pool`'s shared id counter by up to `count` and returns the
+    /// ids it passed over, which no other lease will return. Empty once the
+    /// pool's ids run out.
+    fn lease(
+        &self,
+        pool: Pool,
+        count: u32,
+    ) -> impl Future<Output = Result<Range<u32>, StoreError>> + Send;
 }
 
 /// Facts keyed the way a wide-column store keys them: the subjectset is the

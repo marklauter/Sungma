@@ -5,21 +5,22 @@
 use crate::{
     model::{IdentityId, RelationId, Resource, ResourceId, Subjectset, TheoryId},
     name::{ResourceName, SubjectsetName},
-    store::{Dictionary, StoreError},
+    store::{Dictionary, Pool, StoreError},
 };
 
 pub async fn resource<D: Dictionary>(
     dictionary: &D,
     name: &ResourceName,
 ) -> Result<Option<Resource>, StoreError> {
-    let (Some(theory), Some(id)) = (
-        dictionary.lookup(name.theory()).await?,
-        dictionary.lookup(name.id()).await?,
-    ) else {
+    let Some(theory) = dictionary.lookup(Pool::Theories, name.theory()).await? else {
         return Ok(None);
     };
-    Ok(Some(Resource {
-        theory: TheoryId(theory),
+    let theory = TheoryId(theory);
+    let id = dictionary
+        .lookup(Pool::Resources(theory), name.id())
+        .await?;
+    Ok(id.map(|id| Resource {
+        theory,
         id: ResourceId(id),
     }))
 }
@@ -30,7 +31,7 @@ pub async fn subjectset<D: Dictionary>(
 ) -> Result<Option<Subjectset>, StoreError> {
     let (Some(resource), Some(relation)) = (
         resource(dictionary, name.resource()).await?,
-        dictionary.lookup(name.relation()).await?,
+        dictionary.lookup(Pool::Relations, name.relation()).await?,
     ) else {
         return Ok(None);
     };
@@ -44,5 +45,8 @@ pub async fn identity<D: Dictionary>(
     dictionary: &D,
     identity: &str,
 ) -> Result<Option<IdentityId>, StoreError> {
-    Ok(dictionary.lookup(identity).await?.map(IdentityId))
+    Ok(dictionary
+        .lookup(Pool::Identities, identity)
+        .await?
+        .map(IdentityId))
 }
