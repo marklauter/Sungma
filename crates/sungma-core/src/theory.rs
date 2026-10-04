@@ -1,14 +1,11 @@
 //! A theory: the declared relations of one kind of resource, and their
 //! rewrites.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use thiserror::Error;
 
-use crate::{
-    model::{RelationId, TheoryId},
-    rewrite::Rewrite,
-};
+use crate::{model::RelationId, rewrite::Rewrite};
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum TheoryError {
@@ -19,21 +16,18 @@ pub enum TheoryError {
 /// A relation declared without a rewrite is declared with [`Rewrite::This`].
 #[derive(Debug, Default)]
 pub struct Theory {
-    relations: HashMap<RelationId, Rewrite>,
+    relations: HashMap<RelationId, Arc<Rewrite>>,
 }
-
-/// Every theory Check can reach, by id. A lookup, not a domain concept.
-pub type Theories = HashMap<TheoryId, Theory>;
 
 impl Theory {
     pub fn declare(&mut self, relation: RelationId, rewrite: Rewrite) -> Result<(), TheoryError> {
         validate(&rewrite)?;
-        self.relations.insert(relation, rewrite);
+        self.relations.insert(relation, Arc::new(rewrite));
         Ok(())
     }
 
     /// `None` when the theory doesn't declare the relation.
-    pub fn rewrite(&self, relation: RelationId) -> Option<&Rewrite> {
+    pub fn rewrite(&self, relation: RelationId) -> Option<&Arc<Rewrite>> {
         self.relations.get(&relation)
     }
 }

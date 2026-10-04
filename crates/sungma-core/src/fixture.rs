@@ -32,10 +32,10 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
-    memory::{MemoryDictionary, MemoryFactStore},
+    memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore},
     model::{Fact, IdentityId, RelationId, Resource, ResourceId, Subject, Subjectset, TheoryId},
     rewrite::Rewrite,
-    theory::{Theories, TheoryError},
+    theory::TheoryError,
 };
 
 #[derive(Debug, Error)]
@@ -67,7 +67,7 @@ enum SubjectDto {
 
 /// Declares `relation` in `theory` with a rewrite that names its relations.
 pub fn declare(
-    theories: &mut Theories,
+    theories: &mut MemoryTheoryStore,
     dictionary: &mut MemoryDictionary,
     theory: &str,
     relation: &str,
@@ -79,7 +79,7 @@ pub fn declare(
 /// [`declare`] for any owned or borrowed relation names. A separate
 /// function so `declare(.., This)` still infers `&str`.
 fn declare_named(
-    theories: &mut Theories,
+    theories: &mut MemoryTheoryStore,
     dictionary: &mut MemoryDictionary,
     theory: &str,
     relation: &str,
@@ -88,17 +88,14 @@ fn declare_named(
     let theory = TheoryId(dictionary.intern(theory));
     let relation = RelationId(dictionary.intern(relation));
     let rewrite = rewrite.map(&mut |name| RelationId(dictionary.intern(name.as_ref())));
-    theories
-        .entry(theory)
-        .or_default()
-        .declare(relation, rewrite)
+    theories.declare(theory, relation, rewrite)
 }
 
 /// The JSON is read in name order, so ids are interned in a fixed order.
 pub fn load_theories(
     json: &str,
     dictionary: &mut MemoryDictionary,
-    theories: &mut Theories,
+    theories: &mut MemoryTheoryStore,
 ) -> Result<(), FixtureError> {
     let parsed: BTreeMap<String, BTreeMap<String, Rewrite<String>>> = serde_json::from_str(json)?;
     for (theory, relations) in parsed {

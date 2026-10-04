@@ -23,22 +23,21 @@
 
 use sungma_core::{
     fixture,
-    memory::{MemoryDictionary, MemoryFactStore},
+    memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore},
     model::{Revision, Subject, Subjectset},
     resolve,
     store::FactStore,
-    theory::Theories,
 };
 
 pub struct World {
     pub dictionary: MemoryDictionary,
-    pub theories: Theories,
+    pub theories: MemoryTheoryStore,
     pub facts: MemoryFactStore,
 }
 
 pub fn world() -> World {
     let mut dictionary = MemoryDictionary::default();
-    let mut theories = Theories::default();
+    let mut theories = MemoryTheoryStore::default();
     fixture::load_theories(
         include_str!("../fixtures/docs.theories.json"),
         &mut dictionary,

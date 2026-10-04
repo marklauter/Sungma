@@ -1,10 +1,15 @@
 //! In-memory simulations of the storage ports.
 
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
 use crate::{
-    model::{Fact, Revision, Subject, Subjectset},
-    store::{Dictionary, FactStore, StoreError},
+    model::{Fact, RelationId, Revision, Subject, Subjectset, TheoryId},
+    rewrite::Rewrite,
+    store::{Dictionary, FactStore, StoreError, TheoryStore},
+    theory::{Theory, TheoryError},
 };
 
 #[derive(Debug, Default)]
@@ -99,5 +104,37 @@ impl FactStore for MemoryFactStore {
         revision: Revision,
     ) -> Result<Vec<Subject>, StoreError> {
         Ok(self.visible(set, revision).collect())
+    }
+}
+
+/// Every theory, by id.
+#[derive(Debug, Default)]
+pub struct MemoryTheoryStore {
+    theories: HashMap<TheoryId, Theory>,
+}
+
+impl MemoryTheoryStore {
+    /// Declares `relation` in `theory`, replacing any earlier rewrite.
+    pub fn declare(
+        &mut self,
+        theory: TheoryId,
+        relation: RelationId,
+        rewrite: Rewrite,
+    ) -> Result<(), TheoryError> {
+        self.theories
+            .entry(theory)
+            .or_default()
+            .declare(relation, rewrite)
+    }
+}
+
+impl TheoryStore for MemoryTheoryStore {
+    async fn rewrite(
+        &self,
+        theory: TheoryId,
+        relation: RelationId,
+    ) -> Result<Option<Arc<Rewrite>>, StoreError> {
+        let theory = self.theories.get(&theory);
+        Ok(theory.and_then(|theory| theory.rewrite(relation)).cloned())
     }
 }

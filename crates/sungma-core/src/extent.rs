@@ -17,7 +17,7 @@
 //! itself would repeat the same steps forever, so the branch can't
 //! contribute a derivation.
 
-use std::{future::Future, pin::Pin};
+use std::{future::Future, pin::Pin, sync::Arc};
 
 use thiserror::Error;
 
@@ -25,8 +25,7 @@ use crate::{
     decision::{Decision, Outcome, SEMANTICS},
     model::{Fact, RelationId, Revision, Subject, Subjectset},
     rewrite::Rewrite,
-    store::{FactStore, StoreError},
-    theory::Theories,
+    store::{FactStore, StoreError, TheoryStore},
 };
 
 /// How many subjectsets one membership check may pass through without
@@ -101,20 +100,15 @@ impl Proof for () {
     fn join(&mut self, _: Self) {}
 }
 
-pub struct Extent<'a, F> {
-    theories: &'a Theories,
+pub struct Extent<'a, T, F> {
+    theories: &'a T,
     facts: &'a F,
     subjectset: Subjectset,
     revision: Revision,
 }
 
-impl<'a, F: FactStore + Sync> Extent<'a, F> {
-    pub fn new(
-        theories: &'a Theories,
-        facts: &'a F,
-        subjectset: Subjectset,
-        revision: Revision,
-    ) -> Self {
+impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Extent<'a, T, F> {
+    pub fn new(theories: &'a T, facts: &'a F, subjectset: Subjectset, revision: Revision) -> Self {
         Self {
             theories,
             facts,
@@ -150,17 +144,17 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
     /// One level of the rewrite tree, with the facts read at the revision.
     /// `None` when the subjectset has no rewrite.
     pub async fn expand(&self) -> Result<Option<Expansion>, ExtentError> {
-        let Some(rewrite) = self.rewrite(self.subjectset) else {
+        let Some(rewrite) = self.rewrite(self.subjectset).await? else {
             return Ok(None);
         };
-        Ok(Some(self.expand_node(rewrite, self.subjectset).await?))
+        Ok(Some(self.expand_node(&rewrite, self.subjectset).await?))
     }
 
     /// `None` when the theory or the relation isn't declared.
-    fn rewrite(&self, set: Subjectset) -> Option<&'a Rewrite> {
+    async fn rewrite(&self, set: Subjectset) -> Result<Option<Arc<Rewrite>>, StoreError> {
         self.theories
-            .get(&set.resource.theory)?
-            .rewrite(set.relation)
+            .rewrite(set.resource.theory, set.relation)
+            .await
     }
 
     /// `path` holds the subjectsets being evaluated, outermost first. The
@@ -179,11 +173,11 @@ impl<'a, F: FactStore + Sync> Extent<'a, F> {
             if path.len() > MAX_DEPTH {
                 return Err(ExtentError::DepthExceeded(MAX_DEPTH));
             }
-            let Some(rewrite) = self.rewrite(set) else {
+            let Some(rewrite) = self.rewrite(set).await? else {
                 return Ok(None);
             };
             let path = [path, &[set]].concat();
-            self.contains_node(rewrite, set, subject, &path).await
+            self.contains_node(&rewrite, set, subject, &path).await
         })
     }
 
