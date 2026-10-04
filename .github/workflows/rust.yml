@@ -22,7 +22,7 @@ jobs:
   format:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - uses: ./.github/actions/setup-rust
       with:
         components: rustfmt
@@ -33,7 +33,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - uses: ./.github/actions/setup-rust
       with:
         components: clippy
@@ -51,7 +51,7 @@ jobs:
         os: [ ubuntu-latest, windows-latest ]
         profile: [ dev, release ]
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - uses: ./.github/actions/setup-rust
 
     - name: Build
@@ -63,13 +63,13 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - uses: ./.github/actions/setup-rust
       with:
         components: llvm-tools-preview
-    - uses: taiki-e/install-action@v2
+    - uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
       with:
-        tool: cargo-llvm-cov
+        tool: cargo-llvm-cov@0.9.1
 
     - name: Coverage (fails under 95% of lines)
       run: cargo llvm-cov --workspace --locked --fail-under-lines 95
@@ -77,13 +77,13 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
-    - uses: taiki-e/install-action@v2
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
       with:
-        tool: cargo-audit
+        tool: cargo-audit@0.22.2
 
     - name: Audit dependencies against the RustSec advisory database
-      run: cargo audit
+      run: cargo audit --deny warnings
 
   # The single required status check: the ruleset names this job, not the matrix legs.
   passed:
