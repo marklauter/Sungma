@@ -9,7 +9,7 @@ use crate::{
     model::{Fact, RelationId, Revision, Subject, Subjectset, TheoryId},
     rewrite::Rewrite,
     store::{Dictionary, FactStore, StoreError, TheoryStore},
-    theory::{Theory, TheoryError},
+    theory::Theory,
 };
 
 #[derive(Debug, Default)]
@@ -114,17 +114,14 @@ pub struct MemoryTheoryStore {
 }
 
 impl MemoryTheoryStore {
-    /// Declares `relation` in `theory`, replacing any earlier rewrite.
-    pub fn declare(
-        &mut self,
-        theory: TheoryId,
-        relation: RelationId,
-        rewrite: Rewrite,
-    ) -> Result<(), TheoryError> {
-        self.theories
-            .entry(theory)
-            .or_default()
-            .declare(relation, rewrite)
+    /// Declares a theory whole, replacing any earlier declaration.
+    pub fn declare(&mut self, id: TheoryId, theory: Theory) {
+        self.theories.insert(id, theory);
+    }
+
+    /// The theory as declared, `None` when it never was.
+    pub fn theory(&self, id: TheoryId) -> Option<&Theory> {
+        self.theories.get(&id)
     }
 }
 

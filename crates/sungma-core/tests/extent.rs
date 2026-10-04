@@ -9,7 +9,7 @@ use sungma_core::{
     extent::{Expansion, Extent, ExtentError, MAX_DEPTH},
     fixture::{self, FixtureError},
     model::{RelationId, Resource, Revision, Subject, Subjectset, TheoryId},
-    rewrite::Rewrite::{self, Intersection, Union},
+    rewrite::Rewrite::{self, Computed, Exclusion, Intersection, This, Union},
     store::{FactStore, StoreError, TheoryStore},
     theory::TheoryError,
 };
@@ -384,8 +384,15 @@ async fn a_store_error_anywhere_in_the_tree_fails_expand() {
     let mut world = world();
     // The docs theories exclude only computed subjectsets, which expand
     // leaves as references without a read.
-    let json = r#"{ "file": { "unowned": { "exclusion": [{ "computed": "owner" }, "this"] } } }"#;
-    fixture::load_theories(json, &mut world.dictionary, &mut world.theories).unwrap();
+    let unowned = Exclusion(Box::new(Computed("owner")), Box::new(This));
+    fixture::declare(
+        &mut world.theories,
+        &mut world.dictionary,
+        "file",
+        "unowned",
+        unowned,
+    )
+    .unwrap();
     let cases = [
         (
             "file:design.md#viewer",
