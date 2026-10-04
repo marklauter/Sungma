@@ -74,10 +74,21 @@ jobs:
     - name: Coverage (fails under 95% of lines)
       run: cargo llvm-cov --workspace --locked --fail-under-lines 95
 
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-audit
+
+    - name: Audit dependencies against the RustSec advisory database
+      run: cargo audit
+
   # The single required status check: the ruleset names this job, not the matrix legs.
   passed:
     if: always()
-    needs: [ format, lint, test, coverage ]
+    needs: [ format, lint, test, coverage, audit ]
     runs-on: ubuntu-latest
     steps:
     - name: Require every job to succeed
