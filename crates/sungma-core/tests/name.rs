@@ -55,3 +55,16 @@ fn a_malformed_subjectset_name_is_refused() {
         r#"malformed subjectset "file#viewer", expected theory:id#relation"#
     );
 }
+
+#[test]
+fn a_resource_itself_is_not_a_subjectset() {
+    let error = "folder:root#...".parse::<SubjectsetName>().unwrap_err();
+    assert_eq!(
+        error,
+        NameError::ResourceMember("folder:root#...".to_owned())
+    );
+    assert_eq!(
+        error.to_string(),
+        r#""folder:root#..." names a resource, not a subjectset"#
+    );
+}
