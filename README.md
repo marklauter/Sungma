@@ -24,12 +24,15 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
   - union, intersection and exclusion.
 - `validate` checks a theory whole when it is declared. It refuses duplicates, empty operators, nesting deeper than 100 levels, undeclared names and computed cycles. So any theory that gets stored is guaranteed to evaluate.
 
-**Storage ports** (`store.rs`, `memory.rs`)
-- There are three async traits, which play the role of C# interfaces:
-  - `Dictionary`: name to id;
+**Storage ports** (`store.rs`, `memory.rs`, `intern.rs`)
+- The ports are async traits, which play the role of C# interfaces. Reads and writes are separate:
+  - `Dictionary`: name to id, and back;
   - `FactStore`: keyed like a wide-column store, with the subjectset as partition key and the subject as sort key;
-  - `TheoryStore`: the rewrite for a theory and relation.
-- `memory.rs` has in-memory fakes of all three. There is no real database yet.
+  - `TheoryStore`: the rewrite for a theory and relation;
+  - `FactWriter`: a batch of inserts and deletes, applied atomically at the next revision;
+  - `Interner`: mints ids for new names.
+- Where a guarantee spans nodes, Sungma runs the protocol and a store supplies primitives. A fact keeps the revision that wrote it and the one that deleted it, so reads at any revision work on any store. `LeasingInterner` mints ids over a `NameStore`: each node leases a block of ids from a shared counter, and a conditional insert makes the first node to store a name win.
+- `memory.rs` has in-memory fakes of the stores. There is no real database yet.
 
 **Evaluation** (`extent.rs`, the heart of the project)
 - `Extent` walks a rewrite tree recursively against the stores at a fixed revision. It never builds the full set of subjects; it short-circuits as soon as the answer is known.

@@ -1,12 +1,12 @@
-//! The in-memory stores through their write ports: facts keep their
+//! The in-memory fact store through its write port: facts keep their
 //! history, so a read at any revision sees the facts stored then.
 
 use sungma_core::{
-    memory::{MemoryDictionary, MemoryFactStore},
+    memory::MemoryFactStore,
     model::{
         Fact, IdentityId, RelationId, Resource, ResourceId, Revision, Subject, Subjectset, TheoryId,
     },
-    store::{Dictionary, FactStore, FactWrite::*, FactWriter, Interner},
+    store::{FactStore, FactWrite::*, FactWriter},
 };
 
 const SET: Subjectset = Subjectset {
@@ -98,15 +98,4 @@ async fn deleting_an_absent_fact_changes_nothing() {
     facts.write(&[Insert(fact(ALICE))]).await.unwrap();
     facts.write(&[Delete(fact(BOB))]).await.unwrap();
     assert_eq!(stored(&facts, 3).await, [ALICE]);
-}
-
-#[tokio::test]
-async fn interning_mints_once() {
-    let dictionary = MemoryDictionary::default();
-    assert_eq!(dictionary.lookup("alice").await.unwrap(), None);
-    let alice = Interner::intern(&dictionary, "alice").await.unwrap();
-    let bob = Interner::intern(&dictionary, "bob").await.unwrap();
-    assert_ne!(alice, bob);
-    assert_eq!(Interner::intern(&dictionary, "alice").await.unwrap(), alice);
-    assert_eq!(dictionary.lookup("alice").await.unwrap(), Some(alice));
 }

@@ -2,13 +2,14 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
+    ops::Range,
     sync::{Arc, Mutex, MutexGuard},
 };
 
 use crate::{
     model::{Fact, RelationId, Revision, Subject, Subjectset, TheoryId},
     rewrite::Rewrite,
-    store::{Dictionary, FactStore, FactWrite, FactWriter, Interner, StoreError, TheoryStore},
+    store::{Dictionary, FactStore, FactWrite, FactWriter, NameStore, StoreError, TheoryStore},
     theory::Theory,
 };
 
@@ -21,33 +22,73 @@ fn lock<'a, T>(mutex: &'a Mutex<T>, what: &str) -> Result<MutexGuard<'a, T>, Sto
         .map_err(|_| StoreError(format!("{what} poisoned")))
 }
 
+/// Names and ids both ways, and the counter leases advance.
+#[derive(Debug, Default)]
+struct Names {
+    ids: HashMap<String, u32>,
+    names: HashMap<u32, String>,
+    next: u32,
+}
+
+impl Names {
+    fn insert_if_absent(&mut self, name: &str, id: u32) -> u32 {
+        if let Some(&stored) = self.ids.get(name) {
+            return stored;
+        }
+        self.ids.insert(name.to_owned(), id);
+        self.names.insert(id, name.to_owned());
+        id
+    }
+
+    fn lease(&mut self, count: u32) -> Range<u32> {
+        let start = self.next;
+        self.next = start.saturating_add(count);
+        start..self.next
+    }
+}
+
+/// A [`NameStore`]. Setup code mints through [`MemoryDictionary::intern`],
+/// one id at a time from the same counter the leases advance, so its ids
+/// never meet a [`crate::intern::LeasingInterner`]'s.
 #[derive(Debug, Default)]
 pub struct MemoryDictionary {
-    ids: Mutex<HashMap<String, u32>>,
+    names: Mutex<Names>,
 }
 
 impl MemoryDictionary {
     /// Returns the name's id, minting the next one if it's new.
     pub fn intern(&self, name: &str) -> u32 {
-        mint(&mut self.ids.lock().expect("dictionary poisoned"), name)
+        let mut names = self.names.lock().expect("dictionary poisoned");
+        if let Some(&id) = names.ids.get(name) {
+            return id;
+        }
+        let id = names.lease(1);
+        assert!(!id.is_empty(), "dictionary exceeds u32 ids");
+        names.insert_if_absent(name, id.start)
     }
-}
 
-fn mint(ids: &mut HashMap<String, u32>, name: &str) -> u32 {
-    let next = u32::try_from(ids.len()).expect("dictionary exceeds u32 ids");
-    *ids.entry(name.to_owned()).or_insert(next)
+    fn names(&self) -> Result<MutexGuard<'_, Names>, StoreError> {
+        lock(&self.names, "dictionary")
+    }
 }
 
 impl Dictionary for MemoryDictionary {
     async fn lookup(&self, name: &str) -> Result<Option<u32>, StoreError> {
-        Ok(lock(&self.ids, "dictionary")?.get(name).copied())
+        Ok(self.names()?.ids.get(name).copied())
+    }
+
+    async fn name(&self, id: u32) -> Result<Option<String>, StoreError> {
+        Ok(self.names()?.names.get(&id).cloned())
     }
 }
 
-impl Interner for MemoryDictionary {
-    async fn intern(&self, name: &str) -> Result<u32, StoreError> {
-        let mut ids = lock(&self.ids, "dictionary")?;
-        Ok(mint(&mut ids, name))
+impl NameStore for MemoryDictionary {
+    async fn insert_if_absent(&self, name: &str, id: u32) -> Result<u32, StoreError> {
+        Ok(self.names()?.insert_if_absent(name, id))
+    }
+
+    async fn lease(&self, count: u32) -> Result<Range<u32>, StoreError> {
+        Ok(self.names()?.lease(count))
     }
 }
 
