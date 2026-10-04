@@ -68,7 +68,7 @@ The [Sample](#sample) below (files, folders, groups) and its trace for "is alice
 
 ## Development
 
-`rust-toolchain.toml` installs the stable toolchain with clippy, rustfmt and rust-analyzer. Enable the pre-commit hook, which checks formatting and lints as CI does, once per clone:
+`rust-toolchain.toml` installs the stable toolchain with clippy, rustfmt and rust-analyzer. Enable the hooks once per clone. Before each commit they check formatting, lints, docs and tests; before each push, coverage, mutation testing of the branch's changes and the dependency audit, as CI does. The push checks need `cargo-llvm-cov`, `cargo-mutants` and `cargo-audit`.
 
 ```sh
 git config core.hooksPath .githooks

@@ -1,6 +1,8 @@
 #!/bin/sh
-# Checks formatting and lints before each commit, as CI does.
+# The fast CI checks, before each commit: formatting, lints, docs and tests.
 # Enable once per clone: git config core.hooksPath .githooks
 set -e
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked --quiet
+cargo test --workspace --locked --quiet

@@ -1,0 +1,11 @@
+#!/bin/sh
+# The slow CI checks, before each push: coverage, mutation testing of the
+# lines this branch changes, and the dependency audit. Needs cargo-llvm-cov,
+# cargo-mutants and cargo-audit installed.
+set -e
+cargo llvm-cov --workspace --locked --fail-under-lines 95 --summary-only
+git fetch --quiet origin main
+mkdir -p target
+git diff origin/main... > target/pr.diff
+cargo mutants --workspace --in-diff target/pr.diff -- --locked
+cargo audit --deny warnings
