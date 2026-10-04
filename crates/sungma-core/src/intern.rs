@@ -9,6 +9,7 @@
 
 use std::{
     collections::HashMap,
+    num::NonZeroU32,
     ops::Range,
     sync::{Mutex, MutexGuard, PoisonError},
 };
@@ -20,13 +21,13 @@ use crate::store::{Dictionary, Interner, NameStore, Pool, StoreError};
 #[derive(Debug)]
 pub struct LeasingInterner<S> {
     store: S,
-    block: u32,
+    block: NonZeroU32,
     leases: Mutex<HashMap<Pool, Range<u32>>>,
 }
 
 impl<S> LeasingInterner<S> {
     /// Leases `block` ids at a time.
-    pub fn new(store: S, block: u32) -> Self {
+    pub fn new(store: S, block: NonZeroU32) -> Self {
         Self {
             store,
             block,
@@ -53,7 +54,7 @@ impl<S: NameStore + Sync> LeasingInterner<S> {
         if let Some(id) = self.take(pool) {
             return Ok(id);
         }
-        let mut block = self.store.lease(pool, self.block).await?;
+        let mut block = self.store.lease(pool, self.block.get()).await?;
         let id = block
             .next()
             .ok_or_else(|| StoreError(format!("no ids left to lease in {pool:?}")))?;

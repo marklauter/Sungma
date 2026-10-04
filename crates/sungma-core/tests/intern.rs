@@ -1,7 +1,7 @@
 //! Minting ids from leased blocks, with nodes simulated as interners
 //! sharing one store.
 
-use std::ops::Range;
+use std::{num::NonZeroU32, ops::Range};
 
 use sungma_core::{
     intern::LeasingInterner,
@@ -23,14 +23,18 @@ struct Node<'a> {
     exhausted: bool,
 }
 
-fn node(store: &MemoryDictionary, block: u32) -> LeasingInterner<Node<'_>> {
+fn block(size: u32) -> NonZeroU32 {
+    NonZeroU32::new(size).unwrap()
+}
+
+fn node(store: &MemoryDictionary, size: u32) -> LeasingInterner<Node<'_>> {
     LeasingInterner::new(
         Node {
             store,
             stale: false,
             exhausted: false,
         },
-        block,
+        block(size),
     )
 }
 
@@ -121,7 +125,7 @@ async fn the_first_insert_of_a_name_wins() {
             stale: true,
             exhausted: false,
         },
-        10,
+        block(10),
     );
     let first = a.intern(Identities, "alice").await.unwrap();
     // b misses a's insert, mints 10 from its own block, and loses.
@@ -138,7 +142,7 @@ async fn interning_fails_once_the_ids_run_out() {
             stale: false,
             exhausted: true,
         },
-        10,
+        block(10),
     );
     assert!(node.intern(Identities, "alice").await.is_err());
 }
