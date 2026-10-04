@@ -121,11 +121,11 @@ async fn denied_cites_nothing() {
 
 #[tokio::test]
 async fn replay_at_the_recorded_revision_ignores_later_writes() {
-    let mut world = world();
+    let world = world();
     let decision = decide(&world, "file:design.md#viewer", "alice", head(&world).await).await;
 
     let ban = r#"[{ "set": "file:design.md#banned", "identity": "alice" }]"#;
-    fixture::load_facts(ban, &mut world.dictionary, &mut world.facts).unwrap();
+    fixture::load_facts(ban, &world.dictionary, &world.facts).unwrap();
 
     let replayed = replay(&decision, &world.theories, &world.facts).await;
     assert_eq!(replayed.unwrap(), Replay::Matches);
@@ -141,7 +141,7 @@ async fn replay_differs_when_a_theory_changes() {
     // Theories aren't versioned yet, so this edit reaches the past revision.
     fixture::declare(
         &mut world.theories,
-        &mut world.dictionary,
+        &world.dictionary,
         "file",
         "viewer",
         This,

@@ -36,19 +36,19 @@ pub struct World {
 }
 
 pub fn world() -> World {
-    let mut dictionary = MemoryDictionary::default();
+    let dictionary = MemoryDictionary::default();
     let mut theories = MemoryTheoryStore::default();
     fixture::load_theories(
         include_str!("../fixtures/docs.theories.json"),
-        &mut dictionary,
+        &dictionary,
         &mut theories,
     )
     .unwrap();
-    let mut facts = MemoryFactStore::default();
+    let facts = MemoryFactStore::default();
     fixture::load_facts(
         include_str!("../fixtures/docs.facts.json"),
-        &mut dictionary,
-        &mut facts,
+        &dictionary,
+        &facts,
     )
     .unwrap();
     World {

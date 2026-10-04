@@ -9,6 +9,7 @@ pub mod check;
 pub mod decision;
 pub mod extent;
 pub mod fixture;
+pub mod intern;
 pub mod memory;
 pub mod model;
 pub mod name;

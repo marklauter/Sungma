@@ -2,73 +2,208 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::Arc,
+    ops::Range,
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use crate::{
     model::{Fact, RelationId, Revision, Subject, Subjectset, TheoryId},
     rewrite::Rewrite,
-    store::{Dictionary, FactStore, StoreError, TheoryStore},
+    store::{
+        Dictionary, FactStore, FactWrite, FactWriter, NameStore, Pool, StoreError, TheoryStore,
+    },
     theory::Theory,
 };
 
+/// The ports take `&self` so a store can be shared across concurrent
+/// requests, so its contents sit behind a mutex. Setup code calls the
+/// synchronous inherent methods, which share the ports' code.
+fn lock<'a, T>(mutex: &'a Mutex<T>, what: &str) -> Result<MutexGuard<'a, T>, StoreError> {
+    mutex
+        .lock()
+        .map_err(|_| StoreError(format!("{what} poisoned")))
+}
+
+/// One pool's names and ids both ways, and the counter its leases advance.
+#[derive(Debug, Default)]
+struct Names {
+    ids: HashMap<String, u32>,
+    names: HashMap<u32, String>,
+    next: u32,
+}
+
+impl Names {
+    fn insert_if_absent(&mut self, name: &str, id: u32) -> u32 {
+        if let Some(&stored) = self.ids.get(name) {
+            return stored;
+        }
+        self.ids.insert(name.to_owned(), id);
+        self.names.insert(id, name.to_owned());
+        id
+    }
+
+    fn lease(&mut self, count: u32) -> Range<u32> {
+        let start = self.next;
+        self.next = start.saturating_add(count);
+        start..self.next
+    }
+}
+
+/// A [`NameStore`]. Setup code mints through [`MemoryDictionary::intern`],
+/// one id at a time from the same counters the leases advance, so its ids
+/// never meet a [`crate::intern::LeasingInterner`]'s.
 #[derive(Debug, Default)]
 pub struct MemoryDictionary {
-    ids: HashMap<String, u32>,
+    pools: Mutex<HashMap<Pool, Names>>,
 }
 
 impl MemoryDictionary {
-    /// Returns the name's id, minting the next one if it's new.
-    pub fn intern(&mut self, name: &str) -> u32 {
-        let next = u32::try_from(self.ids.len()).expect("dictionary exceeds u32 ids");
-        *self.ids.entry(name.to_owned()).or_insert(next)
+    /// Returns the name's id in `pool`, minting the next one if it's new.
+    pub fn intern(&self, pool: Pool, name: &str) -> u32 {
+        let mut pools = self.pools.lock().expect("dictionary poisoned");
+        let names = pools.entry(pool).or_default();
+        if let Some(&id) = names.ids.get(name) {
+            return id;
+        }
+        let id = names.lease(1);
+        assert!(!id.is_empty(), "{pool:?} exceeds u32 ids");
+        names.insert_if_absent(name, id.start)
+    }
+
+    fn pools(&self) -> Result<MutexGuard<'_, HashMap<Pool, Names>>, StoreError> {
+        lock(&self.pools, "dictionary")
     }
 }
 
 impl Dictionary for MemoryDictionary {
-    async fn lookup(&self, name: &str) -> Result<Option<u32>, StoreError> {
-        Ok(self.ids.get(name).copied())
+    async fn lookup(&self, pool: Pool, name: &str) -> Result<Option<u32>, StoreError> {
+        let pools = self.pools()?;
+        Ok(pools
+            .get(&pool)
+            .and_then(|names| names.ids.get(name))
+            .copied())
+    }
+
+    async fn name(&self, pool: Pool, id: u32) -> Result<Option<String>, StoreError> {
+        let pools = self.pools()?;
+        Ok(pools
+            .get(&pool)
+            .and_then(|names| names.names.get(&id))
+            .cloned())
     }
 }
 
-/// Each insert produces the next revision. Subjects are kept sorted under
-/// their subjectset, like sort keys under a partition key, each with the
-/// revision it was written at.
+impl NameStore for MemoryDictionary {
+    async fn insert_if_absent(&self, pool: Pool, name: &str, id: u32) -> Result<u32, StoreError> {
+        Ok(self
+            .pools()?
+            .entry(pool)
+            .or_default()
+            .insert_if_absent(name, id))
+    }
+
+    async fn lease(&self, pool: Pool, count: u32) -> Result<Range<u32>, StoreError> {
+        Ok(self.pools()?.entry(pool).or_default().lease(count))
+    }
+}
+
+/// When a fact was stored: from the revision that wrote it until the one
+/// that deleted it, if any.
+#[derive(Clone, Copy, Debug)]
+struct Span {
+    written: Revision,
+    deleted: Option<Revision>,
+}
+
+impl Span {
+    fn covers(self, revision: Revision) -> bool {
+        self.written <= revision && self.deleted.is_none_or(|deleted| revision < deleted)
+    }
+}
+
+/// Subjects are kept sorted under their subjectset, like sort keys under a
+/// partition key, each with the spans it was stored for. A fact deleted and
+/// stored again has a span for each time.
 #[derive(Debug, Default)]
-pub struct MemoryFactStore {
-    facts: HashMap<Subjectset, BTreeMap<Subject, Revision>>,
+struct Facts {
+    spans: HashMap<Subjectset, BTreeMap<Subject, Vec<Span>>>,
     head: u64,
 }
 
-impl MemoryFactStore {
-    /// Returns the revision the fact was written at. Rewriting a stored
-    /// fact keeps its original revision.
-    pub fn insert(&mut self, fact: Fact) -> Revision {
+impl Facts {
+    fn write(&mut self, writes: &[FactWrite]) -> Revision {
         self.head += 1;
-        let written = Revision(self.head);
-        *self
-            .facts
-            .entry(fact.subjectset)
-            .or_default()
-            .entry(fact.subject)
-            .or_insert(written)
+        let revision = Revision(self.head);
+        for write in writes {
+            match *write {
+                FactWrite::Insert(fact) => {
+                    let spans = self
+                        .spans
+                        .entry(fact.subjectset)
+                        .or_default()
+                        .entry(fact.subject)
+                        .or_default();
+                    if spans.last().is_none_or(|span| span.deleted.is_some()) {
+                        spans.push(Span {
+                            written: revision,
+                            deleted: None,
+                        });
+                    }
+                }
+                FactWrite::Delete(fact) => {
+                    let open = self
+                        .spans
+                        .get_mut(&fact.subjectset)
+                        .and_then(|subjects| subjects.get_mut(&fact.subject))
+                        .and_then(|spans| spans.last_mut())
+                        .filter(|span| span.deleted.is_none());
+                    if let Some(span) = open {
+                        span.deleted = Some(revision);
+                    }
+                }
+            }
+        }
+        revision
     }
-}
 
-impl MemoryFactStore {
+    fn contains(&self, set: Subjectset, subject: Subject, revision: Revision) -> bool {
+        self.spans
+            .get(&set)
+            .and_then(|subjects| subjects.get(&subject))
+            .is_some_and(|spans| spans.iter().any(|span| span.covers(revision)))
+    }
+
     fn visible(&self, set: Subjectset, revision: Revision) -> impl Iterator<Item = Subject> + '_ {
-        self.facts
+        self.spans
             .get(&set)
             .into_iter()
             .flatten()
-            .filter(move |(_, written)| **written <= revision)
+            .filter(move |(_, spans)| spans.iter().any(|span| span.covers(revision)))
             .map(|(subject, _)| *subject)
+    }
+}
+
+/// Each write produces the next revision.
+#[derive(Debug, Default)]
+pub struct MemoryFactStore {
+    facts: Mutex<Facts>,
+}
+
+impl MemoryFactStore {
+    /// Stores the fact at the next revision and returns it.
+    pub fn insert(&self, fact: Fact) -> Revision {
+        let mut facts = self.facts.lock().expect("fact store poisoned");
+        facts.write(&[FactWrite::Insert(fact)])
+    }
+
+    fn facts(&self) -> Result<MutexGuard<'_, Facts>, StoreError> {
+        lock(&self.facts, "fact store")
     }
 }
 
 impl FactStore for MemoryFactStore {
     async fn head(&self) -> Result<Revision, StoreError> {
-        Ok(Revision(self.head))
+        Ok(Revision(self.facts()?.head))
     }
 
     async fn contains(
@@ -77,11 +212,7 @@ impl FactStore for MemoryFactStore {
         subject: Subject,
         revision: Revision,
     ) -> Result<bool, StoreError> {
-        let written = self
-            .facts
-            .get(&set)
-            .and_then(|subjects| subjects.get(&subject));
-        Ok(written.is_some_and(|written| *written <= revision))
+        Ok(self.facts()?.contains(set, subject, revision))
     }
 
     async fn subjectsets(
@@ -90,6 +221,7 @@ impl FactStore for MemoryFactStore {
         revision: Revision,
     ) -> Result<Vec<Subjectset>, StoreError> {
         Ok(self
+            .facts()?
             .visible(set, revision)
             .filter_map(|subject| match subject {
                 Subject::Subjectset(nested) => Some(nested),
@@ -103,7 +235,13 @@ impl FactStore for MemoryFactStore {
         set: Subjectset,
         revision: Revision,
     ) -> Result<Vec<Subject>, StoreError> {
-        Ok(self.visible(set, revision).collect())
+        Ok(self.facts()?.visible(set, revision).collect())
+    }
+}
+
+impl FactWriter for MemoryFactStore {
+    async fn write(&self, writes: &[FactWrite]) -> Result<Revision, StoreError> {
+        Ok(self.facts()?.write(writes))
     }
 }
 
