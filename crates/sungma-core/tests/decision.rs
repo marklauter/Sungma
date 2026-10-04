@@ -235,6 +235,18 @@ async fn check_records_unknown_names_and_failures() {
 }
 
 #[tokio::test]
+async fn check_accepts_a_zookie_at_the_latest_revision() {
+    let world = world();
+    let audit = MemoryAuditLog::default();
+    let service = CheckService::new(&world.dictionary, &world.theories, &world.facts, &audit);
+
+    let mut current = request("file:design.md", "viewer", person("alice"));
+    current.zookie = Some(head(&world).await);
+    let verdict = service.check(context("r1"), current).await.unwrap();
+    assert!(matches!(verdict, Verdict::Decided(d) if d.outcome.is_allowed()));
+}
+
+#[tokio::test]
 async fn check_accepts_a_subjectset_as_the_subject() {
     let world = world();
     let audit = MemoryAuditLog::default();

@@ -170,7 +170,7 @@ impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Extent<'a, T, F> {
             if path.contains(&set) {
                 return Ok(None);
             }
-            if path.len() > MAX_DEPTH {
+            if path.len() >= MAX_DEPTH {
                 return Err(ExtentError::DepthExceeded(MAX_DEPTH));
             }
             let Some(rewrite) = self.rewrite(set).await? else {

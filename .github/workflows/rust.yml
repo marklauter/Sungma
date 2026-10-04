@@ -85,10 +85,28 @@ jobs:
     - name: Audit dependencies against the RustSec advisory database
       run: cargo audit --deny warnings
 
+  mutants:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: 0
+    - uses: ./.github/actions/setup-rust
+    - uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
+      with:
+        tool: cargo-mutants@27.1.0
+
+    # Only the lines a pull request changes, so the existing survivors don't block it.
+    - name: Mutation testing (fails when a mutant of changed code survives)
+      if: github.event_name == 'pull_request'
+      run: |
+        git diff origin/${{ github.base_ref }}... > pr.diff
+        cargo mutants --workspace --in-diff pr.diff -- --locked
+
   # The single required status check: the ruleset names this job, not the matrix legs.
   passed:
     if: always()
-    needs: [ format, lint, test, coverage, audit ]
+    needs: [ format, lint, test, coverage, audit, mutants ]
     runs-on: ubuntu-latest
     steps:
     - name: Require every job to succeed

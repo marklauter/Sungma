@@ -51,21 +51,18 @@ pub enum FixtureError {
     DuplicateTheory(String),
     #[error(transparent)]
     Name(#[from] NameError),
+    #[error("fact '{0}' needs exactly one of identity, resource or subjectset")]
+    Subject(String),
 }
 
+// Not a flattened enum: flatten keeps the first subject key it finds and
+// ignores the rest, so a fact with two subjects would load as the first.
 #[derive(Deserialize)]
 struct FactDto {
     set: String,
-    #[serde(flatten)]
-    subject: SubjectDto,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum SubjectDto {
-    Identity(String),
-    Resource(String),
-    Subjectset(String),
+    identity: Option<String>,
+    resource: Option<String>,
+    subjectset: Option<String>,
 }
 
 /// Declares `relation` in `theory` with a rewrite that names its relations,
@@ -158,16 +155,15 @@ pub fn load_facts(
 ) -> Result<(), FixtureError> {
     for dto in serde_json::from_str::<Vec<FactDto>>(json)? {
         let subjectset = intern_subjectset(dictionary, &dto.set)?;
-        let subject = match dto.subject {
-            SubjectDto::Identity(identity) => {
+        let subject = match (dto.identity, dto.resource, dto.subjectset) {
+            (Some(identity), None, None) => {
                 Subject::Identity(IdentityId(dictionary.intern(&identity)))
             }
-            SubjectDto::Resource(resource) => {
+            (None, Some(resource), None) => {
                 Subject::ResourceMember(intern_resource(dictionary, &resource)?)
             }
-            SubjectDto::Subjectset(set) => {
-                Subject::Subjectset(intern_subjectset(dictionary, &set)?)
-            }
+            (None, None, Some(set)) => Subject::Subjectset(intern_subjectset(dictionary, &set)?),
+            _ => return Err(FixtureError::Subject(dto.set)),
         };
         store.insert(Fact {
             subjectset,
