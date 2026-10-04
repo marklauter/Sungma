@@ -60,6 +60,16 @@ pub trait Dictionary {
     ) -> impl Future<Output = Result<Option<String>, StoreError>> + Send;
 }
 
+#[derive(Debug, Error)]
+pub enum InternError {
+    /// Every id in the pool has been leased. Unlike a store failure, trying
+    /// again won't help.
+    #[error("no ids left to lease in {0:?}")]
+    Exhausted(Pool),
+    #[error(transparent)]
+    Store(#[from] StoreError),
+}
+
 /// Mints ids for names. Every node that interns a name in a pool gets the
 /// same id, and an id, once minted, always names the same string. Ids are
 /// unique within their pool, not dense: an id may be skipped and is never
@@ -70,7 +80,7 @@ pub trait Interner: Dictionary {
         &self,
         pool: Pool,
         name: &str,
-    ) -> impl Future<Output = Result<u32, StoreError>> + Send;
+    ) -> impl Future<Output = Result<u32, InternError>> + Send;
 }
 
 /// The storage an id is minted through. Both writes are atomic in the

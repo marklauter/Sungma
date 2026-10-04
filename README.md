@@ -31,7 +31,7 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
   - `TheoryStore`: the rewrite for a theory and relation;
   - `FactWriter`: a batch of inserts and deletes, applied atomically at the next revision;
   - `Interner`: mints ids for new names, each in its pool: theory names, relation names, the resource ids of each theory, and identities. Relations share one pool because `(parent, viewer)` means `viewer` in whichever theory the parent fact names.
-- Where a guarantee spans nodes, Sungma runs the protocol and a store supplies primitives. A fact keeps the revision that wrote it and the one that deleted it, so reads at any revision work on any store. `LeasingInterner` mints ids over a `NameStore`: each node leases a block of ids from a shared counter, and a conditional insert makes the first node to store a name win.
+- Where a guarantee spans nodes, Sungma runs the protocol and a store supplies primitives. A fact keeps the revision that wrote it and the one that deleted it, so reads at any revision work on any store. `LeasingInterner` mints ids over a `NameStore`: each node leases a block of ids from a shared counter, and a conditional insert makes the first node to store a name win. [docs/interner.md](docs/interner.md) has the sequence.
 - `memory.rs` has in-memory fakes of the stores. There is no real database yet.
 
 **Evaluation** (`extent.rs`, the heart of the project)
@@ -64,7 +64,7 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
 - Expand over HTTP.
 - Authentication.
 
-The README's sample (files, folders, groups) and its trace for "is alice a viewer of design.md?" are the best concrete walkthrough.
+The [Sample](#sample) below (files, folders, groups) and its trace for "is alice a viewer of design.md?" are the best concrete walkthrough.
 
 ## Development
 

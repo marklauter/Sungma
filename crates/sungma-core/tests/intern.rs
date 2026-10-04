@@ -8,7 +8,7 @@ use sungma_core::{
     memory::MemoryDictionary,
     model::TheoryId,
     store::{
-        Dictionary, Interner, NameStore,
+        Dictionary, InternError, Interner, NameStore,
         Pool::{self, Identities},
         StoreError,
     },
@@ -144,7 +144,11 @@ async fn interning_fails_once_the_ids_run_out() {
         },
         block(10),
     );
-    assert!(node.intern(Identities, "alice").await.is_err());
+    let error = node.intern(Identities, "alice").await.unwrap_err();
+    assert!(
+        matches!(error, InternError::Exhausted(Identities)),
+        "{error}"
+    );
 }
 
 #[tokio::test]

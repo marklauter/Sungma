@@ -149,7 +149,7 @@ async fn unknown_names_are_denied() {
 /// other, and `cyc_a` also reaches alice through `cyc_c`; `cyc_b` is
 /// interned first, so the cyclic nested set is read before `cyc_c`.
 fn ringed_world() -> World {
-    let mut world = world();
+    let world = world();
     let facts = r#"[
         { "set": "group:ring_a#member", "subjectset": "group:ring_b#member" },
         { "set": "group:ring_b#member", "subjectset": "group:ring_a#member" },
@@ -162,7 +162,7 @@ fn ringed_world() -> World {
         { "set": "file:ring.md#viewer", "subjectset": "group:ring_a#member" },
         { "set": "file:ring.md#owner", "identity": "alice" }
     ]"#;
-    fixture::load_facts(facts, &mut world.dictionary, &mut world.facts).unwrap();
+    fixture::load_facts(facts, &world.dictionary, &world.facts).unwrap();
     world
 }
 
@@ -202,7 +202,7 @@ async fn a_cycle_under_an_exclusion_excludes_nobody() {
 
 /// Checks `group:g0#member` down a chain of `length` subjectsets.
 async fn chain(length: usize) -> Result<bool, ExtentError> {
-    let mut world = world();
+    let world = world();
     let chain: Vec<String> = (1..length)
         .map(|i| {
             format!(
@@ -212,7 +212,7 @@ async fn chain(length: usize) -> Result<bool, ExtentError> {
         })
         .collect();
     let facts = format!("[{}]", chain.join(","));
-    fixture::load_facts(&facts, &mut world.dictionary, &mut world.facts).unwrap();
+    fixture::load_facts(&facts, &world.dictionary, &world.facts).unwrap();
     check(&world, "group:g0#member", "alice").await
 }
 
@@ -239,9 +239,9 @@ async fn late_bound_relation_missing_on_target_is_empty() {
 
 #[tokio::test]
 async fn a_parent_of_an_undeclared_theory_is_empty() {
-    let mut world = world();
+    let world = world();
     let fact = r#"[{ "set": "file:haunted.md#parent", "resource": "ghost:attic" }]"#;
-    fixture::load_facts(fact, &mut world.dictionary, &mut world.facts).unwrap();
+    fixture::load_facts(fact, &world.dictionary, &world.facts).unwrap();
     assert!(
         !check(&world, "file:haunted.md#viewer", "alice")
             .await
@@ -397,7 +397,7 @@ async fn a_store_error_anywhere_in_the_tree_fails_expand() {
     let unowned = Exclusion(Box::new(Computed("owner")), Box::new(This));
     fixture::declare(
         &mut world.theories,
-        &mut world.dictionary,
+        &world.dictionary,
         "file",
         "unowned",
         unowned,
@@ -456,7 +456,7 @@ fn empty_union_is_refused() {
     let mut world = world();
     let result = fixture::declare(
         &mut world.theories,
-        &mut world.dictionary,
+        &world.dictionary,
         "file",
         "odd",
         Union(vec![]),
@@ -469,7 +469,7 @@ fn empty_intersection_is_refused() {
     let mut world = world();
     let result = fixture::declare(
         &mut world.theories,
-        &mut world.dictionary,
+        &world.dictionary,
         "file",
         "odd",
         Intersection(vec![]),
@@ -481,7 +481,7 @@ fn empty_intersection_is_refused() {
 fn theory_json_refuses_an_empty_operator() {
     let mut world = world();
     let json = r#"{ "file": { "odd": { "union": [] } } }"#;
-    let result = fixture::load_theories(json, &mut world.dictionary, &mut world.theories);
+    let result = fixture::load_theories(json, &world.dictionary, &mut world.theories);
     assert!(matches!(
         result,
         Err(FixtureError::Theory(TheoryError::EmptyOperator("union")))
@@ -508,10 +508,10 @@ async fn expand_keeps_an_intersection() {
 
 #[tokio::test]
 async fn facts_written_after_the_revision_are_not_visible() {
-    let mut world = world();
+    let world = world();
     let before = head(&world).await;
     let fact = r#"[{ "set": "file:design.md#viewer", "identity": "zed" }]"#;
-    fixture::load_facts(fact, &mut world.dictionary, &mut world.facts).unwrap();
+    fixture::load_facts(fact, &world.dictionary, &world.facts).unwrap();
     assert!(
         !check_at(&world, "file:design.md#viewer", "zed", before)
             .await

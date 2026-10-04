@@ -8,9 +8,9 @@ use sungma_core::{
 };
 
 fn load(json: &str) -> Result<(), FixtureError> {
-    let mut dictionary = MemoryDictionary::default();
+    let dictionary = MemoryDictionary::default();
     let mut theories = MemoryTheoryStore::default();
-    fixture::load_theories(json, &mut dictionary, &mut theories)
+    fixture::load_theories(json, &dictionary, &mut theories)
 }
 
 fn refused(json: &str) -> TheoryError {
@@ -141,9 +141,9 @@ fn nested_in(
 }
 
 fn declare(rewrite: Rewrite<&str>) -> Result<(), TheoryError> {
-    let mut dictionary = MemoryDictionary::default();
+    let dictionary = MemoryDictionary::default();
     let mut theories = MemoryTheoryStore::default();
-    fixture::declare(&mut theories, &mut dictionary, "file", "deep", rewrite)
+    fixture::declare(&mut theories, &dictionary, "file", "deep", rewrite)
 }
 
 #[test]
@@ -179,11 +179,10 @@ fn a_deeper_excluded_operand_is_refused() {
 
 #[test]
 fn redeclaring_a_relation_checks_the_whole_theory_by_id() {
-    let mut dictionary = MemoryDictionary::default();
+    let dictionary = MemoryDictionary::default();
     let mut theories = MemoryTheoryStore::default();
-    let mut declare = |relation, rewrite| {
-        fixture::declare(&mut theories, &mut dictionary, "file", relation, rewrite)
-    };
+    let mut declare =
+        |relation, rewrite| fixture::declare(&mut theories, &dictionary, "file", relation, rewrite);
     declare("owner", This).unwrap();
     declare("editor", Computed("owner")).unwrap();
     // Relations have their own pool, so owner is 0 and editor is 1. The
