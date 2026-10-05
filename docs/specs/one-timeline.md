@@ -22,10 +22,10 @@ Proposed. Every [[fact]] and every [[theory]] version holds over a [[span]] of o
 ## Revisions and marks
 
 - A revision is a commit timestamp. Clocks are synchronized by NTP, and each write absorbs the clock uncertainty by commit-wait: it takes timestamp t and acknowledges only once every clock has passed t. A reader therefore never needs the uncertainty bound.
-- Callers never hold a bare revision. They hold a [[mark]], an opaque token with two fields:
-  - the [[snapshot]], named by its revision;
-  - the staleness a read may accept.
-- On a request, the snapshot is a floor: the read is at that revision or later, within the staleness bound. On a [[decision]], the snapshot is the revision judged, and replay reads that revision.
+- Callers never hold a bare revision. They hold a [[mark]], an opaque token naming a [[snapshot]] by its revision.
+- A caller gets a mark from Sungma. A write returns the mark of its revision, and a check, read or expand returns the mark it was evaluated at. A client stores the mark from a content-change check alongside that version of its content.
+- On a request, a mark is a floor: the read is at that revision or later. A request without a mark reads the latest snapshot. There is no staleness tolerance between the two.
+- On a [[decision]], the mark names the revision judged, and replay reads that revision.
 
 ## Spans
 

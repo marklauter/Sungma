@@ -1,12 +1,12 @@
 ---
 title: mark
 type: definition
-summary: "A token naming a snapshot and the staleness a read may accept."
+summary: "A token naming one snapshot."
 status: evolving
 names: "[[snapshot]]"
 ---
 
-A token naming a snapshot and the staleness a read may accept.
+A token naming one snapshot.
 
 ## Rationale
 
