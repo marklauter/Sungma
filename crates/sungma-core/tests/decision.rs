@@ -8,8 +8,8 @@ use std::time::SystemTime;
 use common::{World, head, identity, subjectset, world};
 use sungma_core::{
     check::{CheckRequest, CheckService, MemoryAuditLog, RequestContext, SubjectName, Verdict},
+    closure::Closure,
     decision::{Decision, Outcome, SEMANTICS, Semantics},
-    extent::Extent,
     fixture,
     model::{Fact, Revision, Subject},
     replay::{Replay, replay},
@@ -34,7 +34,7 @@ async fn member(world: &World, resource: &str) -> Subject {
 async fn decide(world: &World, set: &str, who: &str, revision: Revision) -> Decision {
     let set = subjectset(world, set).await.unwrap();
     let subject = identity(world, who).await.unwrap();
-    Extent::new(&world.theories, &world.facts, set, revision)
+    Closure::new(&world.theories, &world.facts, set, revision)
         .decide(subject)
         .await
         .unwrap()

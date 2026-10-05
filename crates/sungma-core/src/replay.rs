@@ -6,8 +6,8 @@
 //! [`Replay::Differs`] or [`Replay::Regrounded`].
 
 use crate::{
+    closure::{Closure, ClosureError},
     decision::{Decision, SEMANTICS, Semantics},
-    extent::{Extent, ExtentError},
     store::{FactStore, TheoryStore},
 };
 
@@ -31,8 +31,8 @@ pub async fn replay<T: TheoryStore + Sync, F: FactStore + Sync>(
     decision: &Decision,
     theories: &T,
     facts: &F,
-) -> Result<Replay, ExtentError> {
-    let now = Extent::new(theories, facts, decision.subjectset, decision.revision)
+) -> Result<Replay, ClosureError> {
+    let now = Closure::new(theories, facts, decision.subjectset, decision.revision)
         .decide(decision.subject)
         .await?;
     Ok(if decision.semantics != SEMANTICS {
