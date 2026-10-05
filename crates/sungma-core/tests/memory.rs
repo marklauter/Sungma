@@ -1,12 +1,19 @@
 //! The in-memory fact store through its write port: facts keep their
 //! history, so a read at any revision sees the facts stored then.
 
+use std::collections::HashSet;
+
+use proptest::{collection::vec, prelude::*, test_runner::TestCaseError};
 use sungma_core::{
     memory::MemoryFactStore,
     model::{
         Fact, IdentityId, RelationId, Resource, ResourceId, Revision, Subject, Subjectset, TheoryId,
     },
-    store::{FactStore, FactWrite::*, FactWriter},
+    store::{
+        FactStore,
+        FactWrite::{self, *},
+        FactWriter,
+    },
 };
 
 const SET: Subjectset = Subjectset {
@@ -98,4 +105,94 @@ async fn deleting_an_absent_fact_changes_nothing() {
     facts.write(&[Insert(fact(ALICE))]).await.unwrap();
     facts.write(&[Delete(fact(BOB))]).await.unwrap();
     assert_eq!(stored(&facts, 3).await, [ALICE]);
+}
+
+/// A second subjectset, also stored as a subject.
+const OTHER: Subjectset = Subjectset {
+    relation: RelationId(5),
+    ..SET
+};
+const SETS: [Subjectset; 2] = [SET, OTHER];
+const SUBJECTS: [Subject; 3] = [ALICE, BOB, Subject::Subjectset(OTHER)];
+
+/// `(insert, set, subject)`: an insert or a delete of the fact of
+/// `SETS[set]` and `SUBJECTS[subject]`.
+type Write = (bool, usize, usize);
+
+/// Writes `batches` and compares every read at every revision with a model
+/// that applies each batch's writes in order to a set of facts.
+async fn reads_match_the_history(batches: Vec<Vec<Write>>) -> Result<(), TestCaseError> {
+    let facts = MemoryFactStore::default();
+    let mut states = vec![HashSet::new()];
+    for (i, batch) in batches.iter().enumerate() {
+        let writes: Vec<FactWrite> = batch
+            .iter()
+            .map(|&(insert, set, subject)| {
+                let fact = Fact {
+                    subjectset: SETS[set],
+                    subject: SUBJECTS[subject],
+                };
+                if insert { Insert(fact) } else { Delete(fact) }
+            })
+            .collect();
+        let revision = facts.write(&writes).await.unwrap();
+        prop_assert_eq!(revision, Revision(i as u64 + 1));
+        let mut state = states[i].clone();
+        for &(insert, set, subject) in batch {
+            if insert {
+                state.insert((set, subject));
+            } else {
+                state.remove(&(set, subject));
+            }
+        }
+        states.push(state);
+    }
+    let head = Revision(batches.len() as u64);
+    prop_assert_eq!(facts.head().await.unwrap(), head);
+    for (revision, state) in states.iter().enumerate() {
+        let revision = Revision(revision as u64);
+        for (i, set) in SETS.into_iter().enumerate() {
+            let expected: HashSet<Subject> = state
+                .iter()
+                .filter(|&&(stored, _)| stored == i)
+                .map(|&(_, subject)| SUBJECTS[subject])
+                .collect();
+            let subjects = facts.subjects(set, revision).await.unwrap();
+            prop_assert_eq!(subjects.len(), expected.len(), "{:?}", revision);
+            prop_assert_eq!(
+                subjects.into_iter().collect::<HashSet<_>>(),
+                expected.clone()
+            );
+            let nested: HashSet<Subject> = facts
+                .subjectsets(set, revision)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(Subject::Subjectset)
+                .collect();
+            let expected_nested = expected
+                .iter()
+                .filter(|subject| matches!(subject, Subject::Subjectset(_)))
+                .copied()
+                .collect();
+            prop_assert_eq!(nested, expected_nested);
+            for subject in SUBJECTS {
+                let contains = facts.contains(set, subject, revision).await.unwrap();
+                prop_assert_eq!(contains, expected.contains(&subject));
+            }
+        }
+    }
+    Ok(())
+}
+
+proptest! {
+    /// A read at a revision sees exactly the facts that applying every
+    /// batch up to it, in order, leaves stored.
+    #[test]
+    fn a_read_at_a_revision_sees_the_facts_stored_then(
+        batches in vec(vec((any::<bool>(), 0..2usize, 0..3usize), 0..4), 0..10),
+    ) {
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        runtime.block_on(reads_match_the_history(batches))?;
+    }
 }

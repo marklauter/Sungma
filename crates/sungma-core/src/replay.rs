@@ -3,7 +3,7 @@
 //! Facts are read at the recorded revision, so later writes don't affect a
 //! replay. Theories are not versioned yet: a replay reads the current
 //! theories, and a theory change since the decision shows up as
-//! [`Replay::Differs`].
+//! [`Replay::Differs`] or [`Replay::Regrounded`].
 
 use crate::{
     decision::{Decision, SEMANTICS, Semantics},
@@ -15,6 +15,10 @@ use crate::{
 pub enum Replay {
     /// The same outcome, on the same grounds.
     Matches,
+    /// The same verdict, allowed on other grounds. A theory change can move
+    /// the grounds, and so can a store error at decision time: the walk
+    /// read past the failed read and cited another path.
+    Regrounded { now: Decision },
     /// The current rules decide differently at the recorded revision.
     Differs { now: Decision },
     /// The decision was made under other evaluation rules, so a difference
@@ -38,6 +42,8 @@ pub async fn replay<T: TheoryStore + Sync, F: FactStore + Sync>(
         }
     } else if now == *decision {
         Replay::Matches
+    } else if now.outcome.is_allowed() == decision.outcome.is_allowed() {
+        Replay::Regrounded { now }
     } else {
         Replay::Differs { now }
     })

@@ -156,6 +156,19 @@ async fn replay_differs_when_a_theory_changes() {
 }
 
 #[tokio::test]
+async fn replay_reports_the_same_verdict_on_other_grounds() {
+    let world = world();
+    let healthy = decide(&world, "file:design.md#viewer", "alice", head(&world).await).await;
+    // As if a failed read had sent the walk down another path.
+    let mut decision = healthy.clone();
+    decision.outcome = Outcome::Allowed {
+        grounds: grounds(&healthy)[1..].to_vec(),
+    };
+    let replayed = replay(&decision, &world.theories, &world.facts).await;
+    assert_eq!(replayed.unwrap(), Replay::Regrounded { now: healthy });
+}
+
+#[tokio::test]
 async fn replay_reports_a_semantics_change() {
     let world = world();
     let mut decision = decide(&world, "file:design.md#viewer", "alice", head(&world).await).await;
