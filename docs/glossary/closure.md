@@ -13,4 +13,4 @@ A set of subjects derivable for a subjectset from the graph under the catalog.
 
 ## Rationale
 
-Reachable was rejected because exclusion and intersection aren't monotone: a subject is derived, not reached.
+Reachable was rejected because exclusion and intersection aren't monotone: a subject is derived, not reached. Extent was rejected.

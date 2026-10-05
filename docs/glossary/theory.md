@@ -10,8 +10,8 @@ A named set of relations.
 
 ## Examples
 
-- `file`, declaring `owner`, `editor`, `viewer` and `parent`.
+- `file`, with the relations `owner`, `editor`, `viewer` and `parent`.
 
 ## Rationale
 
-A theory is Zanzibar's namespace: the relations of one kind of resource, replaced whole by a theory write. In Kingo a theory was a named set of namespaces. Sungma has no namespace term.
+A theory is Zanzibar's namespace: the relations of one kind of resource. Kingo's theory was a named set of namespaces. There is no namespace term.

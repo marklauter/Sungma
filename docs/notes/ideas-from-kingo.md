@@ -1,6 +1,6 @@
 ---
 title: Ideas from Kingo
-summary: Fourteen ideas from Kingo, the legacy ReBAC, each with its Sungma status as of 2026-10-04. One runs counter to Sungma, and two confirmed bugs surfaced along the way.
+summary: Fifteen ideas from Kingo, the legacy ReBAC, each with its Sungma status as of 2026-10-04. One runs counter to Sungma, and two confirmed bugs surfaced along the way.
 status: evolving
 ---
 
@@ -37,8 +37,11 @@ Both were reproduced with throwaway tests on 2026-10-04.
 | 14 | Core carries no formats or adapters | Counter |
 | 15 | Stricter build gates | Partial |
 | 16 | Smaller evaluation rules | Mixed |
+| 17 | Mark carries a staleness bound | Missing |
 
 ## Facts and theories on one timeline
+
+The proposed mechanism for ideas 1, 4, 5 and 17 is in [[one-timeline]].
 
 ### 1. A relation epoch keeps orphaned facts from resurrecting
 
@@ -67,6 +70,13 @@ Theory versions take revisions from the fact sequence, the zookie selects the th
 
 - **Sungma: open.** [[theory-writes-wait-on-theory-versioning]] asks these questions and leans this way.
 - Source: `docs/todos/storage-versioning-design.md`, `docs/specs/catalog.md`.
+
+### 17. A mark carries a staleness bound
+
+A mark is an opaque token with two fields: the snapshot, named by its commit timestamp, and the staleness a read may accept. Writes absorb NTP clock uncertainty by commit-wait, as in Zanzibar, so the mark needs no uncertainty bound.
+
+- **Sungma: missing.** A request's zookie is `{"revision": n}`, a floor with no staleness field; roadmap item 5 makes it opaque.
+- Source: decided in conversation on 2026-10-05. Kingo's `docs/todos/storage-versioning-design.md` assumes commit-wait over NTP.
 
 ## Other ideas
 

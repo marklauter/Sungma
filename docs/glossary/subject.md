@@ -20,4 +20,4 @@ An identity, a subjectset, or a resource bound to a subjectset.
 
 ## Rationale
 
-A resource in the subject position is called a resource member and written `theory:id#...`. Parent links are stored this way, and a fact-to-subjectset follows one to the resource it names. Resource member names that case and has no entry of its own: defining it as a kind of subject would make this entry circular.
+A resource in the subject position is called a resource member. That name has no entry of its own: defining it as a kind of subject would make this entry circular.

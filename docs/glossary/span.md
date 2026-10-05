@@ -1,13 +1,15 @@
 ---
 title: span
 type: definition
-summary: "An interval of revisions over which a stored fact holds."
+summary: "An interval of revisions over which a fact or a theory version holds."
 status: evolving
 bounded-by: "[[revision]]"
-has-a: "[[fact]]"
+has-a:
+  - "[[fact]]"
+  - "[[theory]]"
 ---
 
-An interval of revisions over which a stored fact holds.
+An interval of revisions over which a fact or a theory version holds.
 
 ## Examples
 
@@ -15,4 +17,4 @@ An interval of revisions over which a stored fact holds.
 
 ## Rationale
 
-A span opens at the revision that writes the fact and closes at the one that deletes it, if any. A fact deleted and written again has a span for each time. Theory versions may hold over spans on the same revisions.
+A fact deleted and written again holds over two spans.
