@@ -34,8 +34,8 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
 - Where a guarantee spans nodes, Sungma runs the protocol and a store supplies primitives. A fact keeps the revision that wrote it and the one that deleted it, so reads at any revision work on any store. `LeasingInterner` mints ids over a `NameStore`: each node leases a block of ids from a shared counter, and a conditional insert makes the first node to store a name win. [docs/interner.md](docs/interner.md) has the sequence.
 - `memory.rs` has in-memory fakes of the stores. There is no real database yet.
 
-**Evaluation** (`extent.rs`, the heart of the project)
-- `Extent` walks a rewrite tree recursively against the stores at a fixed revision. It never builds the full set of subjects; it short-circuits as soon as the answer is known.
+**Evaluation** (`closure.rs`, the heart of the project)
+- `Closure` walks a rewrite tree recursively against the stores at a fixed revision. It never builds the full set of subjects; it short-circuits as soon as the answer is known.
 - `decide` returns an `Outcome`: allowed, with the facts that prove it (its "grounds"), or denied.
 - `contains` does the same walk without collecting proof. That's done with a `Proof` trait, implemented once for `Vec<Fact>` and once for `()`, so one generic walk serves both.
 - `expand` returns one level of the tree.

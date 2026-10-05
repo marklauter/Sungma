@@ -14,8 +14,8 @@ use std::{
 use thiserror::Error;
 
 use crate::{
+    closure::Closure,
     decision::Decision,
-    extent::Extent,
     model::{Revision, Subject},
     name::SubjectsetName,
     resolve,
@@ -161,7 +161,7 @@ where
             return Ok(None);
         };
         let revision = self.revision(request.zookie).await?;
-        Extent::new(self.theories, self.facts, set, revision)
+        Closure::new(self.theories, self.facts, set, revision)
             .decide(subject)
             .await
             .map(Some)

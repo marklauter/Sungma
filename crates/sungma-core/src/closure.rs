@@ -1,15 +1,15 @@
-//! The extent of (closure over) a subjectset: the set of subjects derivable for it from
+//! The closure of a subjectset: the set of subjects derivable for it from
 //! the facts under the theories, fixed at one revision.
 //!
-//! An extent is never built. [`Extent::decide`] judges one membership,
+//! A closure is never built. [`Closure::decide`] judges one membership,
 //! answering at each rewrite node and stopping as soon as the answer is
 //! known, and cites the facts that establish an allowed membership.
-//! [`Extent::contains`] walks the same way without collecting the facts.
-//! [`Extent::expand`] materializes one level of the rewrite tree, leaving
+//! [`Closure::contains`] walks the same way without collecting the facts.
+//! [`Closure::expand`] materializes one level of the rewrite tree, leaving
 //! referenced subjectsets as leaves.
 //!
 //! A subjectset whose theory or relation isn't declared has no rewrite, and
-//! its extent is empty.
+//! its closure is empty.
 //!
 //! Cycles end without an error. A membership check that reaches a
 //! subjectset it is already evaluating finds nothing on that branch, and
@@ -27,7 +27,7 @@
 //!
 //! The depth limit is not an unknown. It caps the work one check may do,
 //! so passing it ends the whole check with
-//! [`ExtentError::DepthExceeded`], whatever the operands not yet evaluated
+//! [`ClosureError::DepthExceeded`], whatever the operands not yet evaluated
 //! would give.
 
 use std::{future::Future, pin::Pin, sync::Arc};
@@ -46,7 +46,7 @@ use crate::{
 pub const MAX_DEPTH: usize = 100;
 
 #[derive(Debug, Error)]
-pub enum ExtentError {
+pub enum ClosureError {
     #[error("membership check passed through more than {0} subjectsets")]
     DepthExceeded(usize),
     #[error(transparent)]
@@ -71,7 +71,7 @@ pub enum Expansion {
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// What a membership check collects as it succeeds: the facts that
-/// establish it for [`Extent::decide`], or nothing for [`Extent::contains`].
+/// establish it for [`Closure::decide`], or nothing for [`Closure::contains`].
 trait Proof: Send + Sized {
     fn empty() -> Self;
     /// A fact stored under the subjectset in hand.
@@ -125,7 +125,7 @@ use Verdict::{Fails, Holds, Unknown};
 
 /// A step of a membership check. `Err` is the depth limit, which ends the
 /// whole check.
-type Walk<P> = Result<Verdict<P>, ExtentError>;
+type Walk<P> = Result<Verdict<P>, ClosureError>;
 
 impl<P> Verdict<P> {
     fn map<Q>(self, f: impl FnOnce(P) -> Q) -> Verdict<Q> {
@@ -185,14 +185,14 @@ where
     Ok(answer)
 }
 
-pub struct Extent<'a, T, F> {
+pub struct Closure<'a, T, F> {
     theories: &'a T,
     facts: &'a F,
     subjectset: Subjectset,
     revision: Revision,
 }
 
-impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Extent<'a, T, F> {
+impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
     pub fn new(theories: &'a T, facts: &'a F, subjectset: Subjectset, revision: Revision) -> Self {
         Self {
             theories,
@@ -202,8 +202,8 @@ impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Extent<'a, T, F> {
         }
     }
 
-    /// Judges whether `subject` is in the extent.
-    pub async fn decide(&self, subject: Subject) -> Result<Decision, ExtentError> {
+    /// Judges whether `subject` is in the closure.
+    pub async fn decide(&self, subject: Subject) -> Result<Decision, ClosureError> {
         let outcome = match self.judge(subject).await? {
             Some(grounds) => Outcome::Allowed { grounds },
             None => Outcome::Denied,
@@ -217,17 +217,17 @@ impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Extent<'a, T, F> {
         })
     }
 
-    /// Whether `subject` is in the extent. The fast path: the same walk as
-    /// [`Extent::decide`], but it collects no grounds, so it allocates no
+    /// Whether `subject` is in the closure. The fast path: the same walk as
+    /// [`Closure::decide`], but it collects no grounds, so it allocates no
     /// facts. For callers that need many verdicts and no audit, such as
     /// filtering a list.
-    pub async fn contains(&self, subject: Subject) -> Result<bool, ExtentError> {
+    pub async fn contains(&self, subject: Subject) -> Result<bool, ClosureError> {
         let proof: Option<()> = self.judge(subject).await?;
         Ok(proof.is_some())
     }
 
     /// The proof of membership, `None` when there is none.
-    async fn judge<P: Proof>(&self, subject: Subject) -> Result<Option<P>, ExtentError> {
+    async fn judge<P: Proof>(&self, subject: Subject) -> Result<Option<P>, ClosureError> {
         match self.contains_at(self.subjectset, subject, &[]).await? {
             Holds(proof) => Ok(Some(proof)),
             Fails => Ok(None),
@@ -237,7 +237,7 @@ impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Extent<'a, T, F> {
 
     /// One level of the rewrite tree, with the facts read at the revision.
     /// `None` when the subjectset has no rewrite.
-    pub async fn expand(&self) -> Result<Option<Expansion>, ExtentError> {
+    pub async fn expand(&self) -> Result<Option<Expansion>, ClosureError> {
         let Some(rewrite) = self.rewrite(self.subjectset).await? else {
             return Ok(None);
         };
@@ -265,7 +265,7 @@ impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Extent<'a, T, F> {
                 return Ok(Fails);
             }
             if path.len() >= MAX_DEPTH {
-                return Err(ExtentError::DepthExceeded(MAX_DEPTH));
+                return Err(ClosureError::DepthExceeded(MAX_DEPTH));
             }
             let rewrite = match self.rewrite(set).await {
                 Ok(Some(rewrite)) => rewrite,
@@ -375,7 +375,7 @@ impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Extent<'a, T, F> {
         &'b self,
         rewrite: &'b Rewrite,
         set: Subjectset,
-    ) -> BoxFuture<'b, Result<Expansion, ExtentError>> {
+    ) -> BoxFuture<'b, Result<Expansion, ClosureError>> {
         Box::pin(async move {
             Ok(match rewrite {
                 Rewrite::This => {
@@ -408,7 +408,7 @@ impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Extent<'a, T, F> {
         &self,
         operands: &[Rewrite],
         set: Subjectset,
-    ) -> Result<Vec<Expansion>, ExtentError> {
+    ) -> Result<Vec<Expansion>, ClosureError> {
         let mut expanded = Vec::with_capacity(operands.len());
         for operand in operands {
             expanded.push(self.expand_node(operand, set).await?);

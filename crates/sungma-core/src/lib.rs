@@ -1,4 +1,4 @@
-//! Sungma core: the fact model, rewrite trees, the extent of a subjectset,
+//! Sungma core: the fact model, rewrite trees, the closure of a subjectset,
 //! which answers Contains and Expand, and the decisions Check records for
 //! audit and replay.
 //!
@@ -6,8 +6,8 @@
 //! resolved to ids at the edge, through a [`store::Dictionary`].
 
 pub mod check;
+pub mod closure;
 pub mod decision;
-pub mod extent;
 pub mod fixture;
 pub mod intern;
 pub mod memory;

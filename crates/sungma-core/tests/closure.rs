@@ -10,7 +10,7 @@ use std::{
 use common::{World, head, identity, subjectset, world};
 use proptest::{prelude::*, sample::subsequence, test_runner::TestCaseError};
 use sungma_core::{
-    extent::{Expansion, Extent, ExtentError, MAX_DEPTH},
+    closure::{Closure, ClosureError, Expansion, MAX_DEPTH},
     fixture::{self, FixtureError},
     model::{RelationId, Revision, Subject, Subjectset, TheoryId},
     rewrite::Rewrite::{self, Computed, Exclusion, Intersection, This, Union},
@@ -18,32 +18,32 @@ use sungma_core::{
     theory::TheoryError,
 };
 
-/// Whether an identity is in the extent of `theory:id#relation` at `revision`.
+/// Whether an identity is in the closure of `theory:id#relation` at `revision`.
 async fn check_at(
     world: &World,
     set: &str,
     who: &str,
     revision: Revision,
-) -> Result<bool, ExtentError> {
+) -> Result<bool, ClosureError> {
     let (Some(set), Some(subject)) = (subjectset(world, set).await, identity(world, who).await)
     else {
         return Ok(false);
     };
     agree(
-        &Extent::new(&world.theories, &world.facts, set, revision),
+        &Closure::new(&world.theories, &world.facts, set, revision),
         subject,
     )
     .await
 }
 
-/// [`Extent::contains`], checked against [`Extent::decide`]: the same
+/// [`Closure::contains`], checked against [`Closure::decide`]: the same
 /// verdict, or both fail.
 async fn agree<T: TheoryStore + Sync, F: FactStore + Sync>(
-    extent: &Extent<'_, T, F>,
+    closure: &Closure<'_, T, F>,
     subject: Subject,
-) -> Result<bool, ExtentError> {
-    let fast = extent.contains(subject).await;
-    let decided = extent.decide(subject).await;
+) -> Result<bool, ClosureError> {
+    let fast = closure.contains(subject).await;
+    let decided = closure.decide(subject).await;
     match (&fast, &decided) {
         (Ok(fast), Ok(decided)) => assert_eq!(*fast, decided.outcome.is_allowed()),
         (Err(_), Err(_)) => {}
@@ -53,7 +53,7 @@ async fn agree<T: TheoryStore + Sync, F: FactStore + Sync>(
 }
 
 /// [`check_at`] the latest revision.
-async fn check(world: &World, set: &str, who: &str) -> Result<bool, ExtentError> {
+async fn check(world: &World, set: &str, who: &str) -> Result<bool, ClosureError> {
     check_at(world, set, who, head(world).await).await
 }
 
@@ -206,7 +206,7 @@ async fn a_cycle_under_an_exclusion_excludes_nobody() {
 
 /// Checks `group:g0#member` down a chain of `length` subjectsets, with
 /// `more` facts loaded after the chain.
-async fn chain(length: usize, more: &[&str]) -> Result<bool, ExtentError> {
+async fn chain(length: usize, more: &[&str]) -> Result<bool, ClosureError> {
     let world = world();
     let mut facts: Vec<String> = (1..length)
         .map(|i| {
@@ -230,7 +230,10 @@ async fn a_chain_may_be_max_depth_long() {
 #[tokio::test]
 async fn a_longer_chain_exceeds_depth() {
     let result = chain(MAX_DEPTH + 1, &[]).await;
-    assert!(matches!(result, Err(ExtentError::DepthExceeded(MAX_DEPTH))));
+    assert!(matches!(
+        result,
+        Err(ClosureError::DepthExceeded(MAX_DEPTH))
+    ));
 }
 
 #[tokio::test]
@@ -242,7 +245,10 @@ async fn passing_the_depth_limit_ends_the_check() {
         r#"{ "set": "group:holds#member", "identity": "alice" }"#,
     ];
     let result = chain(MAX_DEPTH + 1, &holds).await;
-    assert!(matches!(result, Err(ExtentError::DepthExceeded(MAX_DEPTH))));
+    assert!(matches!(
+        result,
+        Err(ClosureError::DepthExceeded(MAX_DEPTH))
+    ));
     assert!(chain(MAX_DEPTH, &holds).await.unwrap());
 }
 
@@ -408,21 +414,21 @@ impl FactStore for Probe<'_> {
     }
 }
 
-/// An [`Extent`] over `checked` whose stores fail `read` of `failed`.
+/// An [`Closure`] over `checked` whose stores fail `read` of `failed`.
 async fn failing<'a>(
     world: &'a World,
     store: &'a mut Option<Probe<'a>>,
     checked: &str,
     failed: &str,
     read: Read,
-) -> Extent<'a, Probe<'a>, Probe<'a>> {
+) -> Closure<'a, Probe<'a>, Probe<'a>> {
     let set = subjectset(world, failed).await.unwrap();
     let store = store.insert(Probe {
         failures: vec![(set, read)],
         ..Probe::new(world)
     });
     let checked = subjectset(world, checked).await.unwrap();
-    Extent::new(store, store, checked, head(world).await)
+    Closure::new(store, store, checked, head(world).await)
 }
 
 /// Checks `who` against `checked` with `read` of `failed` failing.
@@ -432,11 +438,11 @@ async fn check_failing(
     who: &str,
     failed: &str,
     read: Read,
-) -> Result<bool, ExtentError> {
+) -> Result<bool, ClosureError> {
     let who = identity(world, who).await.unwrap();
     let mut store = None;
-    let extent = failing(world, &mut store, checked, failed, read).await;
-    agree(&extent, who).await
+    let closure = failing(world, &mut store, checked, failed, read).await;
+    agree(&closure, who).await
 }
 
 #[tokio::test]
@@ -481,7 +487,7 @@ async fn a_store_error_that_nothing_outweighs_fails_the_check() {
     for (checked, who, failed, read) in cases {
         let result = check_failing(&world, checked, who, failed, read).await;
         assert!(
-            matches!(result, Err(ExtentError::Store(_))),
+            matches!(result, Err(ClosureError::Store(_))),
             "{checked} for {who} failing on {failed}: {result:?}"
         );
     }
@@ -598,9 +604,9 @@ async fn a_store_error_anywhere_in_the_tree_fails_expand() {
     ];
     for (checked, failed, read) in cases {
         let mut store = None;
-        let extent = failing(&world, &mut store, checked, failed, read).await;
+        let closure = failing(&world, &mut store, checked, failed, read).await;
         assert!(
-            matches!(extent.expand().await, Err(ExtentError::Store(_))),
+            matches!(closure.expand().await, Err(ClosureError::Store(_))),
             "{checked} failing on {failed}"
         );
     }
@@ -610,7 +616,7 @@ async fn a_store_error_anywhere_in_the_tree_fails_expand() {
 async fn expand_of_an_undeclared_relation_is_none() {
     let world = world();
     let viewer = subjectset(&world, "group:eng#viewer").await.unwrap();
-    let expansion = Extent::new(&world.theories, &world.facts, viewer, head(&world).await)
+    let expansion = Closure::new(&world.theories, &world.facts, viewer, head(&world).await)
         .expand()
         .await
         .unwrap();
@@ -658,7 +664,7 @@ fn theory_json_refuses_an_empty_operator() {
 async fn expand_keeps_an_intersection() {
     let world = world();
     let auditor = subjectset(&world, "file:design.md#auditor").await.unwrap();
-    let expansion = Extent::new(&world.theories, &world.facts, auditor, head(&world).await)
+    let expansion = Closure::new(&world.theories, &world.facts, auditor, head(&world).await)
         .expand()
         .await
         .unwrap();
@@ -691,7 +697,7 @@ async fn expand_leaves_referenced_subjectsets_as_leaves() {
     let world = world();
     let set = |text| subjectset(&world, text);
     let viewer = set("file:design.md#viewer").await.unwrap();
-    let expansion = Extent::new(&world.theories, &world.facts, viewer, head(&world).await)
+    let expansion = Closure::new(&world.theories, &world.facts, viewer, head(&world).await)
         .expand()
         .await
         .unwrap()
@@ -715,7 +721,7 @@ async fn expand_leaves_referenced_subjectsets_as_leaves() {
 async fn expand_lists_direct_subjects_including_subjectsets() {
     let world = world();
     let root_viewer = subjectset(&world, "folder:root#viewer").await.unwrap();
-    let expansion = Extent::new(
+    let expansion = Closure::new(
         &world.theories,
         &world.facts,
         root_viewer,
@@ -829,7 +835,7 @@ async fn random_world(facts: &[String]) -> World {
 /// The verdict, `None` when the check fails.
 async fn verdict(probe: &Probe<'_>, set: Subjectset, who: Subject) -> Option<bool> {
     let revision = head(probe.world).await;
-    agree(&Extent::new(probe, probe, set, revision), who)
+    agree(&Closure::new(probe, probe, set, revision), who)
         .await
         .ok()
 }
