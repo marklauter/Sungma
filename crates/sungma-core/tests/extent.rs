@@ -2,7 +2,10 @@
 
 mod common;
 
-use std::sync::Arc;
+use std::{
+    hash::{DefaultHasher, Hash, Hasher},
+    sync::Arc,
+};
 
 use common::{World, head, identity, subjectset, world};
 use proptest::{prelude::*, sample::subsequence, test_runner::TestCaseError};
@@ -201,10 +204,11 @@ async fn a_cycle_under_an_exclusion_excludes_nobody() {
     assert!(check(&world, "folder:open#viewer", "alice").await.unwrap());
 }
 
-/// Checks `group:g0#member` down a chain of `length` subjectsets.
-async fn chain(length: usize) -> Result<bool, ExtentError> {
+/// Checks `group:g0#member` down a chain of `length` subjectsets, with
+/// `more` facts loaded after the chain.
+async fn chain(length: usize, more: &[&str]) -> Result<bool, ExtentError> {
     let world = world();
-    let chain: Vec<String> = (1..length)
+    let mut facts: Vec<String> = (1..length)
         .map(|i| {
             format!(
                 r#"{{ "set": "group:g{}#member", "subjectset": "group:g{i}#member" }}"#,
@@ -212,20 +216,34 @@ async fn chain(length: usize) -> Result<bool, ExtentError> {
             )
         })
         .collect();
-    let facts = format!("[{}]", chain.join(","));
+    facts.extend(more.iter().map(ToString::to_string));
+    let facts = format!("[{}]", facts.join(","));
     fixture::load_facts(&facts, &world.dictionary, &world.facts).unwrap();
     check(&world, "group:g0#member", "alice").await
 }
 
 #[tokio::test]
 async fn a_chain_may_be_max_depth_long() {
-    assert!(!chain(MAX_DEPTH).await.unwrap());
+    assert!(!chain(MAX_DEPTH, &[]).await.unwrap());
 }
 
 #[tokio::test]
 async fn a_longer_chain_exceeds_depth() {
-    let result = chain(MAX_DEPTH + 1).await;
+    let result = chain(MAX_DEPTH + 1, &[]).await;
     assert!(matches!(result, Err(ExtentError::DepthExceeded(MAX_DEPTH))));
+}
+
+#[tokio::test]
+async fn passing_the_depth_limit_ends_the_check() {
+    // g1 is interned before `holds`, so the chain is walked first, and
+    // `holds` would find alice after it.
+    let holds = [
+        r#"{ "set": "group:g0#member", "subjectset": "group:holds#member" }"#,
+        r#"{ "set": "group:holds#member", "identity": "alice" }"#,
+    ];
+    let result = chain(MAX_DEPTH + 1, &holds).await;
+    assert!(matches!(result, Err(ExtentError::DepthExceeded(MAX_DEPTH))));
+    assert!(chain(MAX_DEPTH, &holds).await.unwrap());
 }
 
 #[tokio::test]
@@ -260,7 +278,8 @@ enum Read {
 }
 
 /// The docs theory and fact stores, failing the listed reads. With a seed,
-/// the operands of every union and intersection come back shuffled.
+/// the operands of every union and intersection and the subjects of every
+/// read come back shuffled.
 struct Probe<'a> {
     world: &'a World,
     failures: Vec<(Subjectset, Read)>,
@@ -276,6 +295,13 @@ impl<'a> Probe<'a> {
         }
     }
 
+    /// Shuffles the subjects read under `set`, when the probe shuffles.
+    fn permute<T>(&self, subjects: &mut [T], set: Subjectset) {
+        if let Some(seed) = self.shuffle {
+            permute(subjects, &mut seed_for(seed, set));
+        }
+    }
+
     fn fail(&self, set: Subjectset, read: Read) -> Result<(), StoreError> {
         if self.failures.contains(&(set, read)) {
             return Err(StoreError("injected".to_owned()));
@@ -284,22 +310,35 @@ impl<'a> Probe<'a> {
     }
 }
 
+/// A seed for one read, mixed from the probe's seed and what is read, so
+/// each read is permuted its own way.
+fn seed_for(seed: u64, read: impl Hash) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    (seed, read).hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Shuffles `items` in place with a generator seeded by `seed`.
+fn permute<T>(items: &mut [T], seed: &mut u64) {
+    for i in (1..items.len()).rev() {
+        *seed = seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        items.swap(i, (*seed >> 33) as usize % (i + 1));
+    }
+}
+
 /// `rewrite` with the operands of each union and intersection permuted by
 /// `seed`. An exclusion's sides keep their places.
 fn shuffled(rewrite: &Rewrite, seed: &mut u64) -> Rewrite {
-    let mut permute = |operands: &[Rewrite]| {
+    let mut operands = |operands: &[Rewrite]| {
         let mut operands: Vec<Rewrite> = operands.iter().map(|op| shuffled(op, seed)).collect();
-        for i in (1..operands.len()).rev() {
-            *seed = seed
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            operands.swap(i, (*seed >> 33) as usize % (i + 1));
-        }
+        permute(&mut operands, seed);
         operands
     };
     match rewrite {
-        Union(operands) => Union(permute(operands)),
-        Intersection(operands) => Intersection(permute(operands)),
+        Union(ops) => Union(operands(ops)),
+        Intersection(ops) => Intersection(operands(ops)),
         Exclusion(base, excluded) => Exclusion(
             Box::new(shuffled(base, seed)),
             Box::new(shuffled(excluded, seed)),
@@ -322,7 +361,10 @@ impl TheoryStore for Probe<'_> {
         }
         let rewrite = self.world.theories.rewrite(theory, relation).await?;
         Ok(match self.shuffle {
-            Some(mut seed) => rewrite.map(|rewrite| Arc::new(shuffled(&rewrite, &mut seed))),
+            Some(seed) => {
+                let mut seed = seed_for(seed, (theory, relation));
+                rewrite.map(|rewrite| Arc::new(shuffled(&rewrite, &mut seed)))
+            }
             None => rewrite,
         })
     }
@@ -349,7 +391,9 @@ impl FactStore for Probe<'_> {
         revision: Revision,
     ) -> Result<Vec<Subjectset>, StoreError> {
         self.fail(set, Read::Subjectsets)?;
-        self.world.facts.subjectsets(set, revision).await
+        let mut nested = self.world.facts.subjectsets(set, revision).await?;
+        self.permute(&mut nested, set);
+        Ok(nested)
     }
 
     async fn subjects(
@@ -358,7 +402,9 @@ impl FactStore for Probe<'_> {
         revision: Revision,
     ) -> Result<Vec<Subject>, StoreError> {
         self.fail(set, Read::Subjects)?;
-        self.world.facts.subjects(set, revision).await
+        let mut subjects = self.world.facts.subjects(set, revision).await?;
+        self.permute(&mut subjects, set);
+        Ok(subjects)
     }
 }
 

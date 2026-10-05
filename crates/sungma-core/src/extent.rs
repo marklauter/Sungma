@@ -17,13 +17,18 @@
 //! itself would repeat the same steps forever, so the branch can't
 //! contribute a derivation.
 //!
-//! Errors follow Kleene's three-valued logic: an error is an unknown
-//! verdict, and an operand that settles the result outweighs it. A true
-//! union operand or a false intersection operand settles its operator; a
-//! false base or a true excluded side settles an exclusion. The verdict
-//! then doesn't depend on the order operands are evaluated in. When
-//! nothing settles the result and an operand failed, the check fails with
+//! Store errors follow Kleene's three-valued logic: a failed read is an
+//! unknown verdict, and an operand that settles the result outweighs it. A
+//! true union operand or a false intersection operand settles its
+//! operator; a false base or a true excluded side settles an exclusion.
+//! The verdict then doesn't depend on the order operands are evaluated in.
+//! When nothing settles the result and a read failed, the check fails with
 //! the first error met.
+//!
+//! The depth limit is not an unknown. It caps the work one check may do,
+//! so passing it ends the whole check with
+//! [`ExtentError::DepthExceeded`], whatever the operands not yet evaluated
+//! would give.
 
 use std::{future::Future, pin::Pin, sync::Arc};
 
@@ -108,20 +113,76 @@ impl Proof for () {
     fn join(&mut self, _: Self) {}
 }
 
-/// The value of an operand that has one. An operand that failed has none,
-/// and the first such error is kept in `error`, for when no other operand
-/// settles the result.
-fn absorb<T, E: Into<ExtentError>>(
-    error: &mut Option<ExtentError>,
-    result: Result<T, E>,
-) -> Option<T> {
-    match result {
-        Ok(value) => Some(value),
-        Err(e) => {
-            error.get_or_insert(e.into());
-            None
+/// One operand's answer in Kleene's three-valued logic.
+enum Verdict<P> {
+    Holds(P),
+    Fails,
+    /// A read failed, and nothing settled the answer.
+    Unknown(StoreError),
+}
+
+use Verdict::{Fails, Holds, Unknown};
+
+/// A step of a membership check. `Err` is the depth limit, which ends the
+/// whole check.
+type Walk<P> = Result<Verdict<P>, ExtentError>;
+
+impl<P> Verdict<P> {
+    fn map<Q>(self, f: impl FnOnce(P) -> Q) -> Verdict<Q> {
+        match self {
+            Holds(proof) => Holds(f(proof)),
+            Fails => Fails,
+            Unknown(error) => Unknown(error),
         }
     }
+
+    /// Kleene's or: holds if either holds, else the first unknown.
+    fn or(self, other: Self) -> Self {
+        match (self, other) {
+            (Holds(proof), _) | (_, Holds(proof)) => Holds(proof),
+            (Unknown(error), _) | (_, Unknown(error)) => Unknown(error),
+            (Fails, Fails) => Fails,
+        }
+    }
+
+    /// Kleene's `self and not excluded`.
+    fn unless<Q>(self, excluded: Verdict<Q>) -> Self {
+        match (self, excluded) {
+            (Fails, _) | (_, Holds(_)) => Fails,
+            (Unknown(error), _) | (_, Unknown(error)) => Unknown(error),
+            (Holds(proof), Fails) => Holds(proof),
+        }
+    }
+}
+
+impl<P: Proof> Verdict<P> {
+    /// Kleene's and: fails if either fails, else the first unknown, else
+    /// holds on both proofs.
+    fn and(self, other: Self) -> Self {
+        match (self, other) {
+            (Fails, _) | (_, Fails) => Fails,
+            (Unknown(error), _) | (_, Unknown(error)) => Unknown(error),
+            (Holds(mut proof), Holds(other)) => {
+                proof.join(other);
+                Holds(proof)
+            }
+        }
+    }
+}
+
+/// Kleene's or over `items`, judged in turn by `judge` until one holds.
+async fn any<I, P, J>(items: impl IntoIterator<Item = I>, mut judge: impl FnMut(I) -> J) -> Walk<P>
+where
+    J: Future<Output = Walk<P>>,
+{
+    let mut answer = Fails;
+    for item in items {
+        answer = answer.or(judge(item).await?);
+        if let Holds(_) = answer {
+            break;
+        }
+    }
+    Ok(answer)
 }
 
 pub struct Extent<'a, T, F> {
@@ -143,7 +204,7 @@ impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Extent<'a, T, F> {
 
     /// Judges whether `subject` is in the extent.
     pub async fn decide(&self, subject: Subject) -> Result<Decision, ExtentError> {
-        let outcome = match self.contains_at(self.subjectset, subject, &[]).await? {
+        let outcome = match self.judge(subject).await? {
             Some(grounds) => Outcome::Allowed { grounds },
             None => Outcome::Denied,
         };
@@ -161,8 +222,17 @@ impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Extent<'a, T, F> {
     /// facts. For callers that need many verdicts and no audit, such as
     /// filtering a list.
     pub async fn contains(&self, subject: Subject) -> Result<bool, ExtentError> {
-        let proof: Option<()> = self.contains_at(self.subjectset, subject, &[]).await?;
+        let proof: Option<()> = self.judge(subject).await?;
         Ok(proof.is_some())
+    }
+
+    /// The proof of membership, `None` when there is none.
+    async fn judge<P: Proof>(&self, subject: Subject) -> Result<Option<P>, ExtentError> {
+        match self.contains_at(self.subjectset, subject, &[]).await? {
+            Holds(proof) => Ok(Some(proof)),
+            Fails => Ok(None),
+            Unknown(error) => Err(error.into()),
+        }
     }
 
     /// One level of the rewrite tree, with the facts read at the revision.
@@ -189,16 +259,18 @@ impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Extent<'a, T, F> {
         set: Subjectset,
         subject: Subject,
         path: &'b [Subjectset],
-    ) -> BoxFuture<'b, Result<Option<P>, ExtentError>> {
+    ) -> BoxFuture<'b, Walk<P>> {
         Box::pin(async move {
             if path.contains(&set) {
-                return Ok(None);
+                return Ok(Fails);
             }
             if path.len() >= MAX_DEPTH {
                 return Err(ExtentError::DepthExceeded(MAX_DEPTH));
             }
-            let Some(rewrite) = self.rewrite(set).await? else {
-                return Ok(None);
+            let rewrite = match self.rewrite(set).await {
+                Ok(Some(rewrite)) => rewrite,
+                Ok(None) => return Ok(Fails),
+                Err(error) => return Ok(Unknown(error)),
             };
             let path = [path, &[set]].concat();
             self.contains_node(&rewrite, set, subject, &path).await
@@ -211,7 +283,7 @@ impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Extent<'a, T, F> {
         set: Subjectset,
         subject: Subject,
         path: &'b [Subjectset],
-    ) -> BoxFuture<'b, Result<Option<P>, ExtentError>> {
+    ) -> BoxFuture<'b, Walk<P>> {
         Box::pin(async move {
             match rewrite {
                 Rewrite::This => self.contains_this(set, subject, path).await,
@@ -223,53 +295,42 @@ impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Extent<'a, T, F> {
                     self.contains_at(computed, subject, path).await
                 }
                 Rewrite::FactTo { factset, computed } => {
-                    let mut error = None;
-                    for (fact, target) in self.fact_targets(set, *factset, *computed).await? {
-                        let found =
-                            absorb(&mut error, self.contains_at(target, subject, path).await);
-                        if let Some(Some(proof)) = found {
-                            return Ok(Some(P::cite(fact, proof)));
-                        }
-                    }
-                    error.map_or(Ok(None), Err)
+                    let targets = match self.fact_targets(set, *factset, *computed).await {
+                        Ok(targets) => targets,
+                        Err(error) => return Ok(Unknown(error)),
+                    };
+                    any(targets, move |(fact, target)| async move {
+                        let found = self.contains_at(target, subject, path).await?;
+                        Ok(found.map(|proof| P::cite(fact, proof)))
+                    })
+                    .await
                 }
                 Rewrite::Union(operands) => {
-                    let mut error = None;
-                    for operand in operands {
-                        let found = self.contains_node(operand, set, subject, path).await;
-                        if let Some(Some(proof)) = absorb(&mut error, found) {
-                            return Ok(Some(proof));
-                        }
-                    }
-                    error.map_or(Ok(None), Err)
+                    any(operands, |operand| {
+                        self.contains_node(operand, set, subject, path)
+                    })
+                    .await
                 }
                 Rewrite::Intersection(operands) => {
-                    let mut all = P::empty();
-                    let mut error = None;
+                    let mut answer = Holds(P::empty());
                     for operand in operands {
-                        let found = self.contains_node(operand, set, subject, path).await;
-                        match absorb(&mut error, found) {
-                            Some(Some(proof)) => all.join(proof),
-                            Some(None) => return Ok(None),
-                            None => {}
+                        let found = self.contains_node(operand, set, subject, path).await?;
+                        answer = answer.and(found);
+                        if let Fails = answer {
+                            break;
                         }
                     }
-                    error.map_or(Ok(Some(all)), Err)
+                    Ok(answer)
                 }
                 Rewrite::Exclusion(base, excluded) => {
-                    let mut error = None;
-                    let found = self.contains_node(base, set, subject, path).await;
-                    let base = absorb(&mut error, found);
-                    if let Some(None) = base {
-                        return Ok(None);
+                    let base = self.contains_node(base, set, subject, path).await?;
+                    if let Fails = base {
+                        return Ok(Fails);
                     }
                     // Only whether the excluded side holds matters.
-                    let found: Result<Option<()>, _> =
-                        self.contains_node(excluded, set, subject, path).await;
-                    if let Some(Some(())) = absorb(&mut error, found) {
-                        return Ok(None);
-                    }
-                    error.map_or(Ok(base.flatten()), Err)
+                    let excluded: Verdict<()> =
+                        self.contains_node(excluded, set, subject, path).await?;
+                    Ok(base.unless(excluded))
                 }
             }
         })
@@ -282,27 +343,32 @@ impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Extent<'a, T, F> {
         set: Subjectset,
         subject: Subject,
         path: &[Subjectset],
-    ) -> Result<Option<P>, ExtentError> {
-        let mut error = None;
-        let stored = self.facts.contains(set, subject, self.revision).await;
-        if absorb(&mut error, stored) == Some(true) {
-            return Ok(Some(P::fact(Fact {
-                subjectset: set,
-                subject,
-            })));
-        }
-        let nested = self.facts.subjectsets(set, self.revision).await;
-        for nested in absorb(&mut error, nested).into_iter().flatten() {
-            let found = self.contains_at(nested, subject, path).await;
-            if let Some(Some(proof)) = absorb(&mut error, found) {
-                let fact = Fact {
+    ) -> Walk<P> {
+        let direct = match self.facts.contains(set, subject, self.revision).await {
+            Ok(true) => {
+                return Ok(Holds(P::fact(Fact {
                     subjectset: set,
-                    subject: Subject::Subjectset(nested),
-                };
-                return Ok(Some(P::cite(fact, proof)));
+                    subject,
+                })));
             }
-        }
-        error.map_or(Ok(None), Err)
+            Ok(false) => Fails,
+            Err(error) => Unknown(error),
+        };
+        let nested = match self.facts.subjectsets(set, self.revision).await {
+            Ok(nested) => {
+                any(nested, move |nested| async move {
+                    let fact = Fact {
+                        subjectset: set,
+                        subject: Subject::Subjectset(nested),
+                    };
+                    let found = self.contains_at(nested, subject, path).await?;
+                    Ok(found.map(|proof| P::cite(fact, proof)))
+                })
+                .await?
+            }
+            Err(error) => Unknown(error),
+        };
+        Ok(direct.or(nested))
     }
 
     fn expand_node<'b>(
@@ -360,7 +426,7 @@ impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Extent<'a, T, F> {
         set: Subjectset,
         factset: RelationId,
         computed: RelationId,
-    ) -> Result<Vec<(Fact, Subjectset)>, ExtentError> {
+    ) -> Result<Vec<(Fact, Subjectset)>, StoreError> {
         let factset = Subjectset {
             relation: factset,
             ..set

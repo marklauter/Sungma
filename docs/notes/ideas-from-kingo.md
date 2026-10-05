@@ -46,7 +46,7 @@ Both were reproduced with throwaway tests on 2026-10-04.
    - **Sungma: counter.** `crates/sungma-core/src/extent.rs` (module doc) and `README.md` treat an undeclared theory or relation as the empty set. An uninterned name in a request is likewise denied without error (`README.md`, `crates/sungma-core/src/resolve.rs`).
    - Source: `docs/todos/implement-contains-and-expand.md`, error families 1 and 4.
 2. **Errors combine by Kleene absorption.** A deciding value absorbs an error: `false` in intersection, `true` in union, and `a = false` or `b = true` in `a ! b`. The verdict then never depends on evaluation order, so parallel evaluation stays sound.
-   - **Sungma: in place.** `Extent::contains_node` and `contains_this` keep the first error and return it only when no operand settles the result (`crates/sungma-core/src/extent.rs`, module doc). Expand still fails on any error, since it returns no verdict.
+   - **Sungma: in place.** `Extent::contains_node` and `contains_this` keep the first error and return it only when no operand settles the result (`crates/sungma-core/src/extent.rs`, module doc). The depth limit is not absorbed: it caps a check's work, so it ends the check. Expand still fails on any error, since it returns no verdict.
    - Source: `docs/glossary/kleene-absorption.md`.
 3. **A wrong-shaped factset member is an error.** Under `(parent, viewer)` only a resource member traverses. A subjectset member or identity is a modeled error, and so is a resource member under `this`.
    - **Sungma: counter.** `Extent::fact_targets` follows subjectsets to their resource and skips identities. `contains_this` doesn't check for resource members.
