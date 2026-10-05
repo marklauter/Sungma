@@ -40,6 +40,7 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
 - `contains` does the same walk without collecting proof. That's done with a `Proof` trait, implemented once for `Vec<Fact>` and once for `()`, so one generic walk serves both.
 - `expand` returns one level of the tree.
 - Cycles in the data, such as folders inside folders, end quietly. A walk through more than 100 subjectsets fails with an error.
+- Errors follow Kleene logic. A store error or a too-deep walk is an unknown verdict, and an operand that settles the result outweighs it: a true union operand, a false intersection operand, or a false base or true excluded side of an exclusion. The verdict doesn't depend on evaluation order.
 
 **Decisions and replay** (`decision.rs`, `replay.rs`)
 - A `Decision` records the question, the revision, the `SEMANTICS` version and the outcome with its grounds.

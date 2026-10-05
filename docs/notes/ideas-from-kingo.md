@@ -1,6 +1,6 @@
 ---
 title: Ideas from Kingo
-summary: Sixteen ideas from Kingo, the legacy ReBAC, each with its Sungma status as of 2026-10-04. None is fully in place, three run counter to Sungma, and two confirmed bugs surfaced along the way.
+summary: Sixteen ideas from Kingo, the legacy ReBAC, each with its Sungma status as of 2026-10-04. One is in place, three run counter to Sungma, and two confirmed bugs surfaced along the way.
 status: evolving
 ---
 
@@ -24,7 +24,7 @@ Both were reproduced with throwaway tests on 2026-10-04.
 | # | Idea | Sungma status |
 |---|---|---|
 | 1 | Undefined relation mid-walk is an error | Counter: treated as the empty set |
-| 2 | Errors combine by Kleene absorption | Missing |
+| 2 | Errors combine by Kleene absorption | In place |
 | 3 | Wrong-shaped factset member is an error | Counter: followed or skipped silently |
 | 4 | Drift prevented at write time | Missing |
 | 5 | Facts and theories share one timeline | Open, leaning this way |
@@ -46,7 +46,7 @@ Both were reproduced with throwaway tests on 2026-10-04.
    - **Sungma: counter.** `crates/sungma-core/src/extent.rs` (module doc) and `README.md` treat an undeclared theory or relation as the empty set. An uninterned name in a request is likewise denied without error (`README.md`, `crates/sungma-core/src/resolve.rs`).
    - Source: `docs/todos/implement-contains-and-expand.md`, error families 1 and 4.
 2. **Errors combine by Kleene absorption.** A deciding value absorbs an error: `false` in intersection, `true` in union, and `a = false` or `b = true` in `a ! b`. The verdict then never depends on evaluation order, so parallel evaluation stays sound.
-   - **Sungma: missing.** `Extent::contains_node` propagates errors with `?` in operand order. A store error on the first union operand fails the check even when the second is true.
+   - **Sungma: in place.** `Extent::contains_node` and `contains_this` keep the first error and return it only when no operand settles the result (`crates/sungma-core/src/extent.rs`, module doc). Expand still fails on any error, since it returns no verdict.
    - Source: `docs/glossary/kleene-absorption.md`.
 3. **A wrong-shaped factset member is an error.** Under `(parent, viewer)` only a resource member traverses. A subjectset member or identity is a modeled error, and so is a resource member under `this`.
    - **Sungma: counter.** `Extent::fact_targets` follows subjectsets to their resource and skips identities. `contains_this` doesn't check for resource members.

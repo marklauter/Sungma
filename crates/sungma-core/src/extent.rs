@@ -16,6 +16,14 @@
 //! the other branches go on. Evaluating a subjectset again from inside
 //! itself would repeat the same steps forever, so the branch can't
 //! contribute a derivation.
+//!
+//! Errors follow Kleene's three-valued logic: an error is an unknown
+//! verdict, and an operand that settles the result outweighs it. A true
+//! union operand or a false intersection operand settles its operator; a
+//! false base or a true excluded side settles an exclusion. The verdict
+//! then doesn't depend on the order operands are evaluated in. When
+//! nothing settles the result and an operand failed, the check fails with
+//! the first error met.
 
 use std::{future::Future, pin::Pin, sync::Arc};
 
@@ -98,6 +106,22 @@ impl Proof for () {
     fn cite(_: Fact, _: Self) -> Self {}
 
     fn join(&mut self, _: Self) {}
+}
+
+/// The value of an operand that has one. An operand that failed has none,
+/// and the first such error is kept in `error`, for when no other operand
+/// settles the result.
+fn absorb<T, E: Into<ExtentError>>(
+    error: &mut Option<ExtentError>,
+    result: Result<T, E>,
+) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(e) => {
+            error.get_or_insert(e.into());
+            None
+        }
+    }
 }
 
 pub struct Extent<'a, T, F> {
@@ -199,41 +223,53 @@ impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Extent<'a, T, F> {
                     self.contains_at(computed, subject, path).await
                 }
                 Rewrite::FactTo { factset, computed } => {
+                    let mut error = None;
                     for (fact, target) in self.fact_targets(set, *factset, *computed).await? {
-                        if let Some(proof) = self.contains_at(target, subject, path).await? {
+                        let found =
+                            absorb(&mut error, self.contains_at(target, subject, path).await);
+                        if let Some(Some(proof)) = found {
                             return Ok(Some(P::cite(fact, proof)));
                         }
                     }
-                    Ok(None)
+                    error.map_or(Ok(None), Err)
                 }
                 Rewrite::Union(operands) => {
+                    let mut error = None;
                     for operand in operands {
-                        let proof = self.contains_node(operand, set, subject, path).await?;
-                        if proof.is_some() {
-                            return Ok(proof);
+                        let found = self.contains_node(operand, set, subject, path).await;
+                        if let Some(Some(proof)) = absorb(&mut error, found) {
+                            return Ok(Some(proof));
                         }
                     }
-                    Ok(None)
+                    error.map_or(Ok(None), Err)
                 }
                 Rewrite::Intersection(operands) => {
                     let mut all = P::empty();
+                    let mut error = None;
                     for operand in operands {
-                        let Some(proof) = self.contains_node(operand, set, subject, path).await?
-                        else {
-                            return Ok(None);
-                        };
-                        all.join(proof);
+                        let found = self.contains_node(operand, set, subject, path).await;
+                        match absorb(&mut error, found) {
+                            Some(Some(proof)) => all.join(proof),
+                            Some(None) => return Ok(None),
+                            None => {}
+                        }
                     }
-                    Ok(Some(all))
+                    error.map_or(Ok(Some(all)), Err)
                 }
                 Rewrite::Exclusion(base, excluded) => {
-                    let Some(proof) = self.contains_node(base, set, subject, path).await? else {
+                    let mut error = None;
+                    let found = self.contains_node(base, set, subject, path).await;
+                    let base = absorb(&mut error, found);
+                    if let Some(None) = base {
                         return Ok(None);
-                    };
+                    }
                     // Only whether the excluded side holds matters.
-                    let excluded: Option<()> =
-                        self.contains_node(excluded, set, subject, path).await?;
-                    Ok(excluded.is_none().then_some(proof))
+                    let found: Result<Option<()>, _> =
+                        self.contains_node(excluded, set, subject, path).await;
+                    if let Some(Some(())) = absorb(&mut error, found) {
+                        return Ok(None);
+                    }
+                    error.map_or(Ok(base.flatten()), Err)
                 }
             }
         })
@@ -247,14 +283,18 @@ impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Extent<'a, T, F> {
         subject: Subject,
         path: &[Subjectset],
     ) -> Result<Option<P>, ExtentError> {
-        if self.facts.contains(set, subject, self.revision).await? {
+        let mut error = None;
+        let stored = self.facts.contains(set, subject, self.revision).await;
+        if absorb(&mut error, stored) == Some(true) {
             return Ok(Some(P::fact(Fact {
                 subjectset: set,
                 subject,
             })));
         }
-        for nested in self.facts.subjectsets(set, self.revision).await? {
-            if let Some(proof) = self.contains_at(nested, subject, path).await? {
+        let nested = self.facts.subjectsets(set, self.revision).await;
+        for nested in absorb(&mut error, nested).into_iter().flatten() {
+            let found = self.contains_at(nested, subject, path).await;
+            if let Some(Some(proof)) = absorb(&mut error, found) {
                 let fact = Fact {
                     subjectset: set,
                     subject: Subject::Subjectset(nested),
@@ -262,7 +302,7 @@ impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Extent<'a, T, F> {
                 return Ok(Some(P::cite(fact, proof)));
             }
         }
-        Ok(None)
+        error.map_or(Ok(None), Err)
     }
 
     fn expand_node<'b>(

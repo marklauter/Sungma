@@ -341,50 +341,132 @@ async fn failing<'a>(
     Extent::new(store, store, checked, head(world).await)
 }
 
+/// Checks `who` against `checked` with `read` of `failed` failing.
+async fn check_failing(
+    world: &World,
+    checked: &str,
+    who: &str,
+    failed: &str,
+    read: Read,
+) -> Result<bool, ExtentError> {
+    let who = identity(world, who).await.unwrap();
+    let mut store = None;
+    let extent = failing(world, &mut store, checked, failed, read).await;
+    agree(&extent, who).await
+}
+
 #[tokio::test]
-async fn a_store_error_anywhere_on_the_walk_fails_the_check() {
+async fn a_store_error_that_nothing_outweighs_fails_the_check() {
     let world = world();
-    let alice = identity(&world, "alice").await.unwrap();
     let cases = [
+        // Every viewer operand is false or failed.
         (
             "file:design.md#viewer",
-            "file:design.md#viewer",
-            Read::Contains,
-        ),
-        (
-            "file:design.md#viewer",
-            "file:design.md#viewer",
-            Read::Subjectsets,
-        ),
-        (
-            "file:design.md#viewer",
+            "alice",
             "file:design.md#parent",
             Read::Subjects,
         ),
-        ("file:design.md#viewer", "group:eng#member", Read::Contains),
+        // The only path to alice fails.
         (
             "file:design.md#viewer",
-            "file:design.md#banned",
-            Read::Contains,
-        ),
-        (
-            "file:design.md#auditor",
-            "file:design.md#viewer",
+            "alice",
+            "group:eng#member",
             Read::Contains,
         ),
         (
             "file:design.md#viewer",
+            "alice",
             "folder:specs#viewer",
             Read::Rewrite,
         ),
+        // The base holds, and whether alice is banned is unknown.
+        (
+            "file:design.md#viewer",
+            "alice",
+            "file:design.md#banned",
+            Read::Contains,
+        ),
+        // alice is stored as an auditor, and whether she views is unknown.
+        (
+            "file:design.md#auditor",
+            "alice",
+            "group:eng#member",
+            Read::Contains,
+        ),
     ];
-    for (checked, failed, read) in cases {
-        let mut store = None;
-        let extent = failing(&world, &mut store, checked, failed, read).await;
-        let result = agree(&extent, alice).await;
+    for (checked, who, failed, read) in cases {
+        let result = check_failing(&world, checked, who, failed, read).await;
         assert!(
             matches!(result, Err(ExtentError::Store(_))),
-            "{checked} failing on {failed}"
+            "{checked} for {who} failing on {failed}: {result:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_operand_that_settles_the_check_outweighs_a_store_error() {
+    let world = world();
+    let facts = r#"[
+        { "set": "file:twin.md#parent", "resource": "folder:specs" },
+        { "set": "file:twin.md#parent", "resource": "folder:shared" },
+        { "set": "folder:shared#viewer", "identity": "alice" }
+    ]"#;
+    fixture::load_facts(facts, &world.dictionary, &world.facts).unwrap();
+    let cases = [
+        // A union's later operand holds: alice views through the parent.
+        (
+            "file:design.md#viewer",
+            "alice",
+            "file:design.md#viewer",
+            Read::Contains,
+            true,
+        ),
+        (
+            "file:design.md#viewer",
+            "alice",
+            "file:design.md#viewer",
+            Read::Subjectsets,
+            true,
+        ),
+        // A stored subjectset holds after the point lookup fails.
+        (
+            "file:design.md#viewer",
+            "alice",
+            "folder:root#viewer",
+            Read::Contains,
+            true,
+        ),
+        // The second parent holds after the first fails.
+        (
+            "file:twin.md#viewer",
+            "alice",
+            "folder:specs#parent",
+            Read::Subjects,
+            true,
+        ),
+        // An intersection's later operand is false: erin is banned.
+        (
+            "file:design.md#auditor",
+            "erin",
+            "file:design.md#auditor",
+            Read::Contains,
+            false,
+        ),
+        // The base fails, and bob is banned.
+        (
+            "file:design.md#viewer",
+            "bob",
+            "group:eng#member",
+            Read::Contains,
+            false,
+        ),
+    ];
+    for (checked, who, failed, read, expected) in cases {
+        let result = check_failing(&world, checked, who, failed, read).await;
+        assert_eq!(
+            result.ok(),
+            Some(expected),
+            "{checked} for {who} failing on {failed}"
         );
     }
 }
