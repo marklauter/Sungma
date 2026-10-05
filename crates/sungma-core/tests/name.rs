@@ -1,5 +1,6 @@
 //! Resource and subjectset names, parsed at the edge.
 
+use proptest::prelude::*;
 use sungma_core::name::{NameError, ResourceName, SubjectsetName};
 
 #[test]
@@ -67,4 +68,43 @@ fn a_resource_itself_is_not_a_subjectset() {
         error.to_string(),
         r#""folder:root#..." names a resource, not a subjectset"#
     );
+}
+
+proptest! {
+    /// A theory without `:`, any id, and a relation without `#` other than
+    /// `...` make a subjectset name that parses back into its parts.
+    #[test]
+    fn a_subjectset_name_parses_into_its_parts(
+        theory in "[^:]+",
+        id in ".+",
+        relation in "[^#]+",
+    ) {
+        prop_assume!(relation != "...");
+        let text = format!("{theory}:{id}#{relation}");
+        let name: SubjectsetName = text.parse().unwrap();
+        prop_assert_eq!(name.resource().theory(), &theory);
+        prop_assert_eq!(name.resource().id(), &id);
+        prop_assert_eq!(name.relation(), &relation);
+        prop_assert_eq!(name.to_string(), text);
+    }
+
+    #[test]
+    fn a_resource_name_parses_into_its_parts(theory in "[^:]+", id in ".+") {
+        let text = format!("{theory}:{id}");
+        let name: ResourceName = text.parse().unwrap();
+        prop_assert_eq!(name.theory(), &theory);
+        prop_assert_eq!(name.id(), &id);
+        prop_assert_eq!(name.to_string(), text);
+    }
+
+    /// Text that parses as a name prints back unchanged.
+    #[test]
+    fn a_parsed_name_prints_as_written(text in "[ab:#.]{0,8}") {
+        if let Ok(name) = text.parse::<SubjectsetName>() {
+            prop_assert_eq!(name.to_string(), text.as_str());
+        }
+        if let Ok(name) = text.parse::<ResourceName>() {
+            prop_assert_eq!(name.to_string(), text.as_str());
+        }
+    }
 }

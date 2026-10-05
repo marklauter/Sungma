@@ -1,8 +1,13 @@
 //! Minting ids from leased blocks, with nodes simulated as interners
 //! sharing one store.
 
-use std::{num::NonZeroU32, ops::Range};
+use std::{
+    collections::{HashMap, HashSet},
+    num::NonZeroU32,
+    ops::Range,
+};
 
+use proptest::{collection::vec, prelude::*, test_runner::TestCaseError};
 use sungma_core::{
     intern::LeasingInterner,
     memory::MemoryDictionary,
@@ -158,4 +163,55 @@ async fn setup_ids_and_leased_ids_never_meet() {
     assert_eq!(store.intern(Identities, "a"), 0);
     assert_eq!(node.intern(Identities, "b").await.unwrap(), 1);
     assert_eq!(store.intern(Identities, "c"), 11);
+}
+
+/// `(node, pool, name)`: the node interns name `n{name}` in `POOLS[pool]`.
+type Intern = (usize, usize, usize);
+
+const POOLS: [Pool; 2] = [Identities, Pool::Resources(TheoryId(0))];
+
+/// Nodes of the given block sizes, stale or not, intern names in turn.
+async fn ids_are_unique_and_stable(
+    nodes: Vec<(u32, bool)>,
+    interns: Vec<Intern>,
+) -> Result<(), TestCaseError> {
+    let store = MemoryDictionary::default();
+    let nodes: Vec<_> = nodes
+        .into_iter()
+        .map(|(size, stale)| {
+            let node = Node {
+                store: &store,
+                stale,
+                exhausted: false,
+            };
+            LeasingInterner::new(node, block(size))
+        })
+        .collect();
+    let mut ids = HashMap::new();
+    for (node, pool, name) in interns {
+        let name = format!("n{name}");
+        let node = &nodes[node % nodes.len()];
+        let id = node.intern(POOLS[pool], &name).await.unwrap();
+        let first = *ids.entry((pool, name.clone())).or_insert(id);
+        prop_assert_eq!(id, first, "{} in {:?}", name, POOLS[pool]);
+        prop_assert_eq!(store.name(POOLS[pool], id).await.unwrap(), Some(name));
+    }
+    let mut taken = HashSet::new();
+    for ((pool, name), id) in ids {
+        prop_assert!(taken.insert((pool, id)), "{name} shares {id}");
+    }
+    Ok(())
+}
+
+proptest! {
+    /// However nodes interleave, a name keeps one id in its pool and no
+    /// two names in a pool share one.
+    #[test]
+    fn a_name_keeps_one_id_across_nodes(
+        nodes in vec((1..4u32, any::<bool>()), 1..4),
+        interns in vec((0..4usize, 0..2usize, 0..6usize), 0..40),
+    ) {
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        runtime.block_on(ids_are_unique_and_stable(nodes, interns))?;
+    }
 }

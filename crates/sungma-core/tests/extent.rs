@@ -5,12 +5,13 @@ mod common;
 use std::sync::Arc;
 
 use common::{World, head, identity, subjectset, world};
+use proptest::{prelude::*, sample::subsequence, test_runner::TestCaseError};
 use sungma_core::{
     extent::{Expansion, Extent, ExtentError, MAX_DEPTH},
     fixture::{self, FixtureError},
-    model::{RelationId, Resource, Revision, Subject, Subjectset, TheoryId},
+    model::{RelationId, Revision, Subject, Subjectset, TheoryId},
     rewrite::Rewrite::{self, Computed, Exclusion, Intersection, This, Union},
-    store::{FactStore, StoreError, TheoryStore},
+    store::{Dictionary, FactStore, Pool, StoreError, TheoryStore},
     theory::TheoryError,
 };
 
@@ -249,7 +250,7 @@ async fn a_parent_of_an_undeclared_theory_is_empty() {
     );
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum Read {
     Contains,
     Subjectsets,
@@ -258,42 +259,76 @@ enum Read {
     Rewrite,
 }
 
-/// The docs theory and fact stores, failing one kind of read of one
-/// subjectset.
-struct FailingStore<'a> {
+/// The docs theory and fact stores, failing the listed reads. With a seed,
+/// the operands of every union and intersection come back shuffled.
+struct Probe<'a> {
     world: &'a World,
-    set: Subjectset,
-    read: Read,
+    failures: Vec<(Subjectset, Read)>,
+    shuffle: Option<u64>,
 }
 
-impl FailingStore<'_> {
+impl<'a> Probe<'a> {
+    fn new(world: &'a World) -> Self {
+        Self {
+            world,
+            failures: Vec::new(),
+            shuffle: None,
+        }
+    }
+
     fn fail(&self, set: Subjectset, read: Read) -> Result<(), StoreError> {
-        if (set, read) == (self.set, self.read) {
+        if self.failures.contains(&(set, read)) {
             return Err(StoreError("injected".to_owned()));
         }
         Ok(())
     }
 }
 
-impl TheoryStore for FailingStore<'_> {
+/// `rewrite` with the operands of each union and intersection permuted by
+/// `seed`. An exclusion's sides keep their places.
+fn shuffled(rewrite: &Rewrite, seed: &mut u64) -> Rewrite {
+    let mut permute = |operands: &[Rewrite]| {
+        let mut operands: Vec<Rewrite> = operands.iter().map(|op| shuffled(op, seed)).collect();
+        for i in (1..operands.len()).rev() {
+            *seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            operands.swap(i, (*seed >> 33) as usize % (i + 1));
+        }
+        operands
+    };
+    match rewrite {
+        Union(operands) => Union(permute(operands)),
+        Intersection(operands) => Intersection(permute(operands)),
+        Exclusion(base, excluded) => Exclusion(
+            Box::new(shuffled(base, seed)),
+            Box::new(shuffled(excluded, seed)),
+        ),
+        leaf => leaf.clone(),
+    }
+}
+
+impl TheoryStore for Probe<'_> {
     async fn rewrite(
         &self,
         theory: TheoryId,
         relation: RelationId,
     ) -> Result<Option<Arc<Rewrite>>, StoreError> {
-        let set = Subjectset {
-            relation,
-            resource: Resource {
-                theory,
-                ..self.set.resource
-            },
-        };
-        self.fail(set, Read::Rewrite)?;
-        self.world.theories.rewrite(theory, relation).await
+        let failed = self.failures.iter().any(|&(set, read)| {
+            read == Read::Rewrite && (set.resource.theory, set.relation) == (theory, relation)
+        });
+        if failed {
+            return Err(StoreError("injected".to_owned()));
+        }
+        let rewrite = self.world.theories.rewrite(theory, relation).await?;
+        Ok(match self.shuffle {
+            Some(mut seed) => rewrite.map(|rewrite| Arc::new(shuffled(&rewrite, &mut seed))),
+            None => rewrite,
+        })
     }
 }
 
-impl FactStore for FailingStore<'_> {
+impl FactStore for Probe<'_> {
     async fn head(&self) -> Result<Revision, StoreError> {
         self.world.facts.head().await
     }
@@ -330,13 +365,16 @@ impl FactStore for FailingStore<'_> {
 /// An [`Extent`] over `checked` whose stores fail `read` of `failed`.
 async fn failing<'a>(
     world: &'a World,
-    store: &'a mut Option<FailingStore<'a>>,
+    store: &'a mut Option<Probe<'a>>,
     checked: &str,
     failed: &str,
     read: Read,
-) -> Extent<'a, FailingStore<'a>, FailingStore<'a>> {
+) -> Extent<'a, Probe<'a>, Probe<'a>> {
     let set = subjectset(world, failed).await.unwrap();
-    let store = store.insert(FailingStore { world, set, read });
+    let store = store.insert(Probe {
+        failures: vec![(set, read)],
+        ..Probe::new(world)
+    });
     let checked = subjectset(world, checked).await.unwrap();
     Extent::new(store, store, checked, head(world).await)
 }
@@ -652,4 +690,159 @@ async fn expand_lists_direct_subjects_including_subjectsets() {
         operands[0],
         Expansion::Subjects(vec![erin, Subject::Subjectset(eng)])
     );
+}
+
+const FILES: [&str; 2] = ["f0", "f1"];
+const FOLDERS: [&str; 2] = ["d0", "d1"];
+const GROUPS: [&str; 2] = ["g0", "g1"];
+const PEOPLE: [&str; 3] = ["alice", "bob", "carol"];
+
+/// Every subjectset of the random resources.
+fn random_sets() -> Vec<String> {
+    let mut sets = Vec::new();
+    for file in FILES {
+        for relation in ["owner", "parent", "editor", "viewer", "auditor", "banned"] {
+            sets.push(format!("file:{file}#{relation}"));
+        }
+    }
+    for folder in FOLDERS {
+        for relation in ["owner", "parent", "viewer", "banned"] {
+            sets.push(format!("folder:{folder}#{relation}"));
+        }
+    }
+    for group in GROUPS {
+        sets.push(format!("group:{group}#member"));
+    }
+    sets
+}
+
+/// Every fact a random world may hold, as fixture JSON.
+fn candidate_facts() -> Vec<String> {
+    let people = PEOPLE.map(|who| format!(r#""identity": "{who}""#));
+    let groups = GROUPS.map(|group| format!(r#""subjectset": "group:{group}#member""#));
+    let folders = FOLDERS.map(|folder| format!(r#""resource": "folder:{folder}""#));
+    let mut facts = Vec::new();
+    let mut add = |set: String, subjects: &[String]| {
+        for subject in subjects {
+            facts.push(format!(r#"{{ "set": "{set}", {subject} }}"#));
+        }
+    };
+    for file in FILES {
+        for relation in ["owner", "viewer", "auditor", "banned"] {
+            add(format!("file:{file}#{relation}"), &people);
+        }
+        add(format!("file:{file}#viewer"), &groups);
+        add(format!("file:{file}#parent"), &folders);
+    }
+    for folder in FOLDERS {
+        for relation in ["viewer", "banned"] {
+            add(format!("folder:{folder}#{relation}"), &people);
+            add(format!("folder:{folder}#{relation}"), &groups);
+        }
+        add(format!("folder:{folder}#parent"), &folders);
+    }
+    for group in GROUPS {
+        add(format!("group:{group}#member"), &people);
+        add(format!("group:{group}#member"), &groups);
+    }
+    facts
+}
+
+/// Every read of a random subjectset that a probe may fail.
+fn candidate_failures() -> Vec<(String, Read)> {
+    let reads = [
+        Read::Contains,
+        Read::Subjectsets,
+        Read::Subjects,
+        Read::Rewrite,
+    ];
+    random_sets()
+        .into_iter()
+        .flat_map(|set| reads.map(|read| (set.clone(), read)))
+        .collect()
+}
+
+/// The docs world plus `facts`, with every random name interned.
+async fn random_world(facts: &[String]) -> World {
+    let world = world();
+    for (theory, ids) in [("file", FILES), ("folder", FOLDERS), ("group", GROUPS)] {
+        let theory = world.dictionary.lookup(Pool::Theories, theory).await;
+        let theory = TheoryId(theory.unwrap().unwrap());
+        for id in ids {
+            world.dictionary.intern(Pool::Resources(theory), id);
+        }
+    }
+    for who in PEOPLE {
+        world.dictionary.intern(Pool::Identities, who);
+    }
+    let facts = format!("[{}]", facts.join(","));
+    fixture::load_facts(&facts, &world.dictionary, &world.facts).unwrap();
+    world
+}
+
+/// The verdict, `None` when the check fails.
+async fn verdict(probe: &Probe<'_>, set: Subjectset, who: Subject) -> Option<bool> {
+    let revision = head(probe.world).await;
+    agree(&Extent::new(probe, probe, set, revision), who)
+        .await
+        .ok()
+}
+
+async fn errors_follow_kleene_logic(
+    facts: Vec<String>,
+    failures: Vec<(String, Read)>,
+    seed: u64,
+) -> Result<(), TestCaseError> {
+    let world = random_world(&facts).await;
+    let mut failed = Vec::new();
+    for (set, read) in failures {
+        failed.push((subjectset(&world, &set).await.unwrap(), read));
+    }
+    let plain = Probe::new(&world);
+    let shuffled = Probe {
+        shuffle: Some(seed),
+        ..Probe::new(&world)
+    };
+    let failing = Probe {
+        failures: failed.clone(),
+        ..Probe::new(&world)
+    };
+    let both = Probe {
+        failures: failed,
+        shuffle: Some(seed),
+        ..Probe::new(&world)
+    };
+    for name in random_sets() {
+        let set = subjectset(&world, &name).await.unwrap();
+        for who in PEOPLE {
+            let subject = identity(&world, who).await.unwrap();
+            let expected = verdict(&plain, set, subject).await;
+            prop_assert!(expected.is_some(), "{name} for {who}");
+            let reordered = verdict(&shuffled, set, subject).await;
+            prop_assert_eq!(reordered, expected, "{} for {} shuffled", name, who);
+            // An error makes a verdict unknown, never wrong.
+            let failed = verdict(&failing, set, subject).await;
+            if failed.is_some() {
+                prop_assert_eq!(failed, expected, "{} for {} failing", name, who);
+            }
+            let both = verdict(&both, set, subject).await;
+            prop_assert_eq!(both, failed, "{} for {} failing, shuffled", name, who);
+        }
+    }
+    Ok(())
+}
+
+proptest! {
+    /// With any facts, any failed reads and any operand order, a check
+    /// either gives the verdict it gives with nothing failing or fails, and
+    /// which one doesn't depend on the order.
+    #[test]
+    fn errors_follow_kleene_logic_in_any_order(
+        facts in subsequence(candidate_facts(), 0..=20),
+        failures in subsequence(candidate_failures(), 0..=4),
+        seed in any::<u64>(),
+    ) {
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        runtime.block_on(errors_follow_kleene_logic(facts, failures, seed))?;
+    }
 }
