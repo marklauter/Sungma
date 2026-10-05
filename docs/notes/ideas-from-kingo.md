@@ -1,6 +1,6 @@
 ---
 title: Ideas from Kingo
-summary: Sixteen ideas from Kingo, the legacy ReBAC, each with its Sungma status as of 2026-10-04. One is in place, three run counter to Sungma, and two confirmed bugs surfaced along the way.
+summary: Sixteen ideas from Kingo, the legacy ReBAC, each with its Sungma status as of 2026-10-04. One is in place, two run counter to Sungma, and two confirmed bugs surfaced along the way.
 status: evolving
 ---
 
@@ -23,7 +23,7 @@ Both were reproduced with throwaway tests on 2026-10-04.
 
 | # | Idea | Sungma status |
 |---|---|---|
-| 1 | Undefined relation mid-walk is an error | Counter: treated as the empty set |
+| 1 | Relation epoch keeps orphaned facts from resurrecting | Missing |
 | 2 | Errors combine by Kleene absorption | In place |
 | 3 | Wrong-shaped factset member is an error | Counter: followed or skipped silently |
 | 4 | Drift prevented at write time | Missing |
@@ -42,16 +42,23 @@ Both were reproduced with throwaway tests on 2026-10-04.
 
 ## Ideas
 
-1. **An undefined relation reached mid-walk is an error, not the empty set.** Under exclusion, the empty set fails open: an undefined `banned` means nobody is banned.
-   - **Sungma: counter.** `crates/sungma-core/src/extent.rs` (module doc) and `README.md` treat an undeclared theory or relation as the empty set. An uninterned name in a request is likewise denied without error (`README.md`, `crates/sungma-core/src/resolve.rs`).
-   - Source: `docs/todos/implement-contains-and-expand.md`, error families 1 and 4.
+1. **A relation epoch keeps orphaned facts from resurrecting.** The epoch exists for one purpose: when a later theory version re-declares a dropped relation, the facts orphaned by the drop must not come back to life. Without it, re-adding `owner` in `file` v3 would revive every `owner` fact orphaned by v2, restoring grants that were dropped. A theory version that drops a relation leaves the facts stored under it in place. Under that version they count as nonexistent, because the relation is undeclared there. Each theory version records, for each relation, the revision at which it was last declared: its epoch. Evaluation counts a fact only if its span covers the revision and its `written` revision is at or after the relation's epoch in the theory version the snapshot selects.
+   - Re-adding a dropped relation in a later version moves its epoch, so older facts under it stay dead and old grants don't resurrect.
+   - A replay or expand at an earlier revision reads the earlier version and its epoch, so the facts are valid there.
+   - The theory write is cheap: no fact is rewritten, no cross-theory scan runs, and facts carry no theory version. Late binding means the catalog can't see which other theories reach a dropped relation, and scanning the fact graph on every theory write is impractical. Dropping a relation therefore empties it everywhere, including on the excluded side of another theory's exclusion, which can widen access there. That widening is accepted.
+   - Re-applying a fact whose span started before the epoch has to open a new span. Today an insert of a live fact is a no-op (`crates/sungma-core/src/memory.rs`, `Span`), which would leave a re-asserted grant dead.
+   - Every reader of the graph applies the same epoch filter: Check, Expand, Read, Watch and dumps. A reader that skips it shows orphans as live.
+   - The eager alternative closes the orphans' spans in the theory write. It gives the same visible facts at every revision and needs no reader filter, but the write costs as much as there are orphans.
+   - This replaces the theory-write half of idea 4, which refuses a theory write that strands live facts. It depends on idea 5: `replay` reads the current theories today ([[theory-writes-wait-on-theory-versioning]]).
+   - **Sungma: missing.** `Theory` has no epochs, and `crates/sungma-core/src/extent.rs` treats an undeclared relation as the empty set with no epoch check.
+   - Source: decided in conversation on 2026-10-04. It departs from Kingo's `docs/decisions/preventing-drift-between-facts-and-theories.md`, which refuses the theory write, and keeps that decision's rule that facts carry no theory version.
 2. **Errors combine by Kleene absorption.** A deciding value absorbs an error: `false` in intersection, `true` in union, and `a = false` or `b = true` in `a ! b`. The verdict then never depends on evaluation order, so parallel evaluation stays sound.
    - **Sungma: in place.** `Extent::contains_node` and `contains_this` keep the first error and return it only when no operand settles the result (`crates/sungma-core/src/extent.rs`, module doc). The depth limit is not absorbed: it caps a check's work, so it ends the check. Expand still fails on any error, since it returns no verdict.
    - Source: `docs/glossary/kleene-absorption.md`.
 3. **A wrong-shaped factset member is an error.** Under `(parent, viewer)` only a resource member traverses. A subjectset member or identity is a modeled error, and so is a resource member under `this`.
    - **Sungma: counter.** `Extent::fact_targets` follows subjectsets to their resource and skips identities. `contains_this` doesn't check for resource members.
    - Source: `docs/todos/implement-contains-and-expand.md` conditions 5, 6 and 9; `docs/todos/resource-fact-case.md`.
-4. **Fact/theory drift is prevented at write time.** Fact writes are checked against the current theory. A theory write that would strand live facts is refused, so removal takes two steps. Ideas 1 and 3 then become backstops that never fire.
+4. **Fact/theory drift is prevented at write time.** Fact writes are checked against the current theory. A theory write that would strand live facts is refused, so removal takes two steps. Idea 3 then becomes a backstop that never fires.
    - **Sungma: missing.** There is no theory write path; this feeds roadmap items 9 and 13.
    - Source: `docs/decisions/preventing-drift-between-facts-and-theories.md`.
 5. **Facts and theories share one timeline.** Theory versions take revisions from the fact sequence, the zookie selects the theory version, and a decision records only the zookie.

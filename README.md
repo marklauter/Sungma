@@ -44,7 +44,7 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
 
 **Decisions and replay** (`decision.rs`, `replay.rs`)
 - A `Decision` records the question, the revision, the `SEMANTICS` version and the outcome with its grounds.
-- `replay` re-judges a recorded decision at its revision and reports one of three results: `Matches`, `Differs`, or `SemanticsChanged` (the evaluation rules have changed since). This is the audit story.
+- `replay` re-judges a recorded decision at its revision and reports one of four results: `Matches`, `Regrounded` (the same verdict on other grounds), `Differs`, or `SemanticsChanged` (the evaluation rules have changed since). This is the audit story.
 - One limitation: theories aren't versioned yet, so replay reads the current theories.
 
 **The edge** (`name.rs`, `resolve.rs`, `check.rs`)
