@@ -21,7 +21,7 @@
 //! theory of the resource the fact names, so it isn't checked here.
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque, hash_map::Entry},
     fmt::Display,
     hash::Hash,
     sync::Arc,
@@ -219,42 +219,44 @@ impl<'e> Components<'e> {
 
     /// Depth-first from `start`, with its own stack rather than recursion,
     /// so a long chain of relations built in code can't overflow the stack.
+    /// Each step consumes an edge, so the walk always ends.
     fn visit(&mut self, start: usize) {
         if self.met[start].is_some() {
             return;
         }
-        self.open_relation(start);
-        // Each relation being visited, and the index of its next edge.
-        let mut path = vec![(start, 0)];
-        while let Some(&(at, next)) = path.last() {
-            if let Some(&target) = self.edges[at].get(next) {
-                path.last_mut().expect("path isn't empty").1 += 1;
+        let edges = self.edges;
+        // Each relation being visited, and the edges it has left to follow.
+        let mut path = Vec::new();
+        let mut entering = Some(start);
+        loop {
+            if let Some(at) = entering.take() {
+                self.met[at] = Some(self.count);
+                self.low[at] = self.count;
+                self.count += 1;
+                self.open.push(at);
+                self.on_open[at] = true;
+                path.push((at, edges[at].iter()));
+            }
+            let Some((at, rest)) = path.last_mut() else {
+                return;
+            };
+            let at = *at;
+            if let Some(&target) = rest.next() {
                 match self.met[target] {
-                    None => {
-                        self.open_relation(target);
-                        path.push((target, 0));
-                    }
+                    None => entering = Some(target),
                     Some(met) if self.on_open[target] => self.low[at] = self.low[at].min(met),
                     Some(_) => {}
                 }
                 continue;
             }
             path.pop();
-            if let Some(&(parent, _)) = path.last() {
-                self.low[parent] = self.low[parent].min(self.low[at]);
+            if let Some((parent, _)) = path.last() {
+                self.low[*parent] = self.low[*parent].min(self.low[at]);
             }
             if Some(self.low[at]) == self.met[at] {
                 self.close_component(at);
             }
         }
-    }
-
-    fn open_relation(&mut self, at: usize) {
-        self.met[at] = Some(self.count);
-        self.low[at] = self.count;
-        self.count += 1;
-        self.open.push(at);
-        self.on_open[at] = true;
     }
 
     /// Pops the component `root` met first, keeping a cycle through it.
@@ -290,8 +292,8 @@ fn cycle_through(edges: &[Vec<usize>], root: usize) -> Vec<usize> {
                 path.push(root);
                 return path;
             }
-            if target != root && !from.contains_key(&target) {
-                from.insert(target, at);
+            if let Entry::Vacant(entry) = from.entry(target) {
+                entry.insert(at);
                 queue.push_back(target);
             }
         }
