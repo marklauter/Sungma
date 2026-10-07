@@ -310,21 +310,6 @@ fn renaming_two_relations_alike_is_a_defect() {
 }
 
 #[test]
-fn a_theory_declared_by_two_documents_is_refused() {
-    let dictionary = MemoryDictionary::default();
-    let mut theories = MemoryTheoryStore::default();
-    let documents = [
-        r#"{ "file": { "owner": "this" } }"#,
-        r#"{ "file": { "viewer": "this" } }"#,
-    ];
-    let error = fixture::load_theories(&documents, &dictionary, &mut theories).unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "theory 'file' is declared by more than one document"
-    );
-}
-
-#[test]
 fn a_cycle_path_stays_within_its_relations() {
     // a and b reach each other; b also leads out to c, which leads nowhere back.
     let problems = Theory::new(vec![

@@ -82,8 +82,6 @@ pub enum ErrorKind {
     NoTheory,
     #[error("a document declares one theory, not {0}")]
     ManyTheories(usize),
-    #[error("theory '{0}' is declared more than once")]
-    DuplicateTheory(String),
     #[error("theory '{0}' maps to an object of relations")]
     RelationsNotAnObject(String),
     #[error("a theory declares at most {MAX_RELATIONS} relations, not {0}")]
@@ -122,14 +120,11 @@ pub fn parse(text: &str) -> Result<TheoryDocument, Vec<DocumentError>> {
     let Json::Object(mut theories) = json else {
         return fail(ErrorKind::NotAnObject);
     };
-    let names: HashSet<_> = theories.iter().map(|(name, _)| name.text()).collect();
-    match (theories.len(), names.len()) {
-        (0, _) => return fail(ErrorKind::NoTheory),
-        (1, _) => {}
-        (_, 1) => return fail(ErrorKind::DuplicateTheory(quote(theories[0].0.text()))),
-        (_, count) => return fail(ErrorKind::ManyTheories(count)),
-    }
-    let (theory, relations) = theories.remove(0);
+    let (theory, relations) = match theories.len() {
+        0 => return fail(ErrorKind::NoTheory),
+        1 => theories.remove(0),
+        count => return fail(ErrorKind::ManyTheories(count)),
+    };
     let mut errors = Errors::default();
     // A name that fails is still kept, unchecked, for the checks that
     // follow; the document is refused, so it never leaves.

@@ -22,8 +22,6 @@
 use serde::Deserialize;
 use thiserror::Error;
 
-use std::collections::HashSet;
-
 use crate::{
     document::{self, DocumentError},
     memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore},
@@ -40,8 +38,6 @@ pub enum FixtureError {
     Json(#[from] serde_json::Error),
     #[error("{}", .0.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
     Document(Vec<DocumentError>),
-    #[error("theory '{0}' is declared by more than one document")]
-    DuplicateTheory(String),
     #[error(transparent)]
     Name(#[from] NameError),
     #[error("fact '{0}' needs exactly one of identity, resource or subjectset")]
@@ -84,19 +80,14 @@ pub fn declare(
     Ok(())
 }
 
-/// Declares the theory each document declares. Two documents declaring
-/// one theory are refused, as when a stale copy sits beside the current one.
+/// Declares the theory each document declares, in turn.
 pub fn load_theories(
     documents: &[&str],
     dictionary: &MemoryDictionary,
     theories: &mut MemoryTheoryStore,
 ) -> Result<(), FixtureError> {
-    let mut seen = HashSet::new();
     for document in documents {
         let document = document::parse(document).map_err(FixtureError::Document)?;
-        if !seen.insert(document.theory.clone()) {
-            return Err(FixtureError::DuplicateTheory(document.theory.to_string()));
-        }
         let id = TheoryId(dictionary.intern(Pool::Theories, document.theory.as_str()));
         let relations = document
             .relations

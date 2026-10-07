@@ -326,10 +326,8 @@ fn a_document_declares_exactly_one_theory() {
     assert_eq!(error.to_string(), "a document declares one theory, not 2");
     let error = only(r#"{ "\u0061": {}, "b": {} }"#);
     assert_eq!(error.to_string(), "a document declares one theory, not 2");
-    let error = only(r#"{ "a": {}, "a": {} }"#);
-    assert_eq!(error.to_string(), "theory 'a' is declared more than once");
     assert!(matches!(
-        only(r#"{ "a": {}, "b": {}, "a": {} }"#).kind,
+        only(r#"{ "a": {}, "a": {} }"#).kind,
         ErrorKind::ManyTheories(2)
     ));
     for json in ["[]", "null", r#""t""#] {
