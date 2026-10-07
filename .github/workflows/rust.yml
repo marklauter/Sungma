@@ -96,10 +96,15 @@ jobs:
       with:
         tool: cargo-mutants@27.1.0
 
-    # Only the lines a pull request changes, so the existing survivors don't block it.
+    # Only the lines a pull request changes, so the existing survivors don't
+    # block it, and only when it changes Rust code or its build settings.
     - name: Mutation testing (fails when a mutant of changed code survives)
       if: github.event_name == 'pull_request'
       run: |
+        if ! git diff --name-only origin/${{ github.base_ref }}... | grep -Eq '\.rs$|(^|/)Cargo\.(toml|lock)$|^\.cargo/'; then
+          echo "No Rust changes, skipping mutation testing"
+          exit 0
+        fi
         git diff origin/${{ github.base_ref }}... > pr.diff
         cargo mutants --workspace --in-diff pr.diff -- --locked
 

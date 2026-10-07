@@ -1,11 +1,35 @@
 #!/bin/sh
 # The slow CI checks, before each push: coverage, mutation testing of the
 # lines this branch changes, and the dependency audit. Needs cargo-llvm-cov,
-# cargo-mutants and cargo-audit installed.
+# cargo-mutants and cargo-audit installed. Mutation testing runs only when
+# the commits being pushed change Rust code or its build settings.
 set -e
+# git passes each pushed ref on stdin as: local-ref local-sha remote-ref
+# remote-sha. Read it before anything else can.
+refs=$(cat)
 cargo llvm-cov --workspace --locked --fail-under-lines 95 --summary-only
 git fetch --quiet origin main
 mkdir -p target
-git diff origin/main... > target/pr.diff
-cargo mutants --workspace --in-diff target/pr.diff -- --locked
+rust='\.rs$|(^|/)Cargo\.(toml|lock)$|^\.cargo/'
+zero=0000000000000000000000000000000000000000
+changes_rust=false
+while read -r _ local _ remote; do
+    [ -z "$local" ] || [ "$local" = "$zero" ] && continue
+    if [ "$remote" = "$zero" ]; then
+        base=$(git merge-base origin/main "$local")
+    else
+        base=$remote
+    fi
+    if git diff --name-only "$base" "$local" | grep -Eq "$rust"; then
+        changes_rust=true
+    fi
+done <<REFS
+$refs
+REFS
+if [ "$changes_rust" = true ]; then
+    git diff origin/main... > target/pr.diff
+    cargo mutants --workspace --in-diff target/pr.diff -- --locked
+else
+    echo "pre-push: no Rust changes, skipping mutation testing"
+fi
 cargo audit --deny warnings
