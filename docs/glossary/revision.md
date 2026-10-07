@@ -1,11 +1,11 @@
 ---
 title: revision
 type: definition
-summary: "A position in the sequence of writes."
+summary: "A position on the revision clock."
 status: evolving
 ---
 
-A position in the sequence of writes.
+A position on the revision clock.
 
 ## Rationale
 

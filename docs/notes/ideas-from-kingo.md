@@ -16,8 +16,8 @@ Not a source: the `rewrite-interpreters` branch (checkout at `D:\projects\kingo\
 
 Both were reproduced with throwaway tests on 2026-10-04.
 
-- `theory::validate` overflows the stack on a chain of 20,000 computed relations (`r0: r1`, `r1: r2`, …). `find_cycle` in `crates/sungma-core/src/theory.rs` recurses once per relation. Kingo walks with an explicit stack (`src/Kingo.Theories/Namespace.cs:90-150`) and tests the 20k chain (`tests/Kingo.Theories.Tests/NamespaceTests.cs:362-372`).
-- `MAX_REWRITE_DEPTH` (100) is unreachable through JSON. `fixture::load_theories` uses serde_json's default recursion limit of 128, and each `{"union":[…]}` level costs two. A 63-deep rewrite loads; a 64-deep one fails as `FixtureError::Json` ("recursion limit exceeded"), never `TheoryError::TooDeep`.
+- Fixed: `theory::validate` overflowed the stack on a chain of 20,000 computed relations (`r0: r1`, `r1: r2`, …), recursing once per relation. `Theory::new` now walks with its own stack and is tested on a 100,000-relation chain (`crates/sungma-core/tests/theory.rs`).
+- `MAX_REWRITE_DEPTH` (100) was unreachable through the nested JSON fixture form, whose levels hit serde_json's recursion limit first. Theory documents write rewrites as expression strings, so a 101-level rewrite now reaches `TheoryError::TooDeep` (`crates/sungma-core/tests/document.rs`, `a_rewrite_nests_at_most_max_depth`).
 
 ## Sungma status at a glance
 

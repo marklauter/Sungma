@@ -96,17 +96,59 @@ jobs:
       with:
         tool: cargo-mutants@27.1.0
 
-    # Only the lines a pull request changes, so the existing survivors don't block it.
+    # Only the lines a pull request changes, so the existing survivors don't
+    # block it, and only when it changes Rust code or its build settings.
     - name: Mutation testing (fails when a mutant of changed code survives)
       if: github.event_name == 'pull_request'
       run: |
+        if ! git diff --name-only origin/${{ github.base_ref }}... | grep -Eq '\.rs$|(^|/)Cargo\.(toml|lock)$|^\.cargo/'; then
+          echo "No Rust changes, skipping mutation testing"
+          exit 0
+        fi
         git diff origin/${{ github.base_ref }}... > pr.diff
         cargo mutants --workspace --in-diff pr.diff -- --locked
+
+  fuzz:
+    runs-on: ubuntu-latest
+    env:
+      # libFuzzer needs a nightly compiler; pinned like every other tool.
+      NIGHTLY: nightly-2026-10-01
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Install nightly
+      run: rustup toolchain install $NIGHTLY --profile minimal
+    - uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
+      with:
+        tool: cargo-fuzz@0.13.2
+    # The corpus a run grows is kept for the next, so each starts where the last left off.
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: fuzz/corpus
+        key: fuzz-corpus-${{ github.run_id }}
+        restore-keys: fuzz-corpus-
+
+    # Seeds and a token dictionary get it past building valid JSON; inputs up
+    # to 64 KiB reach larger shapes than libFuzzer's 4 KiB default. The target
+    # is named because the prebuilt cargo-fuzz defaults to musl, which the
+    # address sanitizer can't build for.
+    - name: Fuzz the theory document parser for a minute
+      run: >
+        mkdir -p fuzz/corpus/document &&
+        cargo +$NIGHTLY fuzz run --target x86_64-unknown-linux-gnu
+        document fuzz/corpus/document fuzz/seeds/document --
+        -dict=fuzz/document.dict -max_len=65536 -max_total_time=60
+
+    - name: Keep the crashing input
+      if: failure()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: fuzz-artifacts
+        path: fuzz/artifacts
 
   # The single required status check: the ruleset names this job, not the matrix legs.
   passed:
     if: always()
-    needs: [ format, lint, test, coverage, audit, mutants ]
+    needs: [ format, lint, test, coverage, audit, mutants, fuzz ]
     runs-on: ubuntu-latest
     steps:
     - name: Require every job to succeed

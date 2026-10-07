@@ -14,11 +14,15 @@ use sungma_api::{AppState, router};
 use sungma_core::check::Verdict;
 use tower::ServiceExt;
 
-const THEORIES: &str = include_str!("../../sungma-core/tests/fixtures/docs.theories.json");
+const THEORIES: [&str; 3] = [
+    include_str!("../../sungma-core/tests/fixtures/theories/file.json"),
+    include_str!("../../sungma-core/tests/fixtures/theories/folder.json"),
+    include_str!("../../sungma-core/tests/fixtures/theories/group.json"),
+];
 const FACTS: &str = include_str!("../../sungma-core/tests/fixtures/docs.facts.json");
 
 fn state() -> Arc<AppState> {
-    Arc::new(AppState::load(THEORIES, FACTS).unwrap())
+    Arc::new(AppState::load(&THEORIES, FACTS).unwrap())
 }
 
 async fn post(app: Router, body: Value, headers: &[(&str, &str)]) -> (StatusCode, Value) {
@@ -160,15 +164,15 @@ async fn a_resource_is_not_a_subject() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(
         reply["error"],
-        r#""folder:specs#..." names a resource, not a subjectset"#
+        "'folder:specs#...' names a resource, not a subjectset"
     );
     assert!(state.audit.records().is_empty());
 }
 
 #[test]
 fn load_reports_bad_json() {
-    assert!(AppState::load("{", FACTS).is_err());
-    assert!(AppState::load(THEORIES, "[{}]").is_err());
+    assert!(AppState::load(&["{"], FACTS).is_err());
+    assert!(AppState::load(&THEORIES, "[{}]").is_err());
 }
 
 #[tokio::test]

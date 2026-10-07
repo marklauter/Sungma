@@ -12,7 +12,10 @@ pub async fn resource<D: Dictionary>(
     dictionary: &D,
     name: &ResourceName,
 ) -> Result<Option<Resource>, StoreError> {
-    let Some(theory) = dictionary.lookup(Pool::Theories, name.theory()).await? else {
+    let Some(theory) = dictionary
+        .lookup(Pool::Theories, name.theory().as_str())
+        .await?
+    else {
         return Ok(None);
     };
     let theory = TheoryId(theory);
@@ -31,7 +34,9 @@ pub async fn subjectset<D: Dictionary>(
 ) -> Result<Option<Subjectset>, StoreError> {
     let (Some(resource), Some(relation)) = (
         resource(dictionary, name.resource()).await?,
-        dictionary.lookup(Pool::Relations, name.relation()).await?,
+        dictionary
+            .lookup(Pool::Relations, name.relation().as_str())
+            .await?,
     ) else {
         return Ok(None);
     };

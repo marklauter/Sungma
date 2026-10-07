@@ -59,8 +59,8 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Loads theory and fact JSON in the [`fixture`] forms.
-    pub fn load(theories: &str, facts: &str) -> Result<Self, FixtureError> {
+    /// Loads theory documents and fact JSON in the [`fixture`] forms.
+    pub fn load(theories: &[&str], facts: &str) -> Result<Self, FixtureError> {
         let mut state = Self::default();
         fixture::load_theories(theories, &state.dictionary, &mut state.theories)?;
         fixture::load_facts(facts, &state.dictionary, &state.facts)?;

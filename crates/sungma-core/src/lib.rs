@@ -8,6 +8,7 @@
 pub mod check;
 pub mod closure;
 pub mod decision;
+pub mod document;
 pub mod fixture;
 pub mod intern;
 pub mod memory;

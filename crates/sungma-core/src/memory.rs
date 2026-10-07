@@ -270,6 +270,6 @@ impl TheoryStore for MemoryTheoryStore {
         relation: RelationId,
     ) -> Result<Option<Arc<Rewrite>>, StoreError> {
         let theory = self.theories.get(&theory);
-        Ok(theory.and_then(|theory| theory.rewrite(relation)).cloned())
+        Ok(theory.and_then(|theory| theory.rewrite(&relation)).cloned())
     }
 }

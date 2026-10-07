@@ -1,0 +1,1 @@
+{ "drive.file": { "owner": "this", "editor": "this | owner", "auditor": "this & editor", "viewer": "(editor | (parent, viewer)) ! banned", "parent": "this", "banned": "this" } }
