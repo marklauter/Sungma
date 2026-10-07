@@ -44,7 +44,8 @@ The `file` theory: files sit in folders, and `(parent, viewer)` reads the viewer
 - A document declares exactly one theory. An empty document or `{}` declares nothing, and an object with two or more keys declares more than one, so both are refused as parse errors. An API that takes a document answers either as a bad request.
 - An object with the same key twice is refused, including a relation named twice. JSON leaves duplicate keys to the reader, and a reader that keeps the last one would hide a mistake.
 - Key order carries no meaning.
-- Names and expressions, and their length limits, are checked after JSON escapes are decoded, so `"\u006fwner"` is the name `owner`.
+- Names and expressions hold no JSON escapes, such as `\n` or `\u006f`. Nothing a name or an expression needs requires one, and without them a column in an expression is also a column in the document. A string with an escape is refused.
+- A document carries no grammar version. The REST endpoint that takes it is versioned instead.
 
 ## Limits
 
@@ -73,7 +74,7 @@ A relation name is one name. A theory name is one or more names joined by dots, 
 
 Names are case-sensitive: `Owner` and `owner` are two different names. Nothing is lowercased.
 
-The keyword is `this`, in lowercase only. No relation may be named `this` in any casing, so `This` and `THIS` are refused as names. A name that differs from the keyword only in case would read as the keyword. The core accepts these names; the document reserves them.
+The keyword is `this`, in lowercase only. No relation may be named `this` in any casing, so `This` and `THIS` are refused as names, and so is a reference to one: `"viewer": "this"` is valid, and `"viewer": "This"` is refused as a reserved name. A name that differs from the keyword only in case would read as the keyword. The core accepts these names; the document reserves them.
 
 ## Rewrite grammar
 
@@ -130,11 +131,19 @@ A theory is checked whole when it is declared, and is refused if any of the foll
 
 ## Errors
 
-The parser reports every problem in a document, not only the first, in document order. Each error carries the line and column where its problem starts. A problem found only by checking a whole theory, such as a cycle, is reported at the relation where it is found.
+A JSON library reads the document, and a document that isn't valid JSON is refused with the library's error and its line and column. Nothing further is checked.
+
+Sungma's own parser reads each expression. It reports the problems it finds in document order, up to 50; past that, a final error says there were too many. Each error carries the relation it was found in and, for a problem inside an expression, the column where the problem starts. A column counts characters from 1. A problem found only by checking a whole theory, such as a cycle, is reported at the relation where it is found.
+
+One mistake reports one error:
+
+- An expression stops at its first syntax error, and parsing goes on with the next relation.
+- A relation whose expression fails to parse is still declared, so a reference to it isn't dangling. The cycle check skips it.
+- Relations that reach each other through computed subjectsets, a strongly connected component, report one cycle error between them, however many cycles they form. It is reported at whichever of them the check meets first, and carries a path from that relation back to itself.
 
 The parser refuses a document if it finds any problem, and declares nothing from it.
 
-Each error is a position and a kind. The kind is a variant of one enum with a variant for each problem this spec names, such as a relation whose value isn't a string, a reserved name, a broken limit, a rewrite syntax error, a dangling reference or a cycle. A variant carries the names involved. Callers match on the variant. There are no string codes.
+Each error is a kind, with its relation and column where it has them. The kind is a variant of one enum with a variant for each problem this spec names, such as a relation whose value isn't a string, a reserved name, a broken limit, a rewrite syntax error, a dangling reference or a cycle. A variant carries the names involved. Callers match on the variant. There are no string codes.
 
 ## Printing
 
