@@ -13,7 +13,7 @@ use sungma_core::{
     },
     name::{NameError, RelationName, TheoryName},
     rewrite::Rewrite::{self, Computed, Exclusion, FactTo, Intersection, This, Union},
-    theory::{MAX_REWRITE_DEPTH, TheoryError},
+    theory::{self, MAX_REWRITE_DEPTH, TheoryError},
 };
 
 fn parsed(json: &str) -> TheoryDocument {
@@ -40,7 +40,7 @@ fn rewrite(expression: &str) -> Rewrite<RelationName> {
         r#"{{ "t": {{ "r": "{expression}", "a": "this", "b": "this", "c": "this", "p": "this" }} }}"#
     );
     let document = parsed(&json);
-    document.relations[0].1.clone()
+    listed(&document)[0].1.clone()
 }
 
 /// The error the expression of relation `r` is refused with, and its column.
@@ -72,11 +72,12 @@ fn fact_to(factset: &str, computed: &str) -> Rewrite<RelationName> {
 }
 
 /// A theory's relations, named as written.
-type Theory = Vec<(&'static str, Rewrite<&'static str>)>;
+type Relations = Vec<(&'static str, Rewrite<&'static str>)>;
 
-/// Prints relations written with plain names, made with `new_unchecked`.
-fn print(theory: &str, relations: &[(&str, Rewrite<&str>)]) -> String {
-    let relations: Vec<_> = relations
+/// A valid theory of relations written with plain names, each made with
+/// `new_unchecked`.
+fn checked(relations: &[(&str, Rewrite<&str>)]) -> theory::Theory<RelationName> {
+    let relations = relations
         .iter()
         .map(|(name, rewrite)| {
             (
@@ -85,7 +86,37 @@ fn print(theory: &str, relations: &[(&str, Rewrite<&str>)]) -> String {
             )
         })
         .collect();
-    document::print(&TheoryName::new_unchecked(theory), &relations)
+    theory::Theory::new(relations).expect("a valid theory")
+}
+
+fn print(theory: &str, relations: &[(&str, Rewrite<&str>)]) -> String {
+    document::print(&TheoryName::new_unchecked(theory), &checked(relations))
+}
+
+/// A document's relations, in document order.
+fn listed(document: &TheoryDocument) -> Vec<(RelationName, Rewrite<RelationName>)> {
+    document
+        .relations
+        .relations()
+        .map(|(name, rewrite)| (name.clone(), rewrite.clone()))
+        .collect()
+}
+
+/// How the printer writes `tree` as the rewrite of relation `r`, beside
+/// every relation in [`DECLARED`].
+fn printed_expression(tree: Rewrite<RelationName>) -> String {
+    let mut relations: Vec<_> = DECLARED.iter().map(|name| (relation(name), This)).collect();
+    relations.push((relation("r"), tree));
+    let theory = theory::Theory::new(relations).expect("a valid theory");
+    let text = document::print(&t(), &theory);
+    let line = text
+        .lines()
+        .find(|line| line.starts_with("    \"r\": "))
+        .expect("relation r is printed");
+    line.trim_start_matches("    \"r\": \"")
+        .trim_end_matches(',')
+        .trim_end_matches('"')
+        .to_owned()
 }
 
 fn exclusion<N>(base: Rewrite<N>, excluded: Rewrite<N>) -> Rewrite<N> {
@@ -98,12 +129,12 @@ fn the_sample_parses() {
     assert_eq!(document.theory.as_str(), "file");
     let viewer = &document
         .relations
-        .iter()
+        .relations()
         .find(|(r, _)| r.as_str() == "viewer")
         .unwrap()
         .1;
     assert_eq!(
-        *viewer,
+        **viewer,
         exclusion(
             Union(vec![This, name("editor"), fact_to("parent", "viewer")]),
             name("banned")
@@ -114,7 +145,11 @@ fn the_sample_parses() {
 #[test]
 fn relations_keep_document_order() {
     let document = parsed(r#"{ "t": { "b": "this", "a": "b" } }"#);
-    let names: Vec<_> = document.relations.iter().map(|(r, _)| r.as_str()).collect();
+    let names: Vec<_> = document
+        .relations
+        .relations()
+        .map(|(r, _)| r.as_str())
+        .collect();
     assert_eq!(names, ["b", "a"]);
 }
 
@@ -167,7 +202,7 @@ fn whitespace_only_separates_tokens() {
 #[test]
 fn a_name_is_the_longest_run_of_name_characters() {
     let document = parsed(r#"{ "t": { "thisone": "this", "r": "thisone" } }"#);
-    assert_eq!(document.relations[1].1, name("thisone"));
+    assert_eq!(listed(&document)[1].1, name("thisone"));
 }
 
 #[test]
@@ -182,7 +217,13 @@ fn a_dotted_theory_name_is_one_name() {
 
 #[test]
 fn a_theory_without_relations_is_empty() {
-    assert!(parsed(r#"{ "t": {} }"#).relations.is_empty());
+    assert!(
+        parsed(r#"{ "t": {} }"#)
+            .relations
+            .relations()
+            .next()
+            .is_none()
+    );
 }
 
 #[test]
@@ -285,9 +326,11 @@ fn a_document_declares_exactly_one_theory() {
     assert_eq!(error.to_string(), "a document declares one theory, not 2");
     let error = only(r#"{ "\u0061": {}, "b": {} }"#);
     assert_eq!(error.to_string(), "a document declares one theory, not 2");
+    let error = only(r#"{ "a": {}, "a": {} }"#);
+    assert_eq!(error.to_string(), "theory 'a' is declared more than once");
     assert!(matches!(
-        only(r#"{ "a": {}, "a": {} }"#).kind,
-        ErrorKind::ManyTheories(_)
+        only(r#"{ "a": {}, "b": {}, "a": {} }"#).kind,
+        ErrorKind::ManyTheories(2)
     ));
     for json in ["[]", "null", r#""t""#] {
         assert!(matches!(only(json).kind, ErrorKind::NotAnObject), "{json}");
@@ -344,7 +387,7 @@ fn a_rewrite_nests_at_most_max_depth() {
     let chain = |operators: usize| format!("a{}", " ! b".repeat(operators));
     rewrite(&chain(MAX_REWRITE_DEPTH - 1));
     let (column, kind) = syntax(&chain(MAX_REWRITE_DEPTH));
-    assert_eq!(column, Some(4 * MAX_REWRITE_DEPTH - 1));
+    assert_eq!(column, None);
     assert!(matches!(kind, ErrorKind::Theory(TheoryError::TooDeep)));
     // Unions in groups: each level is a run, one level however wide.
     let unions =
@@ -379,7 +422,7 @@ fn every_problem_is_reported_in_document_order() {
     );
     assert!(matches!(
         &errors[2].kind,
-        ErrorKind::Theory(TheoryError::RewriteCycle(path)) if path == &["d", "e", "d"]
+        ErrorKind::Theory(TheoryError::RewriteCycle { path, .. }) if path == &["d", "e", "d"]
     ));
 }
 
@@ -405,7 +448,7 @@ fn relations_that_reach_each_other_are_one_cycle() {
     assert_eq!(error.relation.as_deref(), Some("a"));
     assert!(matches!(
         error.kind,
-        ErrorKind::Theory(TheoryError::RewriteCycle(path)) if path == ["a", "b", "a"]
+        ErrorKind::Theory(TheoryError::RewriteCycle { path, .. }) if path == ["a", "b", "a"]
     ));
 }
 
@@ -501,11 +544,7 @@ fn the_printer_adds_only_the_parentheses_the_grammar_needs() {
         ),
     ];
     for (tree, expected) in cases {
-        let printed = document::print(&t(), &[(relation("r"), tree)]);
-        assert_eq!(
-            printed,
-            format!("{{\n  \"t\": {{\n    \"r\": \"{expected}\"\n  }}\n}}\n")
-        );
+        assert_eq!(printed_expression(tree), expected);
     }
 }
 
@@ -560,7 +599,8 @@ fn each_limit_holds_at_its_value_and_breaks_one_past_it() {
     assert_eq!(
         parsed(&theory_of(MAX_RELATIONS, |_| "this".to_owned()))
             .relations
-            .len(),
+            .relations()
+            .count(),
         MAX_RELATIONS
     );
     assert!(matches!(
@@ -604,7 +644,7 @@ fn a_dotted_theory_name_needs_a_name_between_each_dot() {
 #[test]
 fn names_are_case_sensitive() {
     let document = parsed(r#"{ "t": { "owner": "this", "Owner": "owner" } }"#);
-    assert_eq!(document.relations[1], (relation("Owner"), name("owner")));
+    assert_eq!(listed(&document)[1], (relation("Owner"), name("owner")));
 }
 
 // Checks.
@@ -642,30 +682,34 @@ fn key_order_doesnt_change_the_printed_form() {
 
 #[test]
 fn the_printer_refuses_caller_defects() {
-    let defects: Vec<(&str, Theory)> = vec![
+    let defects: Vec<(&str, Relations)> = vec![
         ("t", vec![("this", This)]),
         ("t", vec![("This", This)]),
-        ("t", vec![("r", Computed("THIS"))]),
+        ("t", vec![("THIS", This), ("r", Computed("THIS"))]),
         (
             "t",
-            vec![(
-                "r",
-                FactTo {
-                    factset: "this",
-                    computed: "r",
-                },
-            )],
+            vec![
+                ("this", This),
+                (
+                    "r",
+                    FactTo {
+                        factset: "this",
+                        computed: "r",
+                    },
+                ),
+            ],
         ),
         ("t", vec![("r", Union(vec![This]))]),
         ("t", vec![("r", Intersection(vec![This]))]),
-        ("t", vec![("r", Union(vec![]))]),
         ("t", vec![("r", exclusion(This, Intersection(vec![This])))]),
         ("t", vec![("r-s", This)]),
-        ("t", vec![("r", Computed("a b"))]),
+        ("t", vec![("a b", This), ("r", Computed("a b"))]),
         ("t.", vec![("r", This)]),
     ];
     for (theory, relations) in defects {
-        let printed = panic::catch_unwind(AssertUnwindSafe(|| print(theory, &relations)));
+        let checked = checked(&relations);
+        let theory = TheoryName::new_unchecked(theory);
+        let printed = panic::catch_unwind(AssertUnwindSafe(|| document::print(&theory, &checked)));
         assert!(printed.is_err(), "printed {theory}: {relations:?}");
     }
 }
@@ -754,10 +798,11 @@ proptest! {
     /// printing that gives the same text.
     #[test]
     fn a_printed_theory_parses_back_equal(relations in theory()) {
-        let text = document::print(&t(), &relations);
+        let checked = theory::Theory::new(relations.clone()).expect("a valid theory");
+        let text = document::print(&t(), &checked);
         let document = document::parse(&text)
             .map_err(|errors| TestCaseError::fail(format!("{text}\n{errors:?}")))?;
-        prop_assert_eq!(&document.relations, &relations);
+        prop_assert_eq!(listed(&document), relations);
         prop_assert_eq!(document::print(&t(), &document.relations), text);
     }
 
@@ -775,7 +820,7 @@ proptest! {
             let text = document::print(&t(), &document.relations);
             let again = document::parse(&text)
                 .map_err(|errors| TestCaseError::fail(format!("{text}\n{errors:?}")))?;
-            prop_assert_eq!(&again.relations, &document.relations);
+            prop_assert_eq!(listed(&again), listed(&document));
             prop_assert_eq!(document::print(&t(), &again.relations), text);
         }
     }
@@ -829,7 +874,7 @@ fn the_largest_set_of_relations_reaching_each_other_is_one_cycle() {
         format!("r{} | r{}", (i + 1) % count, (i + 7) % count)
     });
     let error = within(|| only(&ring));
-    let ErrorKind::Theory(TheoryError::RewriteCycle(path)) = error.kind else {
+    let ErrorKind::Theory(TheoryError::RewriteCycle { path, .. }) = error.kind else {
         panic!("expected a cycle, got {error}");
     };
     assert_eq!(path.first(), path.last());
@@ -880,10 +925,13 @@ fn deeply_nested_json_is_an_error_not_a_crash() {
         let value = format!("{}1{}", open.repeat(10_000), close.repeat(10_000));
         only(&format!(r#"{{ "t": {{ "a": {value} }} }}"#)).kind
     };
-    // serde_json skips an array without recursing, and stops reading an
-    // object past its recursion limit.
+    // A relation's value is read no further than its type, so a deep array
+    // or object is skipped unbuilt.
     assert!(matches!(nested("[", "]"), ErrorKind::NotAnExpression));
-    assert!(matches!(nested(r#"{"a":"#, "}"), ErrorKind::Json(_)));
+    assert!(matches!(
+        nested(r#"{"a":"#, "}"),
+        ErrorKind::NotAnExpression
+    ));
 }
 
 // Determinism.
@@ -1118,15 +1166,10 @@ fn every_valid_form_parses_to_its_tree_and_prints_canonically() {
     ];
     for (expression, tree, canonical) in cases {
         let document = parsed(&grammar_case(expression));
-        assert_eq!(document.relations[0].1, tree, "{expression}");
-        let printed = document::print(&t(), &[(relation("r"), tree.clone())]);
-        assert_eq!(
-            printed,
-            format!("{{\n  \"t\": {{\n    \"r\": \"{canonical}\"\n  }}\n}}\n"),
-            "{expression}"
-        );
+        assert_eq!(listed(&document)[0].1, tree, "{expression}");
+        assert_eq!(printed_expression(tree.clone()), canonical, "{expression}");
         let again = parsed(&grammar_case(canonical));
-        assert_eq!(again.relations[0].1, tree, "{expression} as {canonical}");
+        assert_eq!(listed(&again)[0].1, tree, "{expression} as {canonical}");
     }
 }
 
@@ -1211,4 +1254,16 @@ fn a_reserved_or_overlong_name_is_refused_where_it_appears() {
             "{expression}: {error}"
         );
     }
+}
+
+#[test]
+fn the_relation_limit_counts_distinct_relations() {
+    let mut document = theory_of(MAX_RELATIONS, |_| "this".to_owned());
+    document.insert_str(document.len() - 4, r#", "r0": "this""#);
+    let error = only(&document);
+    assert_eq!(error.relation.as_deref(), Some("r0"));
+    assert!(matches!(
+        error.kind,
+        ErrorKind::Theory(TheoryError::DuplicateRelation(_))
+    ));
 }

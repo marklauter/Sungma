@@ -4,7 +4,7 @@ exclude_re = [
     "impl Proof for Vec<Fact>>::empty",
     # Only the wording of a serde error that a theory document's visitors,
     # which accept every JSON value they are offered, never raise.
-    "impl Visitor<'de> for (Text|Json)Visitor>::expecting",
+    "impl Visitor<'de> for (Text|Json|Leaf)Visitor(<V>)?>::expecting",
     # The binary's entry point: it only wires its arguments to
     # AppState::load and the router, which the API tests cover.
     "sungma-api/src/main.rs.*replace main",

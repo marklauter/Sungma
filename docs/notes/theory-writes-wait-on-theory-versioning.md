@@ -9,7 +9,7 @@ status: evolving
 
 ## Where it stands
 
-- Theories enter only from fixture JSON, through `fixture::load_theories` and `fixture::declare` (`crates/sungma-core/src/fixture.rs`), into `MemoryTheoryStore` (`crates/sungma-core/src/memory.rs`). `sungma-api` loads them once at startup.
+- Theories enter only as theory documents (`docs/specs/theory-documents.md`), through `fixture::load_theories`, or built in code through `fixture::declare` (`crates/sungma-core/src/fixture.rs`), into `MemoryTheoryStore` (`crates/sungma-core/src/memory.rs`). `sungma-api` loads them once at startup.
 - `TheoryStore` (`crates/sungma-core/src/store.rs`) is read-only and unversioned: `rewrite(theory, relation)` returns the current rewrite.
 - A `Decision` (`crates/sungma-core/src/decision.rs`) records the fact `Revision` and the `Semantics` version, not which theories it was judged under. `replay` (`crates/sungma-core/src/replay.rs`) reads the current theories, so a theory change since the decision shows up as `Replay::Differs`, or as `Replay::Regrounded` when only the grounds move.
 - `theory::validate` (`crates/sungma-core/src/theory.rs`) checks a theory whole when it is declared. A write port keeps that: no stored theory fails to evaluate.

@@ -1,8 +1,9 @@
 //! A theory: the declared relations of one kind of resource, and their
 //! rewrites.
 //!
-//! A theory is checked whole when it is declared, so a stored theory always
-//! evaluates. [`problems`] finds, and [`validate`] refuses:
+//! A theory checks itself whole when it is built, so every [`Theory`] is
+//! valid and a stored one always evaluates. [`Theory::new`] refuses, with
+//! every problem it finds:
 //!
 //! - a relation declared twice;
 //! - an empty union or intersection;
@@ -34,6 +35,9 @@ use crate::{model::RelationId, rewrite::Rewrite};
 /// How deeply rewrite operators may nest. A leaf is one level.
 pub const MAX_REWRITE_DEPTH: usize = 100;
 
+/// How many relations a cycle error names before it says how many more.
+pub const MAX_CYCLE_NAMES: usize = 8;
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum TheoryError {
     #[error("an empty {0} has no operands")]
@@ -44,62 +48,108 @@ pub enum TheoryError {
     DuplicateRelation(String),
     #[error("relation '{relation}' references '{target}', which the theory doesn't declare")]
     DanglingReference { relation: String, target: String },
-    #[error("rewrite cycle: {}", .0.join(" -> "))]
-    RewriteCycle(Vec<String>),
+    /// A path from a relation back to itself, naming at most
+    /// [`MAX_CYCLE_NAMES`] relations on the way and counting the rest.
+    #[error("rewrite cycle: {}", cycle(.path, *.omitted))]
+    RewriteCycle { path: Vec<String>, omitted: usize },
 }
 
-/// A relation declared without a rewrite is declared with [`Rewrite::This`].
+fn cycle(path: &[String], omitted: usize) -> String {
+    match path.split_last() {
+        Some((root, way)) if omitted > 0 => {
+            format!("{} -> ... {omitted} more -> {root}", way.join(" -> "))
+        }
+        _ => path.join(" -> "),
+    }
+}
+
+/// A problem with a theory, at the position of the relation it was found
+/// at, counting from 0 in declaration order.
+#[derive(Debug, Error, PartialEq, Eq)]
+#[error("{error}")]
+pub struct Problem {
+    pub at: usize,
+    pub error: TheoryError,
+}
+
+/// A valid theory. Generic over how relations are named: storage holds
+/// interned [`RelationId`]s, and a theory document names its relations.
 #[derive(Debug)]
-pub struct Theory {
-    relations: HashMap<RelationId, Arc<Rewrite>>,
+pub struct Theory<R = RelationId> {
+    /// In declaration order.
+    relations: Vec<(R, Arc<Rewrite<R>>)>,
+    index: HashMap<R, usize>,
 }
 
-impl Theory {
-    /// The relations, if [`validate`] accepts them.
-    pub fn new(relations: Vec<(RelationId, Rewrite)>) -> Result<Self, TheoryError> {
-        validate(&relations)?;
+impl<R: Eq + Hash + Clone + Display> Theory<R> {
+    /// The relations, or every problem with them, in declaration order.
+    pub fn new(relations: Vec<(R, Rewrite<R>)>) -> Result<Self, Vec<Problem>> {
+        let problems = problems(&relations);
+        if !problems.is_empty() {
+            return Err(problems);
+        }
         let relations = relations
             .into_iter()
             .map(|(relation, rewrite)| (relation, Arc::new(rewrite)))
             .collect();
-        Ok(Self { relations })
+        Ok(Self::indexed(relations))
+    }
+
+    fn indexed(relations: Vec<(R, Arc<Rewrite<R>>)>) -> Self {
+        let mut index = HashMap::new();
+        for (at, (relation, _)) in relations.iter().enumerate() {
+            let earlier = index.insert(relation.clone(), at);
+            assert!(earlier.is_none(), "two relations named '{relation}'");
+        }
+        Self { relations, index }
     }
 
     /// `None` when the theory doesn't declare the relation.
-    pub fn rewrite(&self, relation: RelationId) -> Option<&Arc<Rewrite>> {
-        self.relations.get(&relation)
+    pub fn rewrite(&self, relation: &R) -> Option<&Arc<Rewrite<R>>> {
+        self.index.get(relation).map(|&at| &self.relations[at].1)
     }
 
-    /// Every declared relation and its rewrite, in no order.
-    pub fn relations(&self) -> impl Iterator<Item = (RelationId, &Rewrite)> {
+    /// Every declared relation and its rewrite, in declaration order.
+    pub fn relations(&self) -> impl Iterator<Item = (&R, &Rewrite<R>)> {
         self.relations
             .iter()
-            .map(|(relation, rewrite)| (*relation, &**rewrite))
+            .map(|(relation, rewrite)| (relation, &**rewrite))
+    }
+
+    /// The same theory with every relation renamed by `rename`, as when its
+    /// names are interned. Renaming changes no rewrite's shape, so the
+    /// theory stays valid without being checked again.
+    ///
+    /// # Panics
+    ///
+    /// If `rename` gives two relations one name.
+    pub fn map<S: Eq + Hash + Clone + Display>(
+        &self,
+        mut rename: impl FnMut(&R) -> S,
+    ) -> Theory<S> {
+        let relations = self
+            .relations
+            .iter()
+            .map(|(relation, rewrite)| {
+                let renamed = rename(relation);
+                let rewrite = (**rewrite).clone().map(&mut |name| rename(&name));
+                (renamed, Arc::new(rewrite))
+            })
+            .collect();
+        Theory::indexed(relations)
     }
 }
 
-/// Checks a whole theory, as the [module](self) describes, and refuses it
-/// with its first problem. Generic over how relations are named, so a
-/// theory can be checked by name before it is interned.
-pub fn validate<R: Eq + Hash + Display>(relations: &[(R, Rewrite<R>)]) -> Result<(), TheoryError> {
-    match problems(relations).into_iter().next() {
-        Some((_, error)) => Err(error),
-        None => Ok(()),
-    }
-}
-
-/// Every problem in a whole theory, each with the index of the relation it
-/// was found at, in declaration order. A relation's dangling targets are
-/// each reported once, and a cycle at the relation of its component the
-/// check meets first, with a path from that relation back to itself.
-pub fn problems<R: Eq + Hash + Display>(
-    relations: &[(R, Rewrite<R>)],
-) -> Vec<(usize, TheoryError)> {
+/// Every problem in a whole theory, as the [module](self) describes, in
+/// declaration order. A relation's dangling targets are each reported once,
+/// and a cycle at the relation of its component the check meets first.
+fn problems<R: Eq + Hash + Display>(relations: &[(R, Rewrite<R>)]) -> Vec<Problem> {
     let mut problems = Vec::new();
+    let mut problem = |at, error| problems.push(Problem { at, error });
     let mut declared = HashMap::new();
     for (at, (relation, _)) in relations.iter().enumerate() {
         if declared.contains_key(relation) {
-            problems.push((at, TheoryError::DuplicateRelation(relation.to_string())));
+            problem(at, TheoryError::DuplicateRelation(relation.to_string()));
         } else {
             declared.insert(relation, at);
         }
@@ -109,7 +159,7 @@ pub fn problems<R: Eq + Hash + Display>(
         if let Err(error) = check_tree(rewrite, 1) {
             // A tree past the depth limit isn't walked further, so one built
             // in code, however deep, can't overflow the stack.
-            problems.push((at, error));
+            problem(at, error);
             continue;
         }
         let mut computed = Vec::new();
@@ -118,13 +168,13 @@ pub fn problems<R: Eq + Hash + Display>(
         let mut dangling = HashSet::new();
         for target in computed.iter().chain(&factsets) {
             if !declared.contains_key(*target) && dangling.insert(*target) {
-                problems.push((
+                problem(
                     at,
                     TheoryError::DanglingReference {
                         relation: relation.to_string(),
                         target: target.to_string(),
                     },
-                ));
+                );
             }
         }
         if declared[relation] == at {
@@ -139,13 +189,22 @@ pub fn problems<R: Eq + Hash + Display>(
         components.visit(at);
     }
     for cycle in components.cycles {
-        let path = cycle
+        let named = cycle.len() - 1;
+        let shown = named.min(MAX_CYCLE_NAMES);
+        let mut path: Vec<_> = cycle[..shown]
             .iter()
             .map(|&at| relations[at].0.to_string())
             .collect();
-        problems.push((cycle[0], TheoryError::RewriteCycle(path)));
+        path.push(relations[cycle[0]].0.to_string());
+        problem(
+            cycle[0],
+            TheoryError::RewriteCycle {
+                path,
+                omitted: named - shown,
+            },
+        );
     }
-    problems.sort_by_key(|(at, _)| *at);
+    problems.sort_by_key(|problem| problem.at);
     problems
 }
 
@@ -261,24 +320,25 @@ impl<'e> Components<'e> {
 
     /// Pops the component `root` met first, keeping a cycle through it.
     fn close_component(&mut self, root: usize) {
-        let mut members = 0;
+        let mut members = HashSet::new();
         loop {
             let member = self.open.pop().expect("a component's root is open");
             self.on_open[member] = false;
-            members += 1;
+            members.insert(member);
             if member == root {
                 break;
             }
         }
-        if members > 1 || self.edges[root].contains(&root) {
-            self.cycles.push(cycle_through(self.edges, root));
+        if members.len() > 1 || self.edges[root].contains(&root) {
+            self.cycles.push(cycle_through(self.edges, root, &members));
         }
     }
 }
 
-/// The shortest path from `root` back to itself. Only relations in its
-/// component lead back to it, so the path stays within the component.
-fn cycle_through(edges: &[Vec<usize>], root: usize) -> Vec<usize> {
+/// The shortest path from `root` back to itself, searching only the
+/// `members` of its component, so the search costs no more than the
+/// component.
+fn cycle_through(edges: &[Vec<usize>], root: usize, members: &HashSet<usize>) -> Vec<usize> {
     let mut from = HashMap::new();
     let mut queue = VecDeque::from([root]);
     while let Some(at) = queue.pop_front() {
@@ -291,6 +351,9 @@ fn cycle_through(edges: &[Vec<usize>], root: usize) -> Vec<usize> {
                 path.reverse();
                 path.push(root);
                 return path;
+            }
+            if !members.contains(&target) {
+                continue;
             }
             if let Entry::Vacant(entry) = from.entry(target) {
                 entry.insert(at);

@@ -156,3 +156,22 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn a_quote_counts_its_escapes_toward_its_bound() {
+    let hidden = char::from_u32(0x200b).unwrap().to_string().repeat(20);
+    let NameError::Invalid(quoted) = format!("{hidden}:a").parse::<ResourceName>().unwrap_err()
+    else {
+        panic!("expected an invalid name");
+    };
+    // Each escape is 8 bytes, so 8 fit, then the cut.
+    assert_eq!(quoted, format!("{}...", "\\u{200b}".repeat(8)));
+    for code in [0x1bca0, 0x1d173] {
+        let c = char::from_u32(code).unwrap();
+        let error = format!("a{c}:x")
+            .parse::<ResourceName>()
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains(c), "{code:x}: {error}");
+    }
+}

@@ -8,13 +8,13 @@ use sungma_core::{
     memory::{MemoryDictionary, MemoryTheoryStore},
     model::RelationId,
     rewrite::Rewrite::{self, Computed, Exclusion, This, Union},
-    theory::{self, MAX_REWRITE_DEPTH, Theory, TheoryError},
+    theory::{MAX_CYCLE_NAMES, MAX_REWRITE_DEPTH, Problem, Theory, TheoryError},
 };
 
 fn load(json: &str) -> Result<(), FixtureError> {
     let dictionary = MemoryDictionary::default();
     let mut theories = MemoryTheoryStore::default();
-    fixture::load_theory(json, &dictionary, &mut theories)
+    fixture::load_theories(&[json], &dictionary, &mut theories)
 }
 
 /// The one theory error a document is refused with.
@@ -29,7 +29,10 @@ fn refused(json: &str) -> TheoryError {
 }
 
 fn names(cycle: &[&str]) -> TheoryError {
-    TheoryError::RewriteCycle(cycle.iter().map(|name| (*name).to_owned()).collect())
+    TheoryError::RewriteCycle {
+        path: cycle.iter().map(|name| (*name).to_owned()).collect(),
+        omitted: 0,
+    }
 }
 
 #[test]
@@ -205,7 +208,10 @@ fn a_theory_built_with_a_relation_twice_is_refused() {
     let result = Theory::new(vec![(RelationId(0), This), (RelationId(0), This)]);
     assert_eq!(
         result.err(),
-        Some(TheoryError::DuplicateRelation("0".to_owned()))
+        Some(vec![Problem {
+            at: 1,
+            error: TheoryError::DuplicateRelation("0".to_owned()),
+        }])
     );
 }
 
@@ -232,7 +238,7 @@ fn a_long_chain_built_in_code_is_checked_without_a_crash() {
         })
         .collect();
     let start = Instant::now();
-    assert_eq!(theory::problems(&chain), []);
+    assert!(Theory::new(chain).is_ok());
     assert!(quick(start));
 }
 
@@ -241,10 +247,94 @@ fn a_large_cycle_built_in_code_is_one_problem() {
     let count = 100_000;
     let ring: Vec<_> = (0..count).map(|i| (i, Computed((i + 1) % count))).collect();
     let start = Instant::now();
-    let problems = theory::problems(&ring);
+    let problems = Theory::new(ring).unwrap_err();
     assert!(quick(start));
-    let [(0, TheoryError::RewriteCycle(path))] = problems.as_slice() else {
+    let [
+        Problem {
+            at: 0,
+            error: TheoryError::RewriteCycle { path, omitted },
+        },
+    ] = problems.as_slice()
+    else {
         panic!("expected one cycle, got {} problems", problems.len());
     };
-    assert_eq!(path.len(), count + 1);
+    assert_eq!(path.len(), MAX_CYCLE_NAMES + 1);
+    assert_eq!(*omitted, count - MAX_CYCLE_NAMES);
+    assert_eq!(path.first(), path.last());
+}
+
+#[test]
+fn every_problem_is_returned_in_declaration_order() {
+    let problems = Theory::new(vec![
+        (0, Computed(9)),
+        (1, Union(vec![])),
+        (2, Computed(3)),
+        (3, Computed(2)),
+        (0, This),
+    ])
+    .unwrap_err();
+    let found: Vec<_> = problems.iter().map(|problem| problem.at).collect();
+    assert_eq!(found, [0, 1, 2, 4]);
+}
+
+#[test]
+fn a_cycle_error_names_a_bounded_path() {
+    let error = TheoryError::RewriteCycle {
+        path: vec!["a".to_owned(), "b".to_owned(), "a".to_owned()],
+        omitted: 3,
+    };
+    assert_eq!(
+        error.to_string(),
+        "rewrite cycle: a -> b -> ... 3 more -> a"
+    );
+}
+
+#[test]
+fn a_theory_keeps_its_declaration_order_and_renames_whole() {
+    let theory = Theory::new(vec![(2, This), (0, Computed(2)), (1, This)]).unwrap();
+    let order: Vec<_> = theory.relations().map(|(relation, _)| *relation).collect();
+    assert_eq!(order, [2, 0, 1]);
+    let renamed = theory.map(|relation| relation + 10);
+    assert_eq!(
+        renamed.rewrite(&10).map(|rewrite| &**rewrite),
+        Some(&Computed(12))
+    );
+    assert!(renamed.rewrite(&0).is_none());
+}
+
+#[test]
+#[should_panic(expected = "two relations named '0'")]
+fn renaming_two_relations_alike_is_a_defect() {
+    let theory = Theory::new(vec![(0, This), (1, This)]).unwrap();
+    theory.map(|_| 0);
+}
+
+#[test]
+fn a_theory_declared_by_two_documents_is_refused() {
+    let dictionary = MemoryDictionary::default();
+    let mut theories = MemoryTheoryStore::default();
+    let documents = [
+        r#"{ "file": { "owner": "this" } }"#,
+        r#"{ "file": { "viewer": "this" } }"#,
+    ];
+    let error = fixture::load_theories(&documents, &dictionary, &mut theories).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "theory 'file' is declared by more than one document"
+    );
+}
+
+#[test]
+fn a_cycle_path_stays_within_its_relations() {
+    // a and b reach each other; b also leads out to c, which leads nowhere back.
+    let problems = Theory::new(vec![
+        (0, Computed(1)),
+        (1, Union(vec![Computed(2), Computed(0)])),
+        (2, This),
+    ])
+    .unwrap_err();
+    let [Problem { at: 0, error }] = problems.as_slice() else {
+        panic!("expected one cycle, got {problems:?}");
+    };
+    assert_eq!(*error, names(&["0", "1", "0"]));
 }

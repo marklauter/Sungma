@@ -22,6 +22,8 @@
 use serde::Deserialize;
 use thiserror::Error;
 
+use std::collections::HashSet;
+
 use crate::{
     document::{self, DocumentError},
     memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore},
@@ -36,10 +38,10 @@ use crate::{
 pub enum FixtureError {
     #[error(transparent)]
     Json(#[from] serde_json::Error),
-    #[error(transparent)]
-    Theory(#[from] TheoryError),
     #[error("{}", .0.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
     Document(Vec<DocumentError>),
+    #[error("theory '{0}' is declared by more than one document")]
+    DuplicateTheory(String),
     #[error(transparent)]
     Name(#[from] NameError),
     #[error("fact '{0}' needs exactly one of identity, resource or subjectset")]
@@ -58,7 +60,7 @@ struct FactDto {
 
 /// Declares `relation` in `theory` with a rewrite that names its relations,
 /// keeping the theory's other relations. The theory is checked whole, and
-/// its errors name relations by id.
+/// refused with its first problem, which names relations by id.
 pub fn declare(
     theories: &mut MemoryTheoryStore,
     dictionary: &MemoryDictionary,
@@ -73,36 +75,34 @@ pub fn declare(
         .theory(theory)
         .into_iter()
         .flat_map(Theory::relations)
-        .filter(|(declared, _)| *declared != relation)
-        .map(|(declared, rewrite)| (declared, rewrite.clone()))
+        .filter(|(declared, _)| **declared != relation)
+        .map(|(declared, rewrite)| (*declared, rewrite.clone()))
         .collect();
     relations.push((relation, rewrite));
-    theories.declare(theory, Theory::new(relations)?);
+    let checked = Theory::new(relations).map_err(|mut problems| problems.remove(0).error)?;
+    theories.declare(theory, checked);
     Ok(())
 }
 
-/// Declares the theory a document declares, replacing any earlier
-/// declaration of it.
-pub fn load_theory(
-    document: &str,
+/// Declares the theory each document declares. Two documents declaring
+/// one theory are refused, as when a stale copy sits beside the current one.
+pub fn load_theories(
+    documents: &[&str],
     dictionary: &MemoryDictionary,
     theories: &mut MemoryTheoryStore,
 ) -> Result<(), FixtureError> {
-    let document = document::parse(document).map_err(FixtureError::Document)?;
-    let id = TheoryId(dictionary.intern(Pool::Theories, document.theory.as_str()));
-    let relations = document
-        .relations
-        .into_iter()
-        .map(|(relation, rewrite)| {
-            let relation = RelationId(dictionary.intern(Pool::Relations, relation.as_str()));
-            (
-                relation,
-                rewrite
-                    .map(&mut |name| RelationId(dictionary.intern(Pool::Relations, name.as_str()))),
-            )
-        })
-        .collect();
-    theories.declare(id, Theory::new(relations)?);
+    let mut seen = HashSet::new();
+    for document in documents {
+        let document = document::parse(document).map_err(FixtureError::Document)?;
+        if !seen.insert(document.theory.clone()) {
+            return Err(FixtureError::DuplicateTheory(document.theory.to_string()));
+        }
+        let id = TheoryId(dictionary.intern(Pool::Theories, document.theory.as_str()));
+        let relations = document
+            .relations
+            .map(|name| RelationId(dictionary.intern(Pool::Relations, name.as_str())));
+        theories.declare(id, relations);
+    }
     Ok(())
 }
 

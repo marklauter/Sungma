@@ -130,27 +130,28 @@ fn is_reserved(name: &str) -> bool {
     name.eq_ignore_ascii_case("this")
 }
 
-/// The most of a caller's text an error quotes.
+/// The most an error writes of a caller's text, escapes included.
 pub const MAX_QUOTE_BYTES: usize = 64;
 
-/// A caller's text as an error quotes it: at most [`MAX_QUOTE_BYTES`],
-/// cut at a character boundary and marked `...` when cut, with control,
+/// A caller's text as an error quotes it: at most [`MAX_QUOTE_BYTES`]
+/// written, escapes included, cut at a character boundary and marked `...` when cut, with control,
 /// invisible and reordering characters written as `\u{..}` escapes, so a
 /// quote can't forge a log line, recolor a terminal or reorder its line.
 pub(crate) fn quote(text: &str) -> String {
     let mut quoted = String::new();
-    let mut taken = 0;
+    let mut written = String::new();
     for c in text.chars() {
-        taken += c.len_utf8();
-        if taken > MAX_QUOTE_BYTES {
+        written.clear();
+        if is_hidden(c) {
+            let _ = write!(written, "\\u{{{:04x}}}", u32::from(c));
+        } else {
+            written.push(c);
+        }
+        if quoted.len() + written.len() > MAX_QUOTE_BYTES {
             quoted.push_str("...");
             break;
         }
-        if is_hidden(c) {
-            let _ = write!(quoted, "\\u{{{:04x}}}", u32::from(c));
-        } else {
-            quoted.push(c);
-        }
+        quoted.push_str(&written);
     }
     quoted
 }
@@ -173,6 +174,8 @@ fn is_hidden(c: char) -> bool {
                 | 0xFEFF
                 | 0xFFA0
                 | 0xFFF0..=0xFFFB
+                | 0x1BCA0..=0x1BCA3
+                | 0x1D173..=0x1D17A
                 | 0xE0000..=0xE0FFF
         )
 }

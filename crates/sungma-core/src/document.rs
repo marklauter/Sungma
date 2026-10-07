@@ -21,6 +21,7 @@
 use std::{
     collections::HashSet,
     fmt::{self, Write},
+    marker::PhantomData,
 };
 
 use serde::{
@@ -33,7 +34,7 @@ pub use crate::name::{MAX_NAME_BYTES, MAX_QUOTE_BYTES};
 use crate::{
     name::{NameError, RelationName, TheoryName, quote},
     rewrite::Rewrite,
-    theory::{self, MAX_REWRITE_DEPTH, TheoryError},
+    theory::{MAX_REWRITE_DEPTH, Problem, Theory, TheoryError},
 };
 
 pub const MAX_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
@@ -43,10 +44,10 @@ pub const MAX_EXPRESSION_BYTES: usize = 4096;
 pub const MAX_ERRORS: usize = 50;
 
 /// One theory as a document declares it, its relations in document order.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Debug)]
 pub struct TheoryDocument {
     pub theory: TheoryName,
-    pub relations: Vec<(RelationName, Rewrite<RelationName>)>,
+    pub relations: Theory<RelationName>,
 }
 
 /// A problem in a document, with the relation it was found at and, inside
@@ -81,6 +82,8 @@ pub enum ErrorKind {
     NoTheory,
     #[error("a document declares one theory, not {0}")]
     ManyTheories(usize),
+    #[error("theory '{0}' is declared more than once")]
+    DuplicateTheory(String),
     #[error("theory '{0}' maps to an object of relations")]
     RelationsNotAnObject(String),
     #[error("a theory declares at most {MAX_RELATIONS} relations, not {0}")]
@@ -112,18 +115,21 @@ pub fn parse(text: &str) -> Result<TheoryDocument, Vec<DocumentError>> {
     if text.len() > MAX_DOCUMENT_BYTES {
         return fail(ErrorKind::TooLarge);
     }
-    let json = match serde_json::from_str::<Json>(text) {
+    let json = match serde_json::from_str::<Document>(text) {
         Ok(json) => json,
         Err(json) => return fail(ErrorKind::Json(json)),
     };
     let Json::Object(mut theories) = json else {
         return fail(ErrorKind::NotAnObject);
     };
-    let (theory, relations) = match theories.len() {
-        0 => return fail(ErrorKind::NoTheory),
-        1 => theories.remove(0),
-        count => return fail(ErrorKind::ManyTheories(count)),
-    };
+    let names: HashSet<_> = theories.iter().map(|(name, _)| name.text()).collect();
+    match (theories.len(), names.len()) {
+        (0, _) => return fail(ErrorKind::NoTheory),
+        (1, _) => {}
+        (_, 1) => return fail(ErrorKind::DuplicateTheory(quote(theories[0].0.text()))),
+        (_, count) => return fail(ErrorKind::ManyTheories(count)),
+    }
+    let (theory, relations) = theories.remove(0);
     let mut errors = Errors::default();
     // A name that fails is still kept, unchecked, for the checks that
     // follow; the document is refused, so it never leaves.
@@ -145,14 +151,18 @@ pub fn parse(text: &str) -> Result<TheoryDocument, Vec<DocumentError>> {
         );
         return Err(errors.finish().unwrap_or_default());
     };
-    if entries.len() > MAX_RELATIONS {
+    let declared = entries
+        .iter()
+        .map(|(name, _)| name.text())
+        .collect::<HashSet<_>>()
+        .len();
+    if declared > MAX_RELATIONS {
         // Nothing past the limit is read, so a hostile document costs no
         // more than the JSON library's pass over it.
-        errors.push(None, None, ErrorKind::TooManyRelations(entries.len()));
+        errors.push(None, None, ErrorKind::TooManyRelations(declared));
         return Err(errors.finish().unwrap_or_default());
     }
     let mut relations = Vec::new();
-    let mut seen = HashSet::new();
     for (name, value) in entries {
         let at = Some(relations.len());
         let name = match name {
@@ -165,23 +175,18 @@ pub fn parse(text: &str) -> Result<TheoryDocument, Vec<DocumentError>> {
                 RelationName::new_unchecked(name)
             }
         };
-        if !seen.insert(name.clone()) {
-            let duplicate = TheoryError::DuplicateRelation(quote(name.as_str()));
-            errors.at(at, name.as_str(), None, ErrorKind::Theory(duplicate));
-            continue;
-        }
         // A relation whose expression fails is still declared, as `this`,
-        // so the theory check reports nothing more about it.
+        // so the theory reports nothing more about it.
         let rewrite = match value {
-            Json::Text(Text::Plain("")) => Err((None, ErrorKind::NotAnExpression)),
-            Json::Text(Text::Plain(expression)) if expression.len() > MAX_EXPRESSION_BYTES => {
+            Leaf::Text(Text::Plain("")) => Err((None, ErrorKind::NotAnExpression)),
+            Leaf::Text(Text::Plain(expression)) if expression.len() > MAX_EXPRESSION_BYTES => {
                 Err((None, ErrorKind::ExpressionTooLong))
             }
-            Json::Text(Text::Plain(expression)) => Parser::new(expression).parse(),
-            Json::Text(Text::Escaped(expression)) => {
+            Leaf::Text(Text::Plain(expression)) => Parser::new(expression).parse(),
+            Leaf::Text(Text::Escaped(expression)) => {
                 Err((None, ErrorKind::Escape(quote(&expression))))
             }
-            Json::Object(_) | Json::Other => Err((None, ErrorKind::NotAnExpression)),
+            Leaf::Other => Err((None, ErrorKind::NotAnExpression)),
         };
         let rewrite = rewrite.unwrap_or_else(|(column, kind)| {
             errors.at(at, name.as_str(), column, kind);
@@ -189,18 +194,16 @@ pub fn parse(text: &str) -> Result<TheoryDocument, Vec<DocumentError>> {
         });
         relations.push((name, rewrite));
     }
-    for (at, problem) in theory::problems(&relations) {
-        let name = relations[at].0.clone();
-        errors.at(
-            Some(at),
-            name.as_str(),
-            None,
-            ErrorKind::Theory(quoted(problem)),
-        );
-    }
-    match errors.finish() {
-        Some(errors) => Err(errors),
-        None => Ok(TheoryDocument { theory, relations }),
+    let names: Vec<_> = relations.iter().map(|(name, _)| name.clone()).collect();
+    let relations = Theory::new(relations).map_err(|problems| {
+        for Problem { at, error } in problems {
+            let kind = ErrorKind::Theory(quoted(error));
+            errors.at(Some(at), names[at].as_str(), None, kind);
+        }
+    });
+    match (errors.finish(), relations) {
+        (None, Ok(relations)) => Ok(TheoryDocument { theory, relations }),
+        (errors, _) => Err(errors.unwrap_or_default()),
     }
 }
 
@@ -240,18 +243,20 @@ impl Errors {
     }
 }
 
-/// A theory problem with the names it carries quoted. A document's own
-/// checks find its duplicates, depth and empty operators first, so only
-/// these reach it.
+/// A theory problem with the names it carries quoted.
 fn quoted(problem: TheoryError) -> TheoryError {
     match problem {
+        TheoryError::DuplicateRelation(relation) => {
+            TheoryError::DuplicateRelation(quote(&relation))
+        }
         TheoryError::DanglingReference { relation, target } => TheoryError::DanglingReference {
             relation: quote(&relation),
             target: quote(&target),
         },
-        TheoryError::RewriteCycle(path) => {
-            TheoryError::RewriteCycle(path.iter().map(|relation| quote(relation)).collect())
-        }
+        TheoryError::RewriteCycle { path, omitted } => TheoryError::RewriteCycle {
+            path: path.iter().map(|relation| quote(relation)).collect(),
+            omitted,
+        },
         other => other,
     }
 }
@@ -262,13 +267,31 @@ enum Text<'a> {
     Escaped(String),
 }
 
-/// As much of a JSON value as a document's shape needs.
-enum Json<'a> {
-    Text(Text<'a>),
-    /// Entries in document order, duplicates kept.
-    Object(Vec<(Text<'a>, Json<'a>)>),
+impl Text<'_> {
+    fn text(&self) -> &str {
+        match self {
+            Text::Plain(text) => text,
+            Text::Escaped(text) => text,
+        }
+    }
+}
+
+/// As much of a JSON value as a document's shape needs: an object's entries
+/// in document order, duplicates kept, each value read as `V`, or anything
+/// else.
+enum Json<'a, V> {
+    Object(Vec<(Text<'a>, V)>),
     Other,
 }
+
+/// A relation's value: its expression, or anything else, read no further.
+enum Leaf<'a> {
+    Text(Text<'a>),
+    Other,
+}
+
+/// A document: theories, each an object of relations, each a [`Leaf`].
+type Document<'a> = Json<'a, Json<'a, Leaf<'a>>>;
 
 struct TextVisitor;
 
@@ -294,21 +317,48 @@ impl<'de> Deserialize<'de> for Text<'de> {
     }
 }
 
-struct JsonVisitor;
+/// Reads any JSON value: strings and objects through `text` and `object`,
+/// arrays skipped unread, and everything else as `other`.
+macro_rules! any_value {
+    ($value:ty, $other:expr) => {
+        fn visit_bool<E: de::Error>(self, _: bool) -> Result<$value, E> {
+            Ok($other)
+        }
 
-impl<'de> Visitor<'de> for JsonVisitor {
-    type Value = Json<'de>;
+        fn visit_i64<E: de::Error>(self, _: i64) -> Result<$value, E> {
+            Ok($other)
+        }
+
+        fn visit_u64<E: de::Error>(self, _: u64) -> Result<$value, E> {
+            Ok($other)
+        }
+
+        fn visit_f64<E: de::Error>(self, _: f64) -> Result<$value, E> {
+            Ok($other)
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<$value, E> {
+            Ok($other)
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<$value, A::Error> {
+            while seq.next_element::<IgnoredAny>()?.is_some() {}
+            Ok($other)
+        }
+    };
+}
+
+struct JsonVisitor<V>(PhantomData<V>);
+
+impl<'de, V: Deserialize<'de>> Visitor<'de> for JsonVisitor<V> {
+    type Value = Json<'de, V>;
 
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("any JSON value")
     }
 
-    fn visit_borrowed_str<E: de::Error>(self, text: &'de str) -> Result<Self::Value, E> {
-        Ok(Json::Text(Text::Plain(text)))
-    }
-
-    fn visit_str<E: de::Error>(self, text: &str) -> Result<Self::Value, E> {
-        Ok(Json::Text(Text::Escaped(text.to_owned())))
+    fn visit_str<E: de::Error>(self, _: &str) -> Result<Self::Value, E> {
+        Ok(Json::Other)
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
@@ -319,35 +369,43 @@ impl<'de> Visitor<'de> for JsonVisitor {
         Ok(Json::Object(entries))
     }
 
-    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-        while seq.next_element::<IgnoredAny>()?.is_some() {}
-        Ok(Json::Other)
-    }
+    any_value!(Json<'de, V>, Json::Other);
+}
 
-    fn visit_bool<E: de::Error>(self, _: bool) -> Result<Self::Value, E> {
-        Ok(Json::Other)
-    }
-
-    fn visit_i64<E: de::Error>(self, _: i64) -> Result<Self::Value, E> {
-        Ok(Json::Other)
-    }
-
-    fn visit_u64<E: de::Error>(self, _: u64) -> Result<Self::Value, E> {
-        Ok(Json::Other)
-    }
-
-    fn visit_f64<E: de::Error>(self, _: f64) -> Result<Self::Value, E> {
-        Ok(Json::Other)
-    }
-
-    fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
-        Ok(Json::Other)
+impl<'de, V: Deserialize<'de>> Deserialize<'de> for Json<'de, V> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(JsonVisitor(PhantomData))
     }
 }
 
-impl<'de> Deserialize<'de> for Json<'de> {
+struct LeafVisitor;
+
+impl<'de> Visitor<'de> for LeafVisitor {
+    type Value = Leaf<'de>;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("any JSON value")
+    }
+
+    fn visit_borrowed_str<E: de::Error>(self, text: &'de str) -> Result<Self::Value, E> {
+        Ok(Leaf::Text(Text::Plain(text)))
+    }
+
+    fn visit_str<E: de::Error>(self, text: &str) -> Result<Self::Value, E> {
+        Ok(Leaf::Text(Text::Escaped(text.to_owned())))
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+        Ok(Leaf::Other)
+    }
+
+    any_value!(Leaf<'de>, Leaf::Other);
+}
+
+impl<'de> Deserialize<'de> for Leaf<'de> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_any(JsonVisitor)
+        deserializer.deserialize_any(LeafVisitor)
     }
 }
 
@@ -437,8 +495,7 @@ fn lex(expression: &str) -> Vec<Lexeme<'_>> {
 /// A syntax error's column and kind.
 type Failure = (Option<usize>, ErrorKind);
 
-/// A rewrite and its depth, a leaf being 1.
-type Node = (Rewrite<RelationName>, usize);
+type Node = Rewrite<RelationName>;
 
 /// Recursive descent over the rewrite grammar, one function per level.
 struct Parser<'a> {
@@ -457,7 +514,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse(mut self) -> Result<Rewrite<RelationName>, Failure> {
-        let (rewrite, _) = self.union()?;
+        let rewrite = self.union()?;
         let next = self.peek();
         if next.token != Token::End {
             return Err(syntax(next, "an operator or the end"));
@@ -496,36 +553,29 @@ impl<'a> Parser<'a> {
         if self.peek().token != operator {
             return Ok(first);
         }
-        let column = self.peek().column;
-        let (mut operands, mut depth) = (vec![first.0], first.1);
+        let mut operands = vec![first];
         while self.peek().token == operator {
             self.next();
-            let (rewrite, below) = operand(self)?;
-            operands.push(rewrite);
-            depth = depth.max(below);
+            operands.push(operand(self)?);
         }
-        deeper(node(operands), depth, column)
+        Ok(node(operands))
     }
 
     fn exclusion(&mut self) -> Result<Node, Failure> {
-        let (mut base, mut depth) = self.term()?;
+        let mut base = self.term()?;
         while self.peek().token == Token::Exclusion {
-            let column = self.next().column;
-            let (excluded, below) = self.term()?;
-            (base, depth) = deeper(
-                Rewrite::Exclusion(Box::new(base), Box::new(excluded)),
-                depth.max(below),
-                column,
-            )?;
+            self.next();
+            let excluded = self.term()?;
+            base = Rewrite::Exclusion(Box::new(base), Box::new(excluded));
         }
-        Ok((base, depth))
+        Ok(base)
     }
 
     fn term(&mut self) -> Result<Node, Failure> {
         let lexeme = self.next();
         match lexeme.token {
-            Token::This => Ok((Rewrite::This, 1)),
-            Token::Name => Ok((Rewrite::Computed(relation(lexeme)?), 1)),
+            Token::This => Ok(Rewrite::This),
+            Token::Name => Ok(Rewrite::Computed(relation(lexeme)?)),
             Token::Open if self.peek_is_fact_to() => self.fact_to(),
             Token::Open => {
                 self.groups += 1;
@@ -564,7 +614,7 @@ impl<'a> Parser<'a> {
         self.next();
         let computed = self.relation()?;
         self.close()?;
-        Ok((Rewrite::FactTo { factset, computed }, 1))
+        Ok(Rewrite::FactTo { factset, computed })
     }
 
     fn relation(&mut self) -> Result<RelationName, Failure> {
@@ -582,15 +632,6 @@ impl<'a> Parser<'a> {
             _ => Err(syntax(lexeme, "')'")),
         }
     }
-}
-
-/// `rewrite` one level above operands `depth` deep, refused past the limit
-/// at the operator's column.
-fn deeper(rewrite: Rewrite<RelationName>, depth: usize, column: usize) -> Result<Node, Failure> {
-    if depth + 1 > MAX_REWRITE_DEPTH {
-        return Err((Some(column), ErrorKind::Theory(TheoryError::TooDeep)));
-    }
-    Ok((rewrite, depth + 1))
 }
 
 fn syntax(lexeme: Lexeme<'_>, expected: &'static str) -> Failure {
@@ -613,13 +654,13 @@ fn relation(lexeme: Lexeme<'_>) -> Result<RelationName, Failure> {
 ///
 /// On a caller defect, a theory no document can declare: a name made with
 /// `new_unchecked` that breaks the grammar, including `this`, or a union or
-/// intersection with fewer than two operands.
-pub fn print(theory: &TheoryName, relations: &[(RelationName, Rewrite<RelationName>)]) -> String {
+/// intersection with one operand.
+pub fn print(theory: &TheoryName, relations: &Theory<RelationName>) -> String {
     if let Err(error) = theory.as_str().parse::<TheoryName>() {
         panic!("{error}");
     }
-    let mut relations: Vec<_> = relations.iter().collect();
-    relations.sort_by(|(a, _), (b, _)| a.cmp(b));
+    let mut relations: Vec<_> = relations.relations().collect();
+    relations.sort_by_key(|(name, _)| *name);
     let mut text = format!("{{\n  \"{theory}\": {{");
     for (i, (name, rewrite)) in relations.iter().enumerate() {
         let separator = if i == 0 { "\n" } else { ",\n" };

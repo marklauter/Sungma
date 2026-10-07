@@ -8,8 +8,10 @@ use sungma_api::{AppState, router};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().skip(1).collect();
-    let [facts, theories @ ..] = args.as_slice() else {
-        return Err("usage: sungma-api <facts.json> <theory.json>...".into());
+    // At least one theory: with none, every check would be denied.
+    let (facts, theories) = match args.as_slice() {
+        [facts, theories @ ..] if !theories.is_empty() => (facts, theories),
+        _ => return Err("usage: sungma-api <facts.json> <theory.json>...".into()),
     };
     let theories = theories
         .iter()

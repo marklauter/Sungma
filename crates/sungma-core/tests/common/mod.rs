@@ -28,9 +28,7 @@ pub struct World {
 pub fn world() -> World {
     let dictionary = MemoryDictionary::default();
     let mut theories = MemoryTheoryStore::default();
-    for document in THEORIES {
-        fixture::load_theory(document, &dictionary, &mut theories).unwrap();
-    }
+    fixture::load_theories(&THEORIES, &dictionary, &mut theories).unwrap();
     let facts = MemoryFactStore::default();
     fixture::load_facts(
         include_str!("../fixtures/docs.facts.json"),

@@ -16,10 +16,14 @@ fuzz_target!(|data: &[u8]| {
     };
     let printed = document::print(&parsed.theory, &parsed.relations);
     let again = document::parse(&printed).expect("a printed theory parses");
-    let sorted = |mut relations: Vec<_>| {
-        relations.sort_by(|(a, _): &(sungma_core::name::RelationName, _), (b, _)| a.cmp(b));
+    let sorted = |theory: &document::TheoryDocument| {
+        let mut relations: Vec<_> = theory.relations.relations().collect();
+        relations.sort_by_key(|(name, _)| *name);
         relations
+            .into_iter()
+            .map(|(name, rewrite)| (name.clone(), rewrite.clone()))
+            .collect::<Vec<_>>()
     };
     assert_eq!(again.theory, parsed.theory);
-    assert_eq!(sorted(again.relations), sorted(parsed.relations));
+    assert_eq!(sorted(&again), sorted(&parsed));
 });

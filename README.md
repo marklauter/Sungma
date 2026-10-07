@@ -22,7 +22,7 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
   - computed: another relation on the same resource;
   - fact-to-subjectset: follow a fact, such as `parent`, then evaluate a relation on the resource it names;
   - union, intersection and exclusion.
-- `validate` checks a theory whole when it is declared. It refuses duplicates, empty operators, nesting deeper than 100 levels, undeclared names and computed cycles. So any theory that gets stored is guaranteed to evaluate.
+- `Theory::new` checks a theory whole when it is built, and refuses it with every problem it finds: duplicates, empty operators, nesting deeper than 100 levels, undeclared names and computed cycles. So every `Theory` is valid, and any theory that gets stored is guaranteed to evaluate.
 
 **Storage ports** (`store.rs`, `memory.rs`, `intern.rs`)
 - The ports are async traits, which play the role of C# interfaces. Reads and writes are separate:
