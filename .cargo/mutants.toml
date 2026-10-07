@@ -2,6 +2,10 @@
 exclude_re = [
     # Default::default() for a Vec is Vec::new().
     "impl Proof for Vec<Fact>>::empty",
-    # Only the wording of serde's error for a theory file that isn't an object.
-    "impl Visitor<'de> for Visit<V>>::expecting",
+    # Only the wording of a serde error that a theory document's visitors,
+    # which accept every JSON value they are offered, never raise.
+    "impl Visitor<'de> for (Text|Json)Visitor>::expecting",
+    # The binary's entry point: it only wires its arguments to
+    # AppState::load and the router, which the API tests cover.
+    "sungma-api/src/main.rs.*replace main",
 ]

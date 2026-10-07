@@ -2,7 +2,7 @@
 //! rewrites.
 //!
 //! A theory is checked whole when it is declared, so a stored theory always
-//! evaluates. [`validate`] refuses:
+//! evaluates. [`problems`] finds, and [`validate`] refuses:
 //!
 //! - a relation declared twice;
 //! - an empty union or intersection;
@@ -10,7 +10,9 @@
 //! - a computed subjectset or factset naming a relation the theory doesn't
 //!   declare;
 //! - a cycle of computed subjectsets, such as `viewer: editor` with
-//!   `editor: viewer`, or `viewer: this ! viewer`.
+//!   `editor: viewer`, or `viewer: this ! viewer`. Relations that reach
+//!   each other, a strongly connected component, are one problem however
+//!   many cycles they form.
 //!
 //! A computed cycle comes back to its relation without reading a fact, so it
 //! can never establish a membership. A cycle through a fact-to-subjectset
@@ -19,7 +21,7 @@
 //! theory of the resource the fact names, so it isn't checked here.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fmt::Display,
     hash::Hash,
     sync::Arc,
@@ -77,43 +79,74 @@ impl Theory {
 }
 
 /// Checks a whole theory, as the [module](self) describes, and refuses it
-/// with the first problem in declaration order. Generic over how relations
-/// are named, so a theory can be checked by name before it is interned.
+/// with its first problem. Generic over how relations are named, so a
+/// theory can be checked by name before it is interned.
 pub fn validate<R: Eq + Hash + Display>(relations: &[(R, Rewrite<R>)]) -> Result<(), TheoryError> {
-    let mut declared = HashSet::new();
-    for (relation, _) in relations {
-        if !declared.insert(relation) {
-            return Err(TheoryError::DuplicateRelation(relation.to_string()));
+    match problems(relations).into_iter().next() {
+        Some((_, error)) => Err(error),
+        None => Ok(()),
+    }
+}
+
+/// Every problem in a whole theory, each with the index of the relation it
+/// was found at, in declaration order. A relation's dangling targets are
+/// each reported once, and a cycle at the relation of its component the
+/// check meets first, with a path from that relation back to itself.
+pub fn problems<R: Eq + Hash + Display>(
+    relations: &[(R, Rewrite<R>)],
+) -> Vec<(usize, TheoryError)> {
+    let mut problems = Vec::new();
+    let mut declared = HashMap::new();
+    for (at, (relation, _)) in relations.iter().enumerate() {
+        if declared.contains_key(relation) {
+            problems.push((at, TheoryError::DuplicateRelation(relation.to_string())));
+        } else {
+            declared.insert(relation, at);
         }
     }
-    let mut edges = HashMap::new();
-    for (relation, rewrite) in relations {
-        check_tree(rewrite, 1)?;
+    let mut edges = vec![Vec::new(); relations.len()];
+    for (at, (relation, rewrite)) in relations.iter().enumerate() {
+        if let Err(error) = check_tree(rewrite, 1) {
+            // A tree past the depth limit isn't walked further, so one built
+            // in code, however deep, can't overflow the stack.
+            problems.push((at, error));
+            continue;
+        }
         let mut computed = Vec::new();
         let mut factsets = Vec::new();
         named(rewrite, &mut computed, &mut factsets);
-        if let Some(target) = computed
+        let mut dangling = HashSet::new();
+        for target in computed.iter().chain(&factsets) {
+            if !declared.contains_key(*target) && dangling.insert(*target) {
+                problems.push((
+                    at,
+                    TheoryError::DanglingReference {
+                        relation: relation.to_string(),
+                        target: target.to_string(),
+                    },
+                ));
+            }
+        }
+        if declared[relation] == at {
+            edges[at] = computed
+                .iter()
+                .filter_map(|target| declared.get(*target).copied())
+                .collect();
+        }
+    }
+    let mut components = Components::new(&edges);
+    for at in 0..relations.len() {
+        components.visit(at);
+    }
+    for cycle in components.cycles {
+        let path = cycle
             .iter()
-            .chain(&factsets)
-            .find(|target| !declared.contains(*target))
-        {
-            return Err(TheoryError::DanglingReference {
-                relation: relation.to_string(),
-                target: target.to_string(),
-            });
-        }
-        edges.insert(relation, computed);
+            .map(|&at| relations[at].0.to_string())
+            .collect();
+        problems.push((cycle[0], TheoryError::RewriteCycle(path)));
     }
-    let mut finished = HashSet::new();
-    for (relation, _) in relations {
-        let mut path = Vec::new();
-        if let Some(cycle) = find_cycle(relation, &edges, &mut path, &mut finished) {
-            return Err(TheoryError::RewriteCycle(
-                cycle.iter().map(ToString::to_string).collect(),
-            ));
-        }
-    }
-    Ok(())
+    problems.sort_by_key(|(at, _)| *at);
+    problems
 }
 
 /// Refuses empty operators and nesting past [`MAX_REWRITE_DEPTH`].
@@ -157,30 +190,111 @@ fn named<'r, R>(rewrite: &'r Rewrite<R>, computed: &mut Vec<&'r R>, factsets: &m
     }
 }
 
-/// Depth-first along computed edges from `relation`. `path` holds the
-/// relations being visited; meeting one again closes a cycle, returned from
-/// its first visit back to itself. `finished` relations reach no cycle.
-fn find_cycle<'r, R: Eq + Hash>(
-    relation: &'r R,
-    edges: &HashMap<&'r R, Vec<&'r R>>,
-    path: &mut Vec<&'r R>,
-    finished: &mut HashSet<&'r R>,
-) -> Option<Vec<&'r R>> {
-    if finished.contains(relation) {
-        return None;
-    }
-    if let Some(start) = path.iter().position(|step| *step == relation) {
-        let mut cycle = path[start..].to_vec();
-        cycle.push(relation);
-        return Some(cycle);
-    }
-    path.push(relation);
-    for &target in &edges[relation] {
-        if let Some(cycle) = find_cycle(target, edges, path, finished) {
-            return Some(cycle);
+/// Tarjan's strongly connected components over computed edges, collecting
+/// a cycle through each component that has one.
+struct Components<'e> {
+    edges: &'e [Vec<usize>],
+    /// The order each relation was met in, `None` before it is.
+    met: Vec<Option<usize>>,
+    /// The earliest relation met that each reaches and is still open.
+    low: Vec<usize>,
+    open: Vec<usize>,
+    on_open: Vec<bool>,
+    count: usize,
+    cycles: Vec<Vec<usize>>,
+}
+
+impl<'e> Components<'e> {
+    fn new(edges: &'e [Vec<usize>]) -> Self {
+        Self {
+            edges,
+            met: vec![None; edges.len()],
+            low: vec![0; edges.len()],
+            open: Vec::new(),
+            on_open: vec![false; edges.len()],
+            count: 0,
+            cycles: Vec::new(),
         }
     }
-    path.pop();
-    finished.insert(relation);
-    None
+
+    /// Depth-first from `start`, with its own stack rather than recursion,
+    /// so a long chain of relations built in code can't overflow the stack.
+    fn visit(&mut self, start: usize) {
+        if self.met[start].is_some() {
+            return;
+        }
+        self.open_relation(start);
+        // Each relation being visited, and the index of its next edge.
+        let mut path = vec![(start, 0)];
+        while let Some(&(at, next)) = path.last() {
+            if let Some(&target) = self.edges[at].get(next) {
+                path.last_mut().expect("path isn't empty").1 += 1;
+                match self.met[target] {
+                    None => {
+                        self.open_relation(target);
+                        path.push((target, 0));
+                    }
+                    Some(met) if self.on_open[target] => self.low[at] = self.low[at].min(met),
+                    Some(_) => {}
+                }
+                continue;
+            }
+            path.pop();
+            if let Some(&(parent, _)) = path.last() {
+                self.low[parent] = self.low[parent].min(self.low[at]);
+            }
+            if Some(self.low[at]) == self.met[at] {
+                self.close_component(at);
+            }
+        }
+    }
+
+    fn open_relation(&mut self, at: usize) {
+        self.met[at] = Some(self.count);
+        self.low[at] = self.count;
+        self.count += 1;
+        self.open.push(at);
+        self.on_open[at] = true;
+    }
+
+    /// Pops the component `root` met first, keeping a cycle through it.
+    fn close_component(&mut self, root: usize) {
+        let mut members = 0;
+        loop {
+            let member = self.open.pop().expect("a component's root is open");
+            self.on_open[member] = false;
+            members += 1;
+            if member == root {
+                break;
+            }
+        }
+        if members > 1 || self.edges[root].contains(&root) {
+            self.cycles.push(cycle_through(self.edges, root));
+        }
+    }
+}
+
+/// The shortest path from `root` back to itself. Only relations in its
+/// component lead back to it, so the path stays within the component.
+fn cycle_through(edges: &[Vec<usize>], root: usize) -> Vec<usize> {
+    let mut from = HashMap::new();
+    let mut queue = VecDeque::from([root]);
+    while let Some(at) = queue.pop_front() {
+        for &target in &edges[at] {
+            if target == root {
+                let mut path = vec![at];
+                while let Some(&previous) = from.get(path.last().unwrap()) {
+                    path.push(previous);
+                }
+                path.reverse();
+                path.push(root);
+                return path;
+            }
+            if target != root && !from.contains_key(&target) {
+                from.insert(target, at);
+                queue.push_back(target);
+            }
+        }
+    }
+    unreachable!("a component with a cycle has a path back to its root")
 }

@@ -11,7 +11,7 @@
 9. Write service: atomic batches with conditional writes.
 10. Expand service.
 11. Watch service: a changelog stream with heartbeat zookies.
-12. YAML theory grammar and parser.
+12. Theory documents: the JSON form of a theory, with its rewrite grammar, parser and printer (done).
 13. Versioned theories and a theory write service.
 14. HTTP and gRPC transports for each service.
 15. Authentication and authorization of Sungma's own callers.

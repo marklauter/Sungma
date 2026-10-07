@@ -11,7 +11,7 @@ use common::{World, head, identity, subjectset, world};
 use proptest::{prelude::*, sample::subsequence, test_runner::TestCaseError};
 use sungma_core::{
     closure::{Closure, ClosureError, Expansion, MAX_DEPTH},
-    fixture::{self, FixtureError},
+    fixture,
     model::{RelationId, Revision, Subject, Subjectset, TheoryId},
     rewrite::Rewrite::{self, Computed, Exclusion, Intersection, This, Union},
     store::{Dictionary, FactStore, Pool, StoreError, TheoryStore},
@@ -647,17 +647,6 @@ fn empty_intersection_is_refused() {
         Intersection(vec![]),
     );
     assert_eq!(result, Err(TheoryError::EmptyOperator("intersection")));
-}
-
-#[test]
-fn theory_json_refuses_an_empty_operator() {
-    let mut world = world();
-    let json = r#"{ "file": { "odd": { "union": [] } } }"#;
-    let result = fixture::load_theories(json, &world.dictionary, &mut world.theories);
-    assert!(matches!(
-        result,
-        Err(FixtureError::Theory(TheoryError::EmptyOperator("union")))
-    ));
 }
 
 #[tokio::test]

@@ -1,16 +1,10 @@
 //! Fixtures: theories and facts written with readable strings and interned
 //! on load, so the core never sees a string.
 //!
-//! Theory JSON maps each theory to its relations, and each relation to its
-//! rewrite in the JSON form described on [`Rewrite`]:
+//! Each theory is a theory document, as [`crate::document`] describes:
 //!
 //! ```json
-//! {
-//!   "file": {
-//!     "owner": "this",
-//!     "editor": { "union": ["this", { "computed": "owner" }] }
-//!   }
-//! }
+//! { "file": { "owner": "this", "editor": "this | owner" } }
 //! ```
 //!
 //! Fact JSON is a list of objects, each with a `set` and one subject key:
@@ -25,21 +19,17 @@
 //!
 //! Names are parsed as [`crate::name`] describes.
 
-use std::{collections::HashSet, fmt, marker::PhantomData};
-
-use serde::{
-    Deserialize, Deserializer,
-    de::{MapAccess, Visitor},
-};
+use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
+    document::{self, DocumentError},
     memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore},
     model::{Fact, IdentityId, RelationId, Resource, ResourceId, Subject, Subjectset, TheoryId},
     name::{NameError, ResourceName, SubjectsetName},
     rewrite::Rewrite,
     store::Pool,
-    theory::{self, Theory, TheoryError},
+    theory::{Theory, TheoryError},
 };
 
 #[derive(Debug, Error)]
@@ -48,8 +38,8 @@ pub enum FixtureError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Theory(#[from] TheoryError),
-    #[error("theory '{0}' is declared more than once")]
-    DuplicateTheory(String),
+    #[error("{}", .0.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
+    Document(Vec<DocumentError>),
     #[error(transparent)]
     Name(#[from] NameError),
     #[error("fact '{0}' needs exactly one of identity, resource or subjectset")]
@@ -91,62 +81,29 @@ pub fn declare(
     Ok(())
 }
 
-/// Declares each theory whole, replacing any earlier declaration. Each is
-/// checked by name before its names are interned, in document order.
-pub fn load_theories(
-    json: &str,
+/// Declares the theory a document declares, replacing any earlier
+/// declaration of it.
+pub fn load_theory(
+    document: &str,
     dictionary: &MemoryDictionary,
     theories: &mut MemoryTheoryStore,
 ) -> Result<(), FixtureError> {
-    let Entries(parsed) = serde_json::from_str::<Entries<Entries<Rewrite<String>>>>(json)?;
-    let mut seen = HashSet::new();
-    for (theory, Entries(relations)) in parsed {
-        if !seen.insert(theory.clone()) {
-            return Err(FixtureError::DuplicateTheory(theory));
-        }
-        theory::validate(&relations)?;
-        let id = TheoryId(dictionary.intern(Pool::Theories, &theory));
-        let relations = relations
-            .into_iter()
-            .map(|(relation, rewrite)| {
-                let relation = RelationId(dictionary.intern(Pool::Relations, &relation));
-                (
-                    relation,
-                    rewrite.map(&mut |name| RelationId(dictionary.intern(Pool::Relations, &name))),
-                )
-            })
-            .collect();
-        theories.declare(id, Theory::new(relations)?);
-    }
+    let document = document::parse(document).map_err(FixtureError::Document)?;
+    let id = TheoryId(dictionary.intern(Pool::Theories, document.theory.as_str()));
+    let relations = document
+        .relations
+        .into_iter()
+        .map(|(relation, rewrite)| {
+            let relation = RelationId(dictionary.intern(Pool::Relations, relation.as_str()));
+            (
+                relation,
+                rewrite
+                    .map(&mut |name| RelationId(dictionary.intern(Pool::Relations, name.as_str()))),
+            )
+        })
+        .collect();
+    theories.declare(id, Theory::new(relations)?);
     Ok(())
-}
-
-/// A JSON object read as its entries in document order, duplicates kept,
-/// so validation sees a duplicate a map would hide.
-struct Entries<V>(Vec<(String, V)>);
-
-impl<'de, V: Deserialize<'de>> Deserialize<'de> for Entries<V> {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct Visit<V>(PhantomData<V>);
-
-        impl<'de, V: Deserialize<'de>> Visitor<'de> for Visit<V> {
-            type Value = Entries<V>;
-
-            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("an object")
-            }
-
-            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
-                let mut entries = Vec::new();
-                while let Some(entry) = map.next_entry()? {
-                    entries.push(entry);
-                }
-                Ok(Entries(entries))
-            }
-        }
-
-        deserializer.deserialize_map(Visit(PhantomData))
-    }
 }
 
 pub fn load_facts(
@@ -180,7 +137,7 @@ fn intern_resource(dictionary: &MemoryDictionary, text: &str) -> Result<Resource
 }
 
 fn intern_resource_name(dictionary: &MemoryDictionary, name: &ResourceName) -> Resource {
-    let theory = TheoryId(dictionary.intern(Pool::Theories, name.theory()));
+    let theory = TheoryId(dictionary.intern(Pool::Theories, name.theory().as_str()));
     Resource {
         theory,
         id: ResourceId(dictionary.intern(Pool::Resources(theory), name.id())),
@@ -191,6 +148,6 @@ fn intern_subjectset(dictionary: &MemoryDictionary, text: &str) -> Result<Subjec
     let name: SubjectsetName = text.parse()?;
     Ok(Subjectset {
         resource: intern_resource_name(dictionary, name.resource()),
-        relation: RelationId(dictionary.intern(Pool::Relations, name.relation())),
+        relation: RelationId(dictionary.intern(Pool::Relations, name.relation().as_str())),
     })
 }

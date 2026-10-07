@@ -1,22 +1,30 @@
 //! Theories are checked whole when declared.
 
+use std::time::{Duration, Instant};
+
 use sungma_core::{
+    document::{self, ErrorKind},
     fixture::{self, FixtureError},
     memory::{MemoryDictionary, MemoryTheoryStore},
+    model::RelationId,
     rewrite::Rewrite::{self, Computed, Exclusion, This, Union},
-    theory::{MAX_REWRITE_DEPTH, TheoryError},
+    theory::{self, MAX_REWRITE_DEPTH, Theory, TheoryError},
 };
 
 fn load(json: &str) -> Result<(), FixtureError> {
     let dictionary = MemoryDictionary::default();
     let mut theories = MemoryTheoryStore::default();
-    fixture::load_theories(json, &dictionary, &mut theories)
+    fixture::load_theory(json, &dictionary, &mut theories)
 }
 
+/// The one theory error a document is refused with.
 fn refused(json: &str) -> TheoryError {
-    match load(json) {
-        Err(FixtureError::Theory(error)) => error,
-        other => panic!("expected a theory error, got {other:?}"),
+    match document::parse(json) {
+        Err(mut errors) if errors.len() == 1 => match errors.remove(0).kind {
+            ErrorKind::Theory(error) => error,
+            other => panic!("expected a theory error, got {other:?}"),
+        },
+        other => panic!("expected one error, got {other:?}"),
     }
 }
 
@@ -28,7 +36,7 @@ fn names(cycle: &[&str]) -> TheoryError {
 fn a_cycle_through_a_fact_is_left_to_evaluation() {
     let json = r#"{ "folder": {
         "parent": "this",
-        "viewer": { "union": ["this", { "fact_to": { "factset": "parent", "computed": "viewer" } }] }
+        "viewer": "this | (parent, viewer)"
     } }"#;
     assert!(load(json).is_ok());
 }
@@ -44,20 +52,20 @@ fn a_relation_declared_twice_is_refused() {
 }
 
 #[test]
-fn a_theory_declared_twice_is_refused() {
-    let result = load(r#"{ "file": { "owner": "this" }, "file": { "owner": "this" } }"#);
-    let Err(error @ FixtureError::DuplicateTheory(_)) = result else {
-        panic!("expected a duplicate theory, got {result:?}");
+fn a_theory_document_is_refused_as_a_whole() {
+    let result = load(r#"{ "file": { "owner": "this", "viewer": "editor" } }"#);
+    let Err(error @ FixtureError::Document(_)) = result else {
+        panic!("expected a refused document, got {result:?}");
     };
     assert_eq!(
         error.to_string(),
-        "theory 'file' is declared more than once"
+        "relation 'viewer': relation 'viewer' references 'editor', which the theory doesn't declare"
     );
 }
 
 #[test]
 fn a_computed_subjectset_must_be_declared() {
-    let error = refused(r#"{ "file": { "viewer": { "computed": "owner" } } }"#);
+    let error = refused(r#"{ "file": { "viewer": "owner" } }"#);
     assert_eq!(
         error.to_string(),
         "relation 'viewer' references 'owner', which the theory doesn't declare"
@@ -67,7 +75,7 @@ fn a_computed_subjectset_must_be_declared() {
 #[test]
 fn a_factset_must_be_declared() {
     let json = r#"{ "file": {
-        "viewer": { "fact_to": { "factset": "parent", "computed": "viewer" } }
+        "viewer": "(parent, viewer)"
     } }"#;
     assert_eq!(
         refused(json),
@@ -82,7 +90,7 @@ fn a_factset_must_be_declared() {
 fn the_relation_a_fact_to_subjectset_computes_is_not_checked() {
     let json = r#"{ "file": {
         "parent": "this",
-        "viewer": { "fact_to": { "factset": "parent", "computed": "anything" } }
+        "viewer": "(parent, anything)"
     } }"#;
     assert!(load(json).is_ok());
 }
@@ -90,8 +98,8 @@ fn the_relation_a_fact_to_subjectset_computes_is_not_checked() {
 #[test]
 fn a_cycle_of_computed_subjectsets_is_refused() {
     let json = r#"{ "file": {
-        "editor": { "computed": "viewer" },
-        "viewer": { "union": ["this", { "computed": "editor" }] }
+        "editor": "viewer",
+        "viewer": "this | editor"
     } }"#;
     let error = refused(json);
     assert_eq!(error, names(&["editor", "viewer", "editor"]));
@@ -103,16 +111,16 @@ fn a_cycle_of_computed_subjectsets_is_refused() {
 
 #[test]
 fn a_relation_excluding_itself_is_refused() {
-    let json = r#"{ "file": { "viewer": { "exclusion": ["this", { "computed": "viewer" }] } } }"#;
+    let json = r#"{ "file": { "viewer": "this ! viewer" } }"#;
     assert_eq!(refused(json), names(&["viewer", "viewer"]));
 }
 
 #[test]
 fn a_cycle_is_reported_from_where_it_closes() {
     let json = r#"{ "file": {
-        "a": { "computed": "b" },
-        "b": { "computed": "c" },
-        "c": { "computed": "b" }
+        "a": "b",
+        "b": "c",
+        "c": "b"
     } }"#;
     assert_eq!(refused(json), names(&["b", "c", "b"]));
 }
@@ -120,8 +128,8 @@ fn a_cycle_is_reported_from_where_it_closes() {
 #[test]
 fn relations_sharing_a_target_are_no_cycle() {
     let json = r#"{ "file": {
-        "a": { "computed": "c" },
-        "b": { "union": [{ "computed": "c" }, { "computed": "a" }] },
+        "a": "c",
+        "b": "c | a",
         "c": "this"
     } }"#;
     assert!(load(json).is_ok());
@@ -193,10 +201,50 @@ fn redeclaring_a_relation_checks_the_whole_theory_by_id() {
 }
 
 #[test]
-fn theory_json_must_be_objects() {
-    assert!(matches!(load("[]"), Err(FixtureError::Json(_))));
-    assert!(matches!(
-        load(r#"{ "file": [] }"#),
-        Err(FixtureError::Json(_))
-    ));
+fn a_theory_built_with_a_relation_twice_is_refused() {
+    let result = Theory::new(vec![(RelationId(0), This), (RelationId(0), This)]);
+    assert_eq!(
+        result.err(),
+        Some(TheoryError::DuplicateRelation("0".to_owned()))
+    );
+}
+
+/// Whether work since `start` stayed under a bound that only quadratic
+/// work, or worse, would pass. Only a release build is timed: a debug build
+/// on a slow runner can be ten times slower.
+fn quick(start: Instant) -> bool {
+    cfg!(debug_assertions) || start.elapsed() < Duration::from_secs(5)
+}
+
+/// A theory built in code bypasses the document limits, so its checks must
+/// hold up at any size: a chain far longer than a document allows.
+#[test]
+fn a_long_chain_built_in_code_is_checked_without_a_crash() {
+    let count = 100_000;
+    let chain: Vec<_> = (0..count)
+        .map(|i| {
+            let rewrite = if i + 1 == count {
+                This
+            } else {
+                Computed(i + 1)
+            };
+            (i, rewrite)
+        })
+        .collect();
+    let start = Instant::now();
+    assert_eq!(theory::problems(&chain), []);
+    assert!(quick(start));
+}
+
+#[test]
+fn a_large_cycle_built_in_code_is_one_problem() {
+    let count = 100_000;
+    let ring: Vec<_> = (0..count).map(|i| (i, Computed((i + 1) % count))).collect();
+    let start = Instant::now();
+    let problems = theory::problems(&ring);
+    assert!(quick(start));
+    let [(0, TheoryError::RewriteCycle(path))] = problems.as_slice() else {
+        panic!("expected one cycle, got {} problems", problems.len());
+    };
+    assert_eq!(path.len(), count + 1);
 }

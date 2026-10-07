@@ -53,14 +53,14 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
 - `check.rs` has `CheckService`, which does three things: resolve, decide, then append an `AuditRecord` to an `AuditLog` (in memory for now).
 
 **Fixtures and the API**
-- `fixture.rs` loads theories and facts from the JSON files under `tests/fixtures`. This JSON is a stopgap until the YAML theory format exists.
+- `document.rs` parses and prints theory documents: one theory per JSON object, each relation's rewrite an expression such as `"(this | editor) ! banned"`. [docs/specs/theory-documents.md](docs/specs/theory-documents.md) specifies them.
+- `fixture.rs` loads theory documents and fact JSON from the files under `tests/fixtures`.
 - `sungma-api` is an axum app with one route, `POST /check`. It loads the fixtures at startup and returns `{request_id, verdict, zookie}`. Errors are always JSON.
 
 **Not built yet**
 - Writes over the API (facts are only loaded from fixtures).
 - A real store.
 - Theory versioning.
-- The YAML theory parser.
 - RFC 9457 error bodies.
 - Expand over HTTP.
 - Authentication.
@@ -75,11 +75,17 @@ The [Sample](#sample) below (files, folders, groups) and its trace for "is alice
 git config core.hooksPath .githooks
 ```
 
+`fuzz/` holds a `cargo-fuzz` target for the theory document parser. CI runs it for a minute; locally it needs the nightly toolchain:
+
+```sh
+cargo +nightly fuzz run document
+```
+
 ## Check API
 
 ```sh
 F=crates/sungma-core/tests/fixtures
-cargo run -p sungma-api -- $F/docs.theories.json $F/docs.facts.json
+cargo run -p sungma-api -- $F/docs.facts.json $F/theories/*.json
 
 curl -d '{"set": "file:design.md#viewer", "identity": "alice"}'   -H 'content-type: application/json' localhost:8080/check
 # {"request_id":"sungma-1","verdict":"allowed","zookie":{"revision":16}}
@@ -142,31 +148,40 @@ Each term names a set of subjects:
 - A computed subjectset is a relation evaluated on the resource in hand.
 - A fact-to-subjectset reads the facts under the factset, then evaluates the computed subjectset on each resource those facts name, under that resource's theory.
 
-A relation declared without a rewrite is `this`. A relation the theory doesn't declare, such as one reached through a fact-to-subjectset whose target theory lacks it, names the empty set.
+A relation that takes only the facts bound to it is written `this`. A relation the theory doesn't declare, such as one reached through a fact-to-subjectset whose target theory lacks it, names the empty set.
 
 A theory is checked whole when it is declared. It is refused if a relation is declared twice, a union or intersection is empty, a rewrite nests more than 100 levels deep, a computed subjectset or factset names a relation the theory doesn't declare, or computed subjectsets form a cycle, such as `viewer: this ! viewer`. A cycle through a fact-to-subjectset, like folders inside folders, reads a fact at each step and is allowed.
 
 ## Sample
 
-Three theories for documents: files sit in folders, folders sit in folders, and groups hold members.
+Three theories for documents: files sit in folders, folders sit in folders, and groups hold members. Each is a theory document:
 
-```yaml
-file:
-  - owner
-  - parent
-  - editor: this | owner
-  - viewer: (this | editor | (parent, viewer)) ! banned
-  - auditor: this & viewer
-  - banned
+```json
+{
+  "file": {
+    "auditor": "this & viewer",
+    "banned": "this",
+    "editor": "this | owner",
+    "owner": "this",
+    "parent": "this",
+    "viewer": "(this | editor | (parent, viewer)) ! banned"
+  }
+}
 
-folder:
-  - owner
-  - parent
-  - viewer: (this | (parent, viewer)) ! banned
-  - banned
+{
+  "folder": {
+    "banned": "this",
+    "owner": "this",
+    "parent": "this",
+    "viewer": "(this | (parent, viewer)) ! banned"
+  }
+}
 
-group:
-  - member
+{
+  "group": {
+    "member": "this"
+  }
+}
 ```
 
 Some facts under it, written in the fact notation above:

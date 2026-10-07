@@ -1,22 +1,6 @@
 //! The file, folder and group theories and their facts, shared by the
-//! integration tests. `docs.theories.json` declares:
-//!
-//! ```yaml
-//! file:
-//!   - owner
-//!   - parent
-//!   - editor: this | owner
-//!   - viewer: (this | editor | (parent, viewer)) ! banned
-//!   - auditor: this & viewer
-//!   - banned
-//! folder:
-//!   - owner
-//!   - parent
-//!   - viewer: (this | (parent, viewer)) ! banned
-//!   - banned
-//! group:
-//!   - member
-//! ```
+//! integration tests. The theories are documents under
+//! `fixtures/theories`, and the facts are `fixtures/docs.facts.json`.
 
 // Each test file compiles this module separately and uses only part of it.
 #![allow(dead_code)]
@@ -29,6 +13,12 @@ use sungma_core::{
     store::FactStore,
 };
 
+pub const THEORIES: [&str; 3] = [
+    include_str!("../fixtures/theories/file.json"),
+    include_str!("../fixtures/theories/folder.json"),
+    include_str!("../fixtures/theories/group.json"),
+];
+
 pub struct World {
     pub dictionary: MemoryDictionary,
     pub theories: MemoryTheoryStore,
@@ -38,12 +28,9 @@ pub struct World {
 pub fn world() -> World {
     let dictionary = MemoryDictionary::default();
     let mut theories = MemoryTheoryStore::default();
-    fixture::load_theories(
-        include_str!("../fixtures/docs.theories.json"),
-        &dictionary,
-        &mut theories,
-    )
-    .unwrap();
+    for document in THEORIES {
+        fixture::load_theory(document, &dictionary, &mut theories).unwrap();
+    }
     let facts = MemoryFactStore::default();
     fixture::load_facts(
         include_str!("../fixtures/docs.facts.json"),
