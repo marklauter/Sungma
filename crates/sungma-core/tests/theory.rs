@@ -290,23 +290,10 @@ fn a_cycle_error_names_a_bounded_path() {
 }
 
 #[test]
-fn a_theory_keeps_its_declaration_order_and_renames_whole() {
+fn a_theory_keeps_its_declaration_order() {
     let theory = Theory::new(vec![(2, This), (0, Computed(2)), (1, This)]).unwrap();
     let order: Vec<_> = theory.relations().map(|(relation, _)| *relation).collect();
     assert_eq!(order, [2, 0, 1]);
-    let renamed = theory.map(|relation| relation + 10);
-    assert_eq!(
-        renamed.rewrite(&10).map(|rewrite| &**rewrite),
-        Some(&Computed(12))
-    );
-    assert!(renamed.rewrite(&0).is_none());
-}
-
-#[test]
-#[should_panic(expected = "two relations named '0'")]
-fn renaming_two_relations_alike_is_a_defect() {
-    let theory = Theory::new(vec![(0, This), (1, This)]).unwrap();
-    theory.map(|_| 0);
 }
 
 #[test]

@@ -118,12 +118,14 @@ impl<R: Eq + Hash + Clone + Display> Theory<R> {
 
     /// The same theory with every relation renamed by `rename`, as when its
     /// names are interned. Renaming changes no rewrite's shape, so the
-    /// theory stays valid without being checked again.
+    /// theory stays valid without being checked again. Crate-private: the
+    /// interner never gives two names one id, and no caller outside the
+    /// crate needs to rename.
     ///
     /// # Panics
     ///
     /// If `rename` gives two relations one name.
-    pub fn map<S: Eq + Hash + Clone + Display>(
+    pub(crate) fn map<S: Eq + Hash + Clone + Display>(
         &self,
         mut rename: impl FnMut(&R) -> S,
     ) -> Theory<S> {
@@ -362,4 +364,30 @@ fn cycle_through(edges: &[Vec<usize>], root: usize, members: &HashSet<usize>) ->
         }
     }
     unreachable!("a component with a cycle has a path back to its root")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rewrite::Rewrite::{Computed, This};
+
+    #[test]
+    fn renaming_keeps_order_and_rewrites() {
+        let theory = Theory::new(vec![(2, This), (0, Computed(2)), (1, This)]).unwrap();
+        let renamed = theory.map(|relation| relation + 10);
+        let order: Vec<_> = renamed.relations().map(|(relation, _)| *relation).collect();
+        assert_eq!(order, [12, 10, 11]);
+        assert_eq!(
+            renamed.rewrite(&10).map(|rewrite| &**rewrite),
+            Some(&Computed(12))
+        );
+        assert!(renamed.rewrite(&0).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "two relations named '0'")]
+    fn renaming_two_relations_alike_is_a_defect() {
+        let theory = Theory::new(vec![(0, This), (1, This)]).unwrap();
+        theory.map(|_| 0);
+    }
 }
