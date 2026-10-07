@@ -128,11 +128,14 @@ jobs:
         restore-keys: fuzz-corpus-
 
     # Seeds and a token dictionary get it past building valid JSON; inputs up
-    # to 64 KiB reach larger shapes than libFuzzer's 4 KiB default.
+    # to 64 KiB reach larger shapes than libFuzzer's 4 KiB default. The target
+    # is named because the prebuilt cargo-fuzz defaults to musl, which the
+    # address sanitizer can't build for.
     - name: Fuzz the theory document parser for a minute
       run: >
         mkdir -p fuzz/corpus/document &&
-        cargo +$NIGHTLY fuzz run document fuzz/corpus/document fuzz/seeds/document --
+        cargo +$NIGHTLY fuzz run --target x86_64-unknown-linux-gnu
+        document fuzz/corpus/document fuzz/seeds/document --
         -dict=fuzz/document.dict -max_len=65536 -max_total_time=60
 
     - name: Keep the crashing input
