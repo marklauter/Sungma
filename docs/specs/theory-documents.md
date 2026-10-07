@@ -52,6 +52,7 @@ The `file` theory: files sit in folders, and `(parent, viewer)` reads the viewer
 A document is refused if it breaks any of these limits:
 
 - A document is at most 4 MiB. The other limits allow about 2.1 MB of compact JSON; the rest is room for whitespace.
+- A single theory.
 - A theory declares at most 500 relations.
 - A theory or relation name is at most 64 bytes.
 - An expression is at most 4 KiB (4,096 bytes).
