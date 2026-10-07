@@ -1,0 +1,36 @@
+name: Changes
+description: Whether the commits a run checks change a path matching a pattern. Needs a full-history checkout.
+
+inputs:
+  pattern:
+    description: An extended regular expression, matched against each changed path.
+    required: true
+
+outputs:
+  changed:
+    description: "'true' when a changed path matches, or when the run isn't a pull request or a push, or its changes can't be listed."
+    value: ${{ steps.diff.outputs.changed }}
+
+runs:
+  using: composite
+  steps:
+  - id: diff
+    shell: bash
+    env:
+      PATTERN: ${{ inputs.pattern }}
+      EVENT: ${{ github.event_name }}
+      BASE_REF: ${{ github.base_ref }}
+      BEFORE: ${{ github.event.before }}
+    run: |
+      case "$EVENT" in
+        pull_request) range="origin/$BASE_REF...HEAD" ;;
+        push) range="$BEFORE..HEAD" ;;
+        *) range= ;;
+      esac
+      changed=true
+      if [ -n "$range" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] &&
+         files=$(git diff --name-only "$range") && ! grep -Eq "$PATTERN" <<< "$files"; then
+        changed=false
+      fi
+      echo "changed=$changed" >> "$GITHUB_OUTPUT"
+      echo "Changes matching $PATTERN: $changed"

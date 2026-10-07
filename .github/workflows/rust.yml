@@ -19,7 +19,24 @@ env:
   RUSTDOCFLAGS: -D warnings
 
 jobs:
+  # The jobs below run only when the commits change Rust code, its build
+  # settings, the fuzz target or this pipeline. Runner minutes are limited.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.rust.outputs.changed }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: 0
+    - id: rust
+      uses: ./.github/actions/changes
+      with:
+        pattern: '\.rs$|(^|/)Cargo\.(toml|lock)$|^\.cargo/|^rust-toolchain\.toml$|^fuzz/|^\.github/(workflows/rust\.yml|actions/)'
+
   format:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -31,6 +48,8 @@ jobs:
       run: cargo fmt --all --check
 
   lint:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,6 +64,8 @@ jobs:
       run: cargo doc --workspace --no-deps --locked
 
   test:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -61,6 +82,8 @@ jobs:
       run: cargo test --workspace --locked --profile ${{ matrix.profile }}
 
   coverage:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,6 +98,8 @@ jobs:
       run: cargo llvm-cov --workspace --locked --fail-under-lines 95
 
   audit:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -86,6 +111,8 @@ jobs:
       run: cargo audit --deny warnings
 
   mutants:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -109,6 +136,8 @@ jobs:
         cargo mutants --workspace --in-diff pr.diff -- --locked
 
   fuzz:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     env:
       # libFuzzer needs a nightly compiler; pinned like every other tool.
@@ -145,12 +174,13 @@ jobs:
         name: fuzz-artifacts
         path: fuzz/artifacts
 
-  # The single required status check: the ruleset names this job, not the matrix legs.
+  # The single required status check: the ruleset names this job, not the
+  # matrix legs. Skipped jobs pass only when there were no Rust changes.
   passed:
     if: always()
-    needs: [ format, lint, test, coverage, audit, mutants, fuzz ]
+    needs: [ changes, format, lint, test, coverage, audit, mutants, fuzz ]
     runs-on: ubuntu-latest
     steps:
     - name: Require every job to succeed
-      if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+      if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || (needs.changes.outputs.rust != 'false' && contains(needs.*.result, 'skipped'))
       run: exit 1
