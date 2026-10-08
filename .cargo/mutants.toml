@@ -15,4 +15,10 @@ exclude_re = [
     # Only the wording of a serde error that a theory document's visitors,
     # which accept every JSON value they are offered, never raise.
     "impl Visitor<'de> for (Text|Json|Leaf)Visitor(<V>)?>::expecting",
+    # The adjtimex call itself: what it returns depends on the host's sync.
+    'linux\.rs:.*replace read ->',
 ]
+
+# Mutants run on Linux, where the Windows clock isn't compiled, so no test
+# could catch a mutant of it. Its parser, w32tm.rs, is tested everywhere.
+exclude_globs = ["crates/sungma-clock/src/windows.rs"]

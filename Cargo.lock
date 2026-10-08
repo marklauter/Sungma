@@ -599,6 +599,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sungma-clock"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "sungma",
+ "sungma-clock",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "sungma-lang"
 version = "0.1.0"
 dependencies = [
