@@ -9,9 +9,9 @@ use std::{
 
 use proptest::{collection::vec, prelude::*, test_runner::TestCaseError};
 use sungma::{
+    id::TheoryId,
     intern::LeasingInterner,
     memory::MemoryDictionary,
-    model::TheoryId,
     store::{
         Dictionary, InternError, Interner, NameStore,
         Pool::{self, Identities},

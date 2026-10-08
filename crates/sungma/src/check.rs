@@ -16,9 +16,10 @@ use thiserror::Error;
 use crate::{
     closure::Closure,
     decision::Decision,
-    model::{Revision, Subject},
+    graph::Subject,
     name::SubjectsetName,
     resolve,
+    revision::Revision,
     store::{Dictionary, FactStore, StoreError, TheoryStore},
 };
 

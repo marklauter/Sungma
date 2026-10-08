@@ -1,4 +1,4 @@
-//! Sungma core: the fact model, rewrite trees, the closure of a subjectset,
+//! Sungma core: the fact graph, rewrite trees, the closure of a subjectset,
 //! which answers Contains and Expand, and the decisions Check records for
 //! audit and replay.
 //!
@@ -8,12 +8,14 @@
 pub mod check;
 pub mod closure;
 pub mod decision;
+pub mod graph;
+pub mod id;
 pub mod intern;
 pub mod memory;
-pub mod model;
 pub mod name;
 pub mod replay;
 pub mod resolve;
+pub mod revision;
 pub mod rewrite;
 pub mod store;
 pub mod theory;

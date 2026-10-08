@@ -42,8 +42,8 @@ use serde::{Deserialize, Serialize};
 use sungma::{
     check::{CheckRequest, CheckService, MemoryAuditLog, RequestContext, SubjectName, Verdict},
     memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore},
-    model::Revision,
     name::{NameError, SubjectsetName},
+    revision::Revision,
 };
 use sungma_lang::{
     fact::{self, FactError},

@@ -6,9 +6,11 @@
 #![allow(dead_code)]
 
 use sungma::{
+    graph::{Subject, Subjectset},
+    id::{RelationId, TheoryId},
     memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore},
-    model::{RelationId, Revision, Subject, Subjectset, TheoryId},
     resolve,
+    revision::Revision,
     rewrite::Rewrite,
     store::{FactStore, Pool},
     theory::{Theory, TheoryError},

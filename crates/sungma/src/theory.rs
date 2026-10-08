@@ -30,7 +30,7 @@ use std::{
 
 use thiserror::Error;
 
-use crate::{model::RelationId, rewrite::Rewrite};
+use crate::{id::RelationId, rewrite::Rewrite};
 
 /// How deeply rewrite operators may nest. A leaf is one level.
 pub const MAX_REWRITE_DEPTH: usize = 100;

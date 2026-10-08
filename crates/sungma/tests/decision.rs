@@ -10,9 +10,10 @@ use sungma::{
     check::{CheckRequest, CheckService, MemoryAuditLog, RequestContext, SubjectName, Verdict},
     closure::Closure,
     decision::{Decision, Outcome, SEMANTICS, Semantics},
-    model::{Fact, Revision, Subject},
+    graph::{Fact, Subject},
     replay::{Replay, replay},
     resolve,
+    revision::Revision,
     rewrite::Rewrite::This,
 };
 use sungma_lang::fact::load_facts;

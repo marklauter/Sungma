@@ -36,7 +36,9 @@ use thiserror::Error;
 
 use crate::{
     decision::{Decision, Outcome, SEMANTICS},
-    model::{Fact, RelationId, Revision, Subject, Subjectset},
+    graph::{Fact, Subject, Subjectset},
+    id::RelationId,
+    revision::Revision,
     rewrite::Rewrite,
     store::{FactStore, StoreError, TheoryStore},
 };

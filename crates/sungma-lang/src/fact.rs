@@ -25,8 +25,9 @@ use serde::{
 use thiserror::Error;
 
 use sungma::{
+    graph::{Fact, Resource, Subject, Subjectset},
+    id::{IdentityId, RelationId, ResourceId, TheoryId},
     memory::{MemoryDictionary, MemoryFactStore},
-    model::{Fact, IdentityId, RelationId, Resource, ResourceId, Subject, Subjectset, TheoryId},
     name::{
         Identity, NameError, RelationName, ResourceName, SubjectsetName, TheoryName,
         check_resource_id,
