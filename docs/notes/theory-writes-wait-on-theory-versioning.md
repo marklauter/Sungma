@@ -22,7 +22,7 @@ status: evolving
 - **What a check at revision R reads.** The [[catalog]] at R: each theory version whose [[span]] covers R. A new theory can't judge old facts.
 - **What replay pins.** The decision's revision implies the catalog, so a decision needs nothing more.
 
-A caller holds a [[mark]], not a revision. A request with a mark is answered at that revision or later, and a node behind the mark replays the change log up to it before answering.
+A caller holds a [[revision-token]], not a revision. A request with a revision token is answered at that revision or later, and a node behind the revision token replays the change log up to it before answering.
 
 ## Write methods
 
@@ -43,17 +43,17 @@ A production spec of theory writes needs these settled. Questions 1, 3 and 7 sha
 1. **What PATCH carries.** A whole theory document that becomes the next version, or a change to some relations. What the create method carries.
    Leaning: a whole document. A document supersedes its theory, and `Theory::new` then checks the next version whole. A change to some relations would have to be merged before it could be checked.
 2. **Retiring a theory.** Whether a theory can be retired, closing its last span, and what then happens to its facts and to fact-to-subjectsets in other theories that reach it.
-3. **Concurrent writes.** Whether a write names the version or [[mark]] it expects, as `If-Match` does, and is refused on a mismatch.
-   Leaning: yes, with the mark as the `If-Match` value. Without it, two PATCHes from the same version silently overwrite each other.
+3. **Concurrent writes.** Whether a write names the version or [[revision-token]] it expects, as `If-Match` does, and is refused on a mismatch.
+   Leaning: yes, with the revision token as the `If-Match` value. Without it, two PATCHes from the same version silently overwrite each other.
 4. **Effects on facts.** Whether a theory write reports the facts it orphans, refuses past some count, or does neither. [[one-timeline]] settles what epochs and orphaned facts mean.
    Leaning: neither. [[one-timeline]] accepts that a theory write never scans the graph, and reporting or counting orphans needs that scan.
-5. **The response.** Whether a write returns the new version's mark, and the canonical printed document, so the caller sees what was stored.
-6. **Reading theories.** Whether there is a GET for a theory at a mark, and a list of a theory's versions.
+5. **The response.** Whether a write returns the new version's revision token, and the canonical printed document, so the caller sees what was stored.
+6. **Reading theories.** Whether there is a GET for a theory at a revision token, and a list of a theory's versions.
 7. **Storage and ports.** A `TheoryWriter` port beside `FactWriter`, and `TheoryStore::rewrite` reading at a revision. Whether the stored form is the document text or the parsed theory.
    Leaning: store the parsed, interned theory. The printer gives back the same document every time, because it sorts relations by name.
 8. **Errors.** The HTTP status for each refusal, and the RFC 9457 body. Document errors already carry a relation and column.
 9. **Propagation.** How a new version reaches other nodes, and how theory changes appear in the Watch stream.
-   Partly settled: theory versions go into the same change log as facts, and a node behind a request's mark replays the log up to it.
+   Partly settled: theory versions go into the same change log as facts, and a node behind a request's revision token replays the log up to it.
 10. **Who may write.** Authorization of theory writes, roadmap item 15. The spec may defer it, but says so.
 
 ## Pieces already in place
