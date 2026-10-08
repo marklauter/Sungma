@@ -19,6 +19,10 @@ cites:
 
 A theory document is the JSON form of one [[theory]]. It maps the theory's name to its [[relation]]s, and each relation's name to a [[rewrite]] written as an expression string. A theory is the unit a write declares, so a document holds exactly one. Sungma parses a document into a typed rewrite tree for each relation, checks the theory whole, and prints a theory back into a document that parses as an equal theory.
 
+## The name
+
+"Theory" is used in the logician's sense: a set of sentences that, together with the [[fact]]s, settles every question it can be asked. Here the sentences are a theory's rewrites, and each question asks whether a subject is a member of a [[subjectset]]. The rules in [Checks](#checks) exist to keep that true, so a theory and its facts give exactly one answer to each question.
+
 ## Sample
 
 The `file` theory: files sit in folders, and `(parent, viewer)` reads the viewers of the folder a file sits in, under the `folder` theory.
