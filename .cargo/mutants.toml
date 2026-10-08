@@ -1,3 +1,7 @@
+# Every mutant runs every crate's tests: sungma-lang's tests check the core
+# code its parsers call, such as theory checks and names.
+test_workspace = true
+
 # Mutants no test should catch.
 exclude_re = [
     # Default::default() for a Vec is Vec::new().

@@ -166,6 +166,7 @@ name = "sungma-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
+ "sungma",
  "sungma-lang",
 ]
 

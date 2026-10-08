@@ -1,0 +1,8 @@
+[
+  { "theory": "file", "resource": "readme", "relation": "owner",
+    "subject": { "identity": "anne@example.com" } },
+  { "theory": "folder", "resource": "root", "relation": "viewer",
+    "subject": { "theory": "group", "resource": "eng", "relation": "member" } },
+  { "theory": "file", "resource": "C:\\docs\\a.md", "relation": "parent",
+    "subject": { "theory": "folder", "resource": "a:b#c/d" } }
+]
