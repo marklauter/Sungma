@@ -35,10 +35,10 @@ use std::{future::Future, pin::Pin, sync::Arc};
 use thiserror::Error;
 
 use crate::{
+    clock::Revision,
     decision::{Decision, Outcome, SEMANTICS},
     graph::{Fact, Subject, Subjectset},
     id::RelationId,
-    revision::Revision,
     rewrite::Rewrite,
     store::{FactStore, StoreError, TheoryStore},
 };

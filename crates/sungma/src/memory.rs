@@ -7,9 +7,9 @@ use std::{
 };
 
 use crate::{
+    clock::Revision,
     graph::{Fact, Subject, Subjectset},
     id::{RelationId, TheoryId},
-    revision::Revision,
     rewrite::Rewrite,
     store::{
         Dictionary, FactStore, FactWrite, FactWriter, NameStore, Pool, StoreError, TheoryStore,

@@ -1,4 +1,4 @@
-//! The revision clock.
+//! The revision clock, which orders writes.
 
 /// Each write produces the next revision, and a read at a revision sees
 /// every fact written at or before it.

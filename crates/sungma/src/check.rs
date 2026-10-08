@@ -14,12 +14,12 @@ use std::{
 use thiserror::Error;
 
 use crate::{
+    clock::Revision,
     closure::Closure,
     decision::Decision,
     graph::Subject,
     name::SubjectsetName,
     resolve,
-    revision::Revision,
     store::{Dictionary, FactStore, StoreError, TheoryStore},
 };
 

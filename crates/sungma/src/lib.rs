@@ -6,6 +6,7 @@
 //! resolved to ids at the edge, through a [`store::Dictionary`].
 
 pub mod check;
+pub mod clock;
 pub mod closure;
 pub mod decision;
 pub mod graph;
@@ -15,7 +16,6 @@ pub mod memory;
 pub mod name;
 pub mod replay;
 pub mod resolve;
-pub mod revision;
 pub mod rewrite;
 pub mod store;
 pub mod theory;

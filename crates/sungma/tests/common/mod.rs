@@ -6,11 +6,11 @@
 #![allow(dead_code)]
 
 use sungma::{
+    clock::Revision,
     graph::{Subject, Subjectset},
     id::{RelationId, TheoryId},
     memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore},
     resolve,
-    revision::Revision,
     rewrite::Rewrite,
     store::{FactStore, Pool},
     theory::{Theory, TheoryError},
