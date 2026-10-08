@@ -42,6 +42,8 @@ pub enum NameError {
     Whitespace(String),
     #[error("an identity is empty")]
     EmptyIdentity,
+    #[error("a resource is empty")]
+    EmptyResource,
     #[error("'{0}' is longer than {MAX_RESOURCE_BYTES} bytes")]
     ResourceTooLong(String),
     #[error("'{0}' is longer than {MAX_IDENTITY_BYTES} bytes")]
@@ -217,6 +219,18 @@ fn is_hidden(c: char) -> bool {
         )
 }
 
+/// Checks a resource id on its own: never empty, with no whitespace. Its
+/// length is checked with its theory, by [`ResourceName::new`].
+pub fn check_resource_id(id: &str) -> Result<(), NameError> {
+    if id.is_empty() {
+        Err(NameError::EmptyResource)
+    } else if id.contains(char::is_whitespace) {
+        Err(NameError::Whitespace(quote(id)))
+    } else {
+        Ok(())
+    }
+}
+
 /// `theory:id`
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ResourceName {
@@ -228,15 +242,9 @@ impl ResourceName {
     /// The resource `id` under `theory`. The id is opaque but holds no
     /// whitespace, and `theory:id` is at most [`MAX_RESOURCE_BYTES`].
     pub fn new(theory: TheoryName, id: &str) -> Result<Self, NameError> {
-        let text = || format!("{theory}:{id}");
-        if id.is_empty() {
-            return Err(NameError::Resource(quote(&text())));
-        }
+        check_resource_id(id)?;
         if theory.as_str().len() + 1 + id.len() > MAX_RESOURCE_BYTES {
-            return Err(NameError::ResourceTooLong(quote(&text())));
-        }
-        if id.contains(char::is_whitespace) {
-            return Err(NameError::Whitespace(quote(&text())));
+            return Err(NameError::ResourceTooLong(quote(&format!("{theory}:{id}"))));
         }
         Ok(Self {
             theory,

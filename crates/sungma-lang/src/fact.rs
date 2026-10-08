@@ -27,7 +27,10 @@ use thiserror::Error;
 use sungma::{
     memory::{MemoryDictionary, MemoryFactStore},
     model::{Fact, IdentityId, RelationId, Resource, ResourceId, Subject, Subjectset, TheoryId},
-    name::{Identity, NameError, RelationName, ResourceName, SubjectsetName, TheoryName},
+    name::{
+        Identity, NameError, RelationName, ResourceName, SubjectsetName, TheoryName,
+        check_resource_id,
+    },
     store::Pool,
 };
 
@@ -77,24 +80,32 @@ impl Keys {
             let Some(&key) = allowed.iter().find(|allowed| **allowed == key) else {
                 return Err(de::Error::unknown_field(&key, allowed));
             };
-            let fresh = match key {
-                "identity" => once(&mut keys.identity, named(map.next_value()?)?),
-                "theory" => once(&mut keys.theory, named(map.next_value()?)?),
-                "resource" => once(&mut keys.resource, map.next_value()?),
-                "relation" => once(&mut keys.relation, named(map.next_value()?)?),
-                _ => once(&mut keys.subject, map.next_value()?),
+            let seen = match key {
+                "identity" => keys.identity.is_some(),
+                "theory" => keys.theory.is_some(),
+                "resource" => keys.resource.is_some(),
+                "relation" => keys.relation.is_some(),
+                _ => keys.subject.is_some(),
             };
-            if !fresh {
+            if seen {
                 return Err(de::Error::duplicate_field(key));
+            }
+            // Each value is checked as it is read, so an error carries the
+            // value's line and column.
+            match key {
+                "identity" => keys.identity = Some(named(map.next_value()?)?),
+                "theory" => keys.theory = Some(named(map.next_value()?)?),
+                "resource" => {
+                    let id: String = map.next_value()?;
+                    check_resource_id(&id).map_err(de::Error::custom)?;
+                    keys.resource = Some(id);
+                }
+                "relation" => keys.relation = Some(named(map.next_value()?)?),
+                _ => keys.subject = Some(map.next_value()?),
             }
         }
         Ok(keys)
     }
-}
-
-/// Fills an empty slot; false when it was already filled.
-fn once<T>(slot: &mut Option<T>, value: T) -> bool {
-    slot.replace(value).is_none()
 }
 
 /// A name parsed from a document's string, refused with the document's

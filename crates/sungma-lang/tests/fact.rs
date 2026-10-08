@@ -109,6 +109,10 @@ fn a_key_written_twice_is_refused() {
     assert!(error.contains("duplicate field `theory`"), "{error}");
     let error = refused(&with_subject(r#"{ "identity": "x", "identity": "y" }"#));
     assert!(error.contains("duplicate field `identity`"), "{error}");
+    let error = refused(
+        r#"[{ "theory": "file", "theory": "fi le", "resource": "a", "relation": "owner", "subject": { "identity": "x" } }]"#,
+    );
+    assert!(error.contains("duplicate field `theory`"), "{error}");
 }
 
 #[test]
@@ -138,11 +142,21 @@ fn whitespace_in_a_resource_or_identity_is_refused() {
 }
 
 #[test]
+fn an_error_carries_the_line_and_column_of_the_bad_value() {
+    let json = "[{ \"theory\": \"file\",
+  \"resource\": \"a b\",
+  \"relation\": \"owner\",
+  \"subject\": { \"identity\": \"x\" } }]";
+    let error = refused(json);
+    assert!(error.contains("line 2 column"), "{error}");
+}
+
+#[test]
 fn an_empty_resource_or_identity_is_refused() {
     let error = refused(&with_subject(r#"{ "identity": "" }"#));
     assert!(error.contains("an identity is empty"), "{error}");
     let error = refused(&with_subject(r#"{ "theory": "folder", "resource": "" }"#));
-    assert!(error.contains("malformed resource"), "{error}");
+    assert!(error.contains("a resource is empty"), "{error}");
 }
 
 #[tokio::test]

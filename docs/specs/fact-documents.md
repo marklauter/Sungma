@@ -45,6 +45,28 @@ Every part of a fact has its own JSON key, so Sungma splits no string to read on
 - Every name is a string.
 - Key order and fact order carry no meaning.
 
+## Writes
+
+A fact is never changed. A write adds facts and retires facts, and a retired fact stays in the history at the revisions it held. A write request holds two fact documents:
+
+```json
+{
+  "add": [
+    { "theory": "file", "resource": "readme", "relation": "parent",
+      "subject": { "theory": "folder", "resource": "b" } }
+  ],
+  "retire": [
+    { "theory": "file", "resource": "readme", "relation": "parent",
+      "subject": { "theory": "folder", "resource": "a" } }
+  ]
+}
+```
+
+- Both keys are optional, and a request with neither is refused.
+- The write applies both lists at one revision, so no read sees one half. Moving a file from one folder to another is one write.
+- Adding a fact already held, or retiring a fact not held, changes nothing.
+- A request that breaks a rule in either list is refused whole and writes nothing.
+
 ## Names
 
 A theory name and a [[relation]] name follow the grammar in [Theory documents](theory-documents.md#names).

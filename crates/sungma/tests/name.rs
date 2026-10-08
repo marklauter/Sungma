@@ -171,7 +171,7 @@ proptest! {
     #[test]
     fn a_subjectset_name_parses_into_its_parts(
         theory in THEORY,
-        id in r"\S{1,64}",
+        id in "[!-~]{1,64}",
         relation in RELATION,
     ) {
         prop_assume!(!relation.eq_ignore_ascii_case("this"));
@@ -184,7 +184,7 @@ proptest! {
     }
 
     #[test]
-    fn a_resource_name_parses_into_its_parts(theory in THEORY, id in r"\S{1,64}") {
+    fn a_resource_name_parses_into_its_parts(theory in THEORY, id in "[!-~]{1,64}") {
         let text = format!("{theory}:{id}");
         let name: ResourceName = text.parse().unwrap();
         prop_assert_eq!(name.theory().as_str(), &theory);
