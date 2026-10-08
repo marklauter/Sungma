@@ -60,10 +60,13 @@ A production spec of theory writes needs these settled. Questions 1, 3 and 7 sha
 
 Fact writes and theory writes draw revisions from one [[revision-clock]], so the clock is a port of its own in the `clock` module, beside `Revision`, `Span` and `RevisionToken`.
 
-- `Clock::now()` returns an interval, earliest to latest, as TrueTime does. A distributed adapter bounds it by NTP uncertainty; a single-node adapter, such as SQLite, uses a counter with no uncertainty.
+- `Clock::now()` returns an `Interval`, earliest to latest, that contains true time, as TrueTime does. `Clock::wait_past(s)` resolves once `earliest` has passed `s`; the adapter supplies the timer, so the base crate needs no async runtime.
+- The interval's half-width is a worst-case bound, never an average: the error at the last sync (half the round trip) plus the maximum drift rate times the time since. An underestimate reverses revisions silently. On Linux, chrony (`adjtimex` `maxerror`) or AWS ClockBound supply it; Windows reports root delay and dispersion through `w32tm` but has no API for the bound.
+- A single-node adapter, such as SQLite, uses a counter with `earliest == latest`, so its wait is free.
 - A writer takes its revision `s = now().latest` while it holds its locks, commits, and waits until `now().earliest > s` before acknowledging. Any write that starts after the acknowledgement gets a later revision.
 - A read at revision t waits until its node's safe time reaches t, so no write at or before t is still in flight.
 - The writer ports call the clock inside the commit. The domain never ticks it.
+- The port (`Revision`, `Interval`, `Span`, `RevisionToken`, `Clock`) stays in `sungma`, since every store port speaks `Revision`. The implementations go in a `sungma-clock` crate, with platform code under `#[cfg(target_os)]`.
 
 ## Pieces already in place
 
