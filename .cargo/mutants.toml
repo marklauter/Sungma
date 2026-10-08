@@ -2,6 +2,12 @@
 # code its parsers call, such as theory checks and names.
 test_workspace = true
 
+# CI builds with RUSTFLAGS="-D warnings". A mutant such as `fn f(x) -> Ok(())`
+# leaves a parameter unused, and that warning would fail its build and mark
+# it unviable, untested. Capping lints keeps those mutants tested; the lint
+# job still denies warnings in the real code.
+cap_lints = true
+
 # Mutants no test should catch.
 exclude_re = [
     # Default::default() for a Vec is Vec::new().
