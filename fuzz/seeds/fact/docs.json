@@ -1,0 +1,24 @@
+[
+  { "theory": "group", "resource": "eng", "relation": "member", "subject": { "identity": "alice" } },
+  { "theory": "group", "resource": "eng", "relation": "member", "subject": { "identity": "bob" } },
+
+  { "theory": "folder", "resource": "root", "relation": "viewer", "subject": { "theory": "group", "resource": "eng", "relation": "member" } },
+  { "theory": "folder", "resource": "root", "relation": "viewer", "subject": { "identity": "erin" } },
+
+  { "theory": "folder", "resource": "specs", "relation": "parent", "subject": { "theory": "folder", "resource": "root" } },
+  { "theory": "folder", "resource": "specs", "relation": "banned", "subject": { "identity": "erin" } },
+
+  { "theory": "file", "resource": "design.md", "relation": "parent", "subject": { "theory": "folder", "resource": "specs" } },
+  { "theory": "file", "resource": "design.md", "relation": "owner", "subject": { "identity": "carol" } },
+  { "theory": "file", "resource": "design.md", "relation": "banned", "subject": { "identity": "bob" } },
+  { "theory": "file", "resource": "design.md", "relation": "auditor", "subject": { "identity": "alice" } },
+  { "theory": "file", "resource": "design.md", "relation": "auditor", "subject": { "identity": "dave" } },
+
+  { "theory": "folder", "resource": "loop_a", "relation": "parent", "subject": { "theory": "folder", "resource": "loop_b" } },
+  { "theory": "folder", "resource": "loop_b", "relation": "parent", "subject": { "theory": "folder", "resource": "loop_a" } },
+
+  { "theory": "file", "resource": "stray.md", "relation": "parent", "subject": { "theory": "group", "resource": "eng" } },
+
+  { "theory": "file", "resource": "notes.md", "relation": "parent", "subject": { "theory": "folder", "resource": "specs", "relation": "owner" } },
+  { "theory": "file", "resource": "notes.md", "relation": "parent", "subject": { "identity": "frank" } }
+]

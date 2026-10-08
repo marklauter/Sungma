@@ -167,6 +167,13 @@ jobs:
         document fuzz/corpus/document fuzz/seeds/document --
         -dict=fuzz/document.dict -max_len=65536 -max_total_time=60
 
+    - name: Fuzz the fact document parser for a minute
+      run: >
+        mkdir -p fuzz/corpus/fact &&
+        cargo +$NIGHTLY fuzz run --target x86_64-unknown-linux-gnu
+        fact fuzz/corpus/fact fuzz/seeds/fact --
+        -dict=fuzz/fact.dict -max_len=65536 -max_total_time=60
+
     - name: Keep the crashing input
       if: failure()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

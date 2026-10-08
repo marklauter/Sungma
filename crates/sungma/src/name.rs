@@ -7,6 +7,11 @@
 //! is opaque and may contain either. No part may be empty, and no relation
 //! is named `...`: `theory:id#...` is the resource itself, not a subjectset.
 //!
+//! A resource id and an [`Identity`] are owned by the caller and opaque, but
+//! hold no whitespace. A resource name is at most [`MAX_RESOURCE_BYTES`] and
+//! an identity at most [`MAX_IDENTITY_BYTES`], as
+//! `docs/specs/fact-documents.md` specifies.
+//!
 //! Theory and relation names are [`TheoryName`] and [`RelationName`], as
 //! `docs/specs/theory-documents.md` specifies. Text from a caller becomes
 //! one through [`FromStr`] or [`TryFrom`], which refuse a name outside the
@@ -33,10 +38,26 @@ pub enum NameError {
     TooLong(String),
     #[error("'{0}' is reserved")]
     Reserved(String),
+    #[error("'{0}' holds whitespace")]
+    Whitespace(String),
+    #[error("an identity is empty")]
+    EmptyIdentity,
+    #[error("a resource is empty")]
+    EmptyResource,
+    #[error("'{0}' is longer than {MAX_RESOURCE_BYTES} bytes")]
+    ResourceTooLong(String),
+    #[error("'{0}' is longer than {MAX_IDENTITY_BYTES} bytes")]
+    IdentityTooLong(String),
 }
 
 /// The longest theory or relation name.
 pub const MAX_NAME_BYTES: usize = 64;
+
+/// The longest resource name, `theory:id`.
+pub const MAX_RESOURCE_BYTES: usize = 256;
+
+/// The longest identity.
+pub const MAX_IDENTITY_BYTES: usize = 512;
 
 /// One or more names joined by dots, such as `file` or `drive.file`.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -45,6 +66,11 @@ pub struct TheoryName(String);
 /// One name, never `this` in any casing.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct RelationName(String);
+
+/// A key that references an external principal: opaque to Sungma, never
+/// empty, with no whitespace.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct Identity(String);
 
 macro_rules! name_type {
     ($name:ident, $check:ident) => {
@@ -93,6 +119,19 @@ macro_rules! name_type {
 
 name_type!(TheoryName, check_theory_name);
 name_type!(RelationName, check_relation_name);
+name_type!(Identity, check_identity);
+
+fn check_identity(text: &str) -> Result<(), NameError> {
+    if text.is_empty() {
+        Err(NameError::EmptyIdentity)
+    } else if text.len() > MAX_IDENTITY_BYTES {
+        Err(NameError::IdentityTooLong(quote(text)))
+    } else if text.contains(char::is_whitespace) {
+        Err(NameError::Whitespace(quote(text)))
+    } else {
+        Ok(())
+    }
+}
 
 fn check_theory_name(text: &str) -> Result<(), NameError> {
     if text.len() > MAX_NAME_BYTES {
@@ -137,7 +176,7 @@ pub const MAX_QUOTE_BYTES: usize = 64;
 /// written, escapes included, cut at a character boundary and marked `...` when cut, with control,
 /// invisible and reordering characters written as `\u{..}` escapes, so a
 /// quote can't forge a log line, recolor a terminal or reorder its line.
-pub(crate) fn quote(text: &str) -> String {
+pub fn quote(text: &str) -> String {
     let mut quoted = String::new();
     let mut written = String::new();
     for c in text.chars() {
@@ -180,6 +219,18 @@ fn is_hidden(c: char) -> bool {
         )
 }
 
+/// Checks a resource id on its own: never empty, with no whitespace. Its
+/// length is checked with its theory, by [`ResourceName::new`].
+pub fn check_resource_id(id: &str) -> Result<(), NameError> {
+    if id.is_empty() {
+        Err(NameError::EmptyResource)
+    } else if id.contains(char::is_whitespace) {
+        Err(NameError::Whitespace(quote(id)))
+    } else {
+        Ok(())
+    }
+}
+
 /// `theory:id`
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ResourceName {
@@ -188,6 +239,19 @@ pub struct ResourceName {
 }
 
 impl ResourceName {
+    /// The resource `id` under `theory`. The id is opaque but holds no
+    /// whitespace, and `theory:id` is at most [`MAX_RESOURCE_BYTES`].
+    pub fn new(theory: TheoryName, id: &str) -> Result<Self, NameError> {
+        check_resource_id(id)?;
+        if theory.as_str().len() + 1 + id.len() > MAX_RESOURCE_BYTES {
+            return Err(NameError::ResourceTooLong(quote(&format!("{theory}:{id}"))));
+        }
+        Ok(Self {
+            theory,
+            id: id.to_owned(),
+        })
+    }
+
     pub fn theory(&self) -> &TheoryName {
         &self.theory
     }
@@ -201,13 +265,13 @@ impl FromStr for ResourceName {
     type Err = NameError;
 
     fn from_str(text: &str) -> Result<Self, NameError> {
-        match text.split_once(':') {
-            Some((theory, id)) if !theory.is_empty() && !id.is_empty() => Ok(Self {
-                theory: theory.parse()?,
-                id: id.to_owned(),
-            }),
-            _ => Err(NameError::Resource(quote(text))),
+        let Some((theory, id)) = text.split_once(':') else {
+            return Err(NameError::Resource(quote(text)));
+        };
+        if theory.is_empty() || id.is_empty() {
+            return Err(NameError::Resource(quote(text)));
         }
+        Self::new(theory.parse()?, id)
     }
 }
 
@@ -225,6 +289,10 @@ pub struct SubjectsetName {
 }
 
 impl SubjectsetName {
+    pub fn new(resource: ResourceName, relation: RelationName) -> Self {
+        Self { resource, relation }
+    }
+
     pub fn resource(&self) -> &ResourceName {
         &self.resource
     }

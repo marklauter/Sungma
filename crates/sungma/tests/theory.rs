@@ -1,25 +1,26 @@
 //! Theories are checked whole when declared.
 
+mod common;
+
 use std::time::{Duration, Instant};
 
-use sungma_core::{
-    document::{self, ErrorKind},
-    fixture::{self, FixtureError},
+use sungma::{
     memory::{MemoryDictionary, MemoryTheoryStore},
     model::RelationId,
     rewrite::Rewrite::{self, Computed, Exclusion, This, Union},
     theory::{MAX_CYCLE_NAMES, MAX_REWRITE_DEPTH, Problem, Theory, TheoryError},
 };
+use sungma_lang::theory::{ErrorKind, Refusal, load_theories, parse};
 
-fn load(json: &str) -> Result<(), FixtureError> {
+fn load(json: &str) -> Result<(), Refusal> {
     let dictionary = MemoryDictionary::default();
     let mut theories = MemoryTheoryStore::default();
-    fixture::load_theories(&[json], &dictionary, &mut theories)
+    load_theories(&[json], &dictionary, &mut theories)
 }
 
 /// The one theory error a document is refused with.
 fn refused(json: &str) -> TheoryError {
-    match document::parse(json) {
+    match parse(json) {
         Err(mut errors) if errors.len() == 1 => match errors.remove(0).kind {
             ErrorKind::Theory(error) => error,
             other => panic!("expected a theory error, got {other:?}"),
@@ -57,7 +58,7 @@ fn a_relation_declared_twice_is_refused() {
 #[test]
 fn a_theory_document_is_refused_as_a_whole() {
     let result = load(r#"{ "file": { "owner": "this", "viewer": "editor" } }"#);
-    let Err(error @ FixtureError::Document(_)) = result else {
+    let Err(error) = result else {
         panic!("expected a refused document, got {result:?}");
     };
     assert_eq!(
@@ -154,7 +155,7 @@ fn nested_in(
 fn declare(rewrite: Rewrite<&str>) -> Result<(), TheoryError> {
     let dictionary = MemoryDictionary::default();
     let mut theories = MemoryTheoryStore::default();
-    fixture::declare(&mut theories, &dictionary, "file", "deep", rewrite)
+    common::declare(&mut theories, &dictionary, "file", "deep", rewrite)
 }
 
 #[test]
@@ -193,7 +194,7 @@ fn redeclaring_a_relation_checks_the_whole_theory_by_id() {
     let dictionary = MemoryDictionary::default();
     let mut theories = MemoryTheoryStore::default();
     let mut declare =
-        |relation, rewrite| fixture::declare(&mut theories, &dictionary, "file", relation, rewrite);
+        |relation, rewrite| common::declare(&mut theories, &dictionary, "file", relation, rewrite);
     declare("owner", This).unwrap();
     declare("editor", Computed("owner")).unwrap();
     // Relations have their own pool, so owner is 0 and editor is 1. The

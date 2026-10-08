@@ -1,13 +1,12 @@
 [package]
-name = "sungma-core"
+name = "sungma"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-serde.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+sungma-lang.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

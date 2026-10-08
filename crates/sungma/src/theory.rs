@@ -118,14 +118,12 @@ impl<R: Eq + Hash + Clone + Display> Theory<R> {
 
     /// The same theory with every relation renamed by `rename`, as when its
     /// names are interned. Renaming changes no rewrite's shape, so the
-    /// theory stays valid without being checked again. Crate-private: the
-    /// interner never gives two names one id, and no caller outside the
-    /// crate needs to rename.
+    /// theory stays valid without being checked again.
     ///
     /// # Panics
     ///
     /// If `rename` gives two relations one name.
-    pub(crate) fn map<S: Eq + Hash + Clone + Display>(
+    pub fn map<S: Eq + Hash + Clone + Display>(
         &self,
         mut rename: impl FnMut(&R) -> S,
     ) -> Theory<S> {

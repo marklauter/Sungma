@@ -1,0 +1,6 @@
+[
+  { "theory": "file", "resource": "a b", "relation": "owner", "subject": { "identity": "x" } },
+  { "theory": "file", "theory": "file", "resource": "a", "relation": "owner", "subject": {} },
+  { "theory": "fi le", "resource": "a", "relation": "this", "subject": { "identity": "", "theory": "t" } },
+  { "theory": "file", "resource": "a", "relation": "owner", "subject": "alice", "note": 1 }
+]

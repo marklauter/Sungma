@@ -39,13 +39,26 @@ use axum::{
     routing::post,
 };
 use serde::{Deserialize, Serialize};
-use sungma_core::{
+use sungma::{
     check::{CheckRequest, CheckService, MemoryAuditLog, RequestContext, SubjectName, Verdict},
-    fixture::{self, FixtureError},
     memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore},
     model::Revision,
     name::{NameError, SubjectsetName},
 };
+use sungma_lang::{
+    fact::{self, FactError},
+    theory::{self, Refusal},
+};
+use thiserror::Error;
+
+/// Why the state didn't load.
+#[derive(Debug, Error)]
+pub enum LoadError {
+    #[error(transparent)]
+    Theory(#[from] Refusal),
+    #[error(transparent)]
+    Fact(#[from] FactError),
+}
 
 /// What every request reads, shared across them.
 #[derive(Debug, Default)]
@@ -59,11 +72,12 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Loads theory documents and fact JSON in the [`fixture`] forms.
-    pub fn load(theories: &[&str], facts: &str) -> Result<Self, FixtureError> {
+    /// Loads theory documents and fact JSON in the [`theory`] and [`fact`]
+    /// forms.
+    pub fn load(theories: &[&str], facts: &str) -> Result<Self, LoadError> {
         let mut state = Self::default();
-        fixture::load_theories(theories, &state.dictionary, &mut state.theories)?;
-        fixture::load_facts(facts, &state.dictionary, &state.facts)?;
+        theory::load_theories(theories, &state.dictionary, &mut state.theories)?;
+        fact::load_facts(facts, &state.dictionary, &state.facts)?;
         Ok(state)
     }
 

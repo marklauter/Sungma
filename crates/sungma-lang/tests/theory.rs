@@ -6,22 +6,22 @@ use std::{
 };
 
 use proptest::{collection::vec, prelude::*};
-use sungma_core::{
-    document::{
-        self, DocumentError, ErrorKind, MAX_DOCUMENT_BYTES, MAX_ERRORS, MAX_EXPRESSION_BYTES,
-        MAX_NAME_BYTES, MAX_QUOTE_BYTES, MAX_RELATIONS, TheoryDocument,
-    },
+use sungma::{
     name::{NameError, RelationName, TheoryName},
     rewrite::Rewrite::{self, Computed, Exclusion, FactTo, Intersection, This, Union},
-    theory::{self, MAX_REWRITE_DEPTH, TheoryError},
+    theory::{MAX_REWRITE_DEPTH, Theory, TheoryError},
+};
+use sungma_lang::theory::{
+    self, DocumentError, ErrorKind, MAX_DOCUMENT_BYTES, MAX_ERRORS, MAX_EXPRESSION_BYTES,
+    MAX_NAME_BYTES, MAX_QUOTE_BYTES, MAX_RELATIONS, TheoryDocument,
 };
 
 fn parsed(json: &str) -> TheoryDocument {
-    document::parse(json).unwrap_or_else(|errors| panic!("refused: {errors:?}"))
+    theory::parse(json).unwrap_or_else(|errors| panic!("refused: {errors:?}"))
 }
 
 fn refused(json: &str) -> Vec<DocumentError> {
-    match document::parse(json) {
+    match theory::parse(json) {
         Err(errors) => errors,
         Ok(document) => panic!("accepted: {document:?}"),
     }
@@ -76,7 +76,7 @@ type Relations = Vec<(&'static str, Rewrite<&'static str>)>;
 
 /// A valid theory of relations written with plain names, each made with
 /// `new_unchecked`.
-fn checked(relations: &[(&str, Rewrite<&str>)]) -> theory::Theory<RelationName> {
+fn checked(relations: &[(&str, Rewrite<&str>)]) -> Theory<RelationName> {
     let relations = relations
         .iter()
         .map(|(name, rewrite)| {
@@ -86,11 +86,11 @@ fn checked(relations: &[(&str, Rewrite<&str>)]) -> theory::Theory<RelationName> 
             )
         })
         .collect();
-    theory::Theory::new(relations).expect("a valid theory")
+    Theory::new(relations).expect("a valid theory")
 }
 
 fn print(theory: &str, relations: &[(&str, Rewrite<&str>)]) -> String {
-    document::print(&TheoryName::new_unchecked(theory), &checked(relations))
+    theory::print(&TheoryName::new_unchecked(theory), &checked(relations))
 }
 
 /// A document's relations, in document order.
@@ -107,8 +107,8 @@ fn listed(document: &TheoryDocument) -> Vec<(RelationName, Rewrite<RelationName>
 fn printed_expression(tree: Rewrite<RelationName>) -> String {
     let mut relations: Vec<_> = DECLARED.iter().map(|name| (relation(name), This)).collect();
     relations.push((relation("r"), tree));
-    let theory = theory::Theory::new(relations).expect("a valid theory");
-    let text = document::print(&t(), &theory);
+    let theory = Theory::new(relations).expect("a valid theory");
+    let text = theory::print(&t(), &theory);
     let line = text
         .lines()
         .find(|line| line.starts_with("    \"r\": "))
@@ -125,7 +125,9 @@ fn exclusion<N>(base: Rewrite<N>, excluded: Rewrite<N>) -> Rewrite<N> {
 
 #[test]
 fn the_sample_parses() {
-    let document = parsed(include_str!("fixtures/theories/file.json"));
+    let document = parsed(include_str!(
+        "../../sungma/tests/fixtures/theories/file.json"
+    ));
     assert_eq!(document.theory.as_str(), "file");
     let viewer = &document
         .relations
@@ -500,7 +502,7 @@ fn the_printer_writes_the_canonical_form() {
     ];
     assert_eq!(
         print("file", &relations),
-        include_str!("fixtures/theories/file.json")
+        include_str!("../../sungma/tests/fixtures/theories/file.json")
     );
     assert_eq!(print("t", &[]), "{\n  \"t\": {}\n}\n");
 }
@@ -659,12 +661,12 @@ fn a_dangling_target_is_reported_for_each_relation_that_names_it() {
 #[test]
 fn every_fixture_theory_is_in_canonical_form() {
     for text in [
-        include_str!("fixtures/theories/file.json"),
-        include_str!("fixtures/theories/folder.json"),
-        include_str!("fixtures/theories/group.json"),
+        include_str!("../../sungma/tests/fixtures/theories/file.json"),
+        include_str!("../../sungma/tests/fixtures/theories/folder.json"),
+        include_str!("../../sungma/tests/fixtures/theories/group.json"),
     ] {
         let document = parsed(text);
-        assert_eq!(document::print(&document.theory, &document.relations), text);
+        assert_eq!(theory::print(&document.theory, &document.relations), text);
     }
 }
 
@@ -673,8 +675,8 @@ fn key_order_doesnt_change_the_printed_form() {
     let one = parsed(r#"{ "t": { "b": "this", "a": "b", "c": "a & b" } }"#);
     let other = parsed(r#"{ "t": { "c": "a & b", "a": "b", "b": "this" } }"#);
     assert_eq!(
-        document::print(&t(), &one.relations),
-        document::print(&t(), &other.relations)
+        theory::print(&t(), &one.relations),
+        theory::print(&t(), &other.relations)
     );
 }
 
@@ -707,7 +709,7 @@ fn the_printer_refuses_caller_defects() {
     for (theory, relations) in defects {
         let checked = checked(&relations);
         let theory = TheoryName::new_unchecked(theory);
-        let printed = panic::catch_unwind(AssertUnwindSafe(|| document::print(&theory, &checked)));
+        let printed = panic::catch_unwind(AssertUnwindSafe(|| theory::print(&theory, &checked)));
         assert!(printed.is_err(), "printed {theory}: {relations:?}");
     }
 }
@@ -796,12 +798,12 @@ proptest! {
     /// printing that gives the same text.
     #[test]
     fn a_printed_theory_parses_back_equal(relations in theory()) {
-        let checked = theory::Theory::new(relations.clone()).expect("a valid theory");
-        let text = document::print(&t(), &checked);
-        let document = document::parse(&text)
+        let checked = Theory::new(relations.clone()).expect("a valid theory");
+        let text = theory::print(&t(), &checked);
+        let document = theory::parse(&text)
             .map_err(|errors| TestCaseError::fail(format!("{text}\n{errors:?}")))?;
         prop_assert_eq!(listed(&document), relations);
-        prop_assert_eq!(document::print(&t(), &document.relations), text);
+        prop_assert_eq!(theory::print(&t(), &document.relations), text);
     }
 
     /// Expression text built from the grammar's tokens either is refused, or
@@ -814,19 +816,19 @@ proptest! {
         let json = format!(
             r#"{{ "t": {{ "r": "{expression}", "r0": "this", "r1": "this", "r2": "this" }} }}"#
         );
-        if let Ok(document) = document::parse(&json) {
-            let text = document::print(&t(), &document.relations);
-            let again = document::parse(&text)
+        if let Ok(document) = theory::parse(&json) {
+            let text = theory::print(&t(), &document.relations);
+            let again = theory::parse(&text)
                 .map_err(|errors| TestCaseError::fail(format!("{text}\n{errors:?}")))?;
             prop_assert_eq!(listed(&again), listed(&document));
-            prop_assert_eq!(document::print(&t(), &again.relations), text);
+            prop_assert_eq!(theory::print(&t(), &again.relations), text);
         }
     }
 
     /// The parser never panics, whatever text it is given.
     #[test]
     fn any_text_is_parsed_or_refused(text in any::<String>()) {
-        let _ = document::parse(&text);
+        let _ = theory::parse(&text);
     }
 
     /// The parser never panics on near-JSON text, or on any expression.
@@ -835,9 +837,9 @@ proptest! {
         text in r#"[{}\[\]":, tThisr0-9_.|&!()\\]{0,200}"#,
         expression in any::<String>(),
     ) {
-        let _ = document::parse(&text);
+        let _ = theory::parse(&text);
         let json = format!(r#"{{ "t": {{ "r": {} }} }}"#, serde_json::to_string(&expression).unwrap());
-        let _ = document::parse(&json);
+        let _ = theory::parse(&json);
     }
 }
 

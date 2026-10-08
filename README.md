@@ -8,13 +8,13 @@ Sungma is a ReBAC. WIP.
 
 ## Architecture
 
-Sungma is a Zanzibar-style authorization service. It answers one question: is subject S in set `resource#relation` at revision R? It has two crates, a pure core library and a thin HTTP shell around it. Below is how it fits together, from bottom to top.
+Sungma is a Zanzibar-style authorization service. It answers one question: is subject S in set `resource#relation` at revision R? It has three crates: `sungma`, a pure core library; `sungma-lang`, which reads theories and facts from text; and `sungma-api`, a thin HTTP shell around them. Below is how it fits together, from bottom to top.
 
 **The model** (`model.rs`)
-- A **fact** is `subjectset@subject`, for example `file:design.md#owner@carol`. The subject is one of three things:
+- A **fact** binds a subject to a subjectset, for example `carol` to `file:design.md#owner`. The subject is one of three things:
   - an identity (`carol`);
   - another subjectset (`group:eng#member`);
-  - a resource itself (`folder:root#...`), which is how parent links are written.
+  - a resource itself (`folder:root`), which is how parent links are written.
 - Every string is interned to a `u32` newtype such as `TheoryId` or `RelationId`. These are like C# `readonly record struct TheoryId(uint Value)`. Past the edge, the core never handles a string.
 - Each write bumps a global `Revision`, and every read is "as of" a revision.
 
@@ -54,9 +54,9 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
 - `resolve.rs` maps names to ids. A name that was never interned is denied without touching the fact store.
 - `check.rs` has `CheckService`, which does three things: resolve, decide, then append an `AuditRecord` to an `AuditLog` (in memory for now).
 
-**Fixtures and the API**
-- `document.rs` parses and prints theory documents: one theory per JSON object, each relation's rewrite an expression such as `"(this | editor) ! banned"`. [docs/specs/theory-documents.md](docs/specs/theory-documents.md) specifies them.
-- `fixture.rs` loads theory documents and fact JSON from the files under `tests/fixtures`.
+**Languages and the API**
+- `sungma-lang`'s `theory.rs` parses and prints theory documents: one theory per JSON object, each relation's rewrite an expression such as `"(this | editor) ! banned"`. [docs/specs/theory-documents.md](docs/specs/theory-documents.md) specifies them.
+- `sungma-lang`'s `theory.rs` loads theory documents, and its `fact.rs` loads fact documents, from the files under `crates/sungma/tests/fixtures`.
 - `sungma-api` is an axum app with one route, `POST /check`. It loads the fixtures at startup and returns `{request_id, verdict, zookie}`. Errors are always JSON.
 
 **Not built yet**
@@ -77,16 +77,17 @@ The [Sample](#sample) below (files, folders, groups) and its trace for "is alice
 git config core.hooksPath .githooks
 ```
 
-`fuzz/` holds a `cargo-fuzz` target for the theory document parser. CI runs it for a minute; locally it needs the nightly toolchain:
+`fuzz/` holds `cargo-fuzz` targets for the theory and fact document parsers. CI runs each for a minute; locally they need the nightly toolchain:
 
 ```sh
 cargo +nightly fuzz run document
+cargo +nightly fuzz run fact
 ```
 
 ## Check API
 
 ```sh
-F=crates/sungma-core/tests/fixtures
+F=crates/sungma/tests/fixtures
 cargo run -p sungma-api -- $F/docs.facts.json $F/theories/*.json
 
 curl -d '{"set": "file:design.md#viewer", "identity": "alice"}'   -H 'content-type: application/json' localhost:8080/check
@@ -99,22 +100,24 @@ The subject is an `identity` or a `subjectset`; an optional
 
 ## Facts
 
-A fact binds a subject to a subjectset. A theory names a kind of resource and declares its relations.
+A fact binds a subject to a subjectset. A fact document is a JSON array of facts, and each part of a fact has its own key:
 
-```ebnf
-⟨fact⟩            ::= ⟨subjectset⟩ '@' ⟨subject⟩
-⟨subject⟩         ::= ⟨identity⟩ | ⟨subjectset⟩ | ⟨resource member⟩
-⟨resource member⟩ ::= ⟨resource⟩ '#' '...'
-⟨subjectset⟩      ::= ⟨resource⟩ '#' ⟨relation name⟩
-⟨resource⟩        ::= ⟨theory name⟩ ':' ⟨resource id⟩
-
-⟨identity⟩        ::= opaque string
-⟨resource id⟩     ::= opaque string
-⟨theory name⟩     ::= ⟨name⟩
-⟨relation name⟩   ::= ⟨name⟩
+```json
+[
+  { "theory": "file", "resource": "readme", "relation": "owner",
+    "subject": { "identity": "anne@example.com" } },
+  { "theory": "folder", "resource": "root", "relation": "viewer",
+    "subject": { "theory": "group", "resource": "eng", "relation": "member" } },
+  { "theory": "file", "resource": "readme", "relation": "parent",
+    "subject": { "theory": "folder", "resource": "root" } }
+]
 ```
 
-Identities and resource ids are owned by external systems, and Sungma puts no constraints on them. Because they may contain any delimiter, this grammar describes the model rather than a parseable text format.
+- `theory`, `resource` and `relation` name the subjectset, and `subject` holds the subject.
+- A subject's keys say which kind it is: `identity` alone is an identity, `theory` and `resource` are a resource, and `theory`, `resource` and `relation` are a subjectset.
+- Resources and identities are owned by external systems, such as emails, paths or URIs. Any character but whitespace is allowed.
+
+[docs/specs/fact-documents.md](docs/specs/fact-documents.md) specifies fact documents.
 
 ## Rewrites
 
@@ -186,20 +189,25 @@ Three theories for documents: files sit in folders, folders sit in folders, and 
 }
 ```
 
-Some facts under it, written in the fact notation above:
+Some facts under it, as a fact document (`crates/sungma/tests/fixtures/docs.facts.json` holds them all):
 
-```text
-group:eng#member@alice
-group:eng#member@bob
-folder:root#viewer@group:eng#member
-folder:root#viewer@erin
-folder:specs#parent@folder:root#...
-folder:specs#banned@erin
-file:design.md#parent@folder:specs#...
-file:design.md#owner@carol
-file:design.md#banned@bob
-file:design.md#auditor@alice
-file:design.md#auditor@dave
+```json
+[
+  { "theory": "group", "resource": "eng", "relation": "member", "subject": { "identity": "alice" } },
+  { "theory": "group", "resource": "eng", "relation": "member", "subject": { "identity": "bob" } },
+  { "theory": "folder", "resource": "root", "relation": "viewer",
+    "subject": { "theory": "group", "resource": "eng", "relation": "member" } },
+  { "theory": "folder", "resource": "root", "relation": "viewer", "subject": { "identity": "erin" } },
+  { "theory": "folder", "resource": "specs", "relation": "parent",
+    "subject": { "theory": "folder", "resource": "root" } },
+  { "theory": "folder", "resource": "specs", "relation": "banned", "subject": { "identity": "erin" } },
+  { "theory": "file", "resource": "design.md", "relation": "parent",
+    "subject": { "theory": "folder", "resource": "specs" } },
+  { "theory": "file", "resource": "design.md", "relation": "owner", "subject": { "identity": "carol" } },
+  { "theory": "file", "resource": "design.md", "relation": "banned", "subject": { "identity": "bob" } },
+  { "theory": "file", "resource": "design.md", "relation": "auditor", "subject": { "identity": "alice" } },
+  { "theory": "file", "resource": "design.md", "relation": "auditor", "subject": { "identity": "dave" } }
+]
 ```
 
 So for `file:design.md#viewer`: carol is a viewer through `editor` and `owner`, alice through the folders and group eng, bob is in eng but banned on the file, erin is a viewer of root but banned on specs, and dave is no viewer, so not an auditor either.

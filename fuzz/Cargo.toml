@@ -9,11 +9,19 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-sungma-core = { path = "../crates/sungma-core" }
+sungma = { path = "../crates/sungma" }
+sungma-lang = { path = "../crates/sungma-lang" }
 
 [[bin]]
 name = "document"
 path = "fuzz_targets/document.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fact"
+path = "fuzz_targets/fact.rs"
 test = false
 doc = false
 bench = false

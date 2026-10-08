@@ -16,8 +16,8 @@ Not a source: the `rewrite-interpreters` branch (checkout at `D:\projects\kingo\
 
 Both were reproduced with throwaway tests on 2026-10-04.
 
-- Fixed: `theory::validate` overflowed the stack on a chain of 20,000 computed relations (`r0: r1`, `r1: r2`, …), recursing once per relation. `Theory::new` now walks with its own stack and is tested on a 100,000-relation chain (`crates/sungma-core/tests/theory.rs`).
-- `MAX_REWRITE_DEPTH` (100) was unreachable through the nested JSON fixture form, whose levels hit serde_json's recursion limit first. Theory documents write rewrites as expression strings, so a 101-level rewrite now reaches `TheoryError::TooDeep` (`crates/sungma-core/tests/document.rs`, `a_rewrite_nests_at_most_max_depth`).
+- Fixed: `theory::validate` overflowed the stack on a chain of 20,000 computed relations (`r0: r1`, `r1: r2`, …), recursing once per relation. `Theory::new` now walks with its own stack and is tested on a 100,000-relation chain (`crates/sungma/tests/theory.rs`).
+- `MAX_REWRITE_DEPTH` (100) was unreachable through the nested JSON fixture form, whose levels hit serde_json's recursion limit first. Theory documents write rewrites as expression strings, so a 101-level rewrite now reaches `TheoryError::TooDeep` (`crates/sungma-lang/tests/theory.rs`, `a_rewrite_nests_at_most_max_depth`).
 
 ## Sungma status at a glance
 
@@ -49,11 +49,11 @@ The epoch exists for one purpose: when a later theory version re-declares a drop
 - Re-adding a dropped relation in a later version moves its epoch, so older facts under it stay dead and old grants don't resurrect.
 - A replay or expand at an earlier revision reads the earlier version and its epoch, so the facts are valid there.
 - The theory write is cheap: no fact is rewritten, no cross-theory scan runs, and facts carry no theory version. Late binding means the catalog can't see which other theories reach a dropped relation, and scanning the fact graph on every theory write is impractical. Dropping a relation therefore empties it everywhere, including on the excluded side of another theory's exclusion, which can widen access there. That widening is accepted.
-- Re-applying a fact whose span started before the epoch has to open a new span. Today an insert of a live fact is a no-op (`crates/sungma-core/src/memory.rs`, `Span`), which would leave a re-asserted grant dead.
+- Re-applying a fact whose span started before the epoch has to open a new span. Today an insert of a live fact is a no-op (`crates/sungma/src/memory.rs`, `Span`), which would leave a re-asserted grant dead.
 - Every reader of the graph applies the same epoch filter: Check, Expand, Read, Watch and dumps. A reader that skips it shows orphans as live.
 - The eager alternative closes the orphans' spans in the theory write. It gives the same visible facts at every revision and needs no reader filter, but the write costs as much as there are orphans.
 - This replaces the theory-write half of idea 4, which refuses a theory write that strands live facts. It depends on idea 5: `replay` reads the current theories today ([[theory-writes-wait-on-theory-versioning]]).
-- **Sungma: missing.** `Theory` has no epochs, and `crates/sungma-core/src/closure.rs` treats an undeclared relation as the empty set with no epoch check.
+- **Sungma: missing.** `Theory` has no epochs, and `crates/sungma/src/closure.rs` treats an undeclared relation as the empty set with no epoch check.
 - Source: decided in conversation on 2026-10-04. It departs from Kingo's `docs/decisions/preventing-drift-between-facts-and-theories.md`, which refuses the theory write, and keeps that decision's rule that facts carry no theory version.
 
 ### 4. Fact/theory drift is prevented at write time
@@ -83,7 +83,7 @@ Batches are atomic, idempotent and validated on their end state. Preconditions r
 
 Names match one grammar, normalize to lowercase, and `this` and `...` are reserved.
 
-- **Sungma: missing.** A theory declaring relations `this`, `...`, `a#b`, `a b`, `Viewer` and `viewer` loads, and so does a theory named `a:b`. The first-`:`, last-`#` split in `crates/sungma-core/src/name.rs` is sound only if theory names exclude `:` and relation names exclude `#`.
+- **Sungma: missing.** A theory declaring relations `this`, `...`, `a#b`, `a b`, `Viewer` and `viewer` loads, and so does a theory named `a:b`. The first-`:`, last-`#` split in `crates/sungma/src/name.rs` is sound only if theory names exclude `:` and relation names exclude `#`.
 - Source: `src/Kingo/IdentifierGrammar.cs`, `tests/Kingo.Tests/RelationNameTests.cs`.
 
 ### 8. Validation reports every error, each with a stable code
@@ -132,7 +132,7 @@ Wrong denies get reported and wrong allows don't, so overgrant must be caught by
 
 Documents and test doubles live in their own crate, with a dependency check on the core.
 
-- **Sungma: counter.** `sungma-core` depends on serde_json and ships `fixture` and `memory`.
+- **Sungma: partial.** Theory documents and fact JSON live in `sungma-lang`, so the core no longer depends on serde. The core still ships `memory`, and nothing checks its dependencies.
 - Source: `docs/decisions/deciding-which-types-parse-text.md`, `tests/Kingo.Testing/ArchitectureTestsBase.cs`.
 
 ### 15. Stricter build gates

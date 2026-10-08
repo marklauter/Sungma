@@ -8,7 +8,7 @@ use std::{
 };
 
 use proptest::{collection::vec, prelude::*, test_runner::TestCaseError};
-use sungma_core::{
+use sungma::{
     intern::LeasingInterner,
     memory::MemoryDictionary,
     model::TheoryId,
