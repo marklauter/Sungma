@@ -56,6 +56,15 @@ A production spec of theory writes needs these settled. Questions 1, 3 and 7 sha
    Partly settled: theory versions go into the same change log as facts, and a node behind a request's revision token replays the log up to it.
 10. **Who may write.** Authorization of theory writes, roadmap item 15. The spec may defer it, but says so.
 
+## The clock port
+
+Fact writes and theory writes draw revisions from one [[revision-clock]], so the clock is a port of its own in the `clock` module, beside `Revision`, `Span` and `RevisionToken`.
+
+- `Clock::now()` returns an interval, earliest to latest, as TrueTime does. A distributed adapter bounds it by NTP uncertainty; a single-node adapter, such as SQLite, uses a counter with no uncertainty.
+- A writer takes its revision `s = now().latest` while it holds its locks, commits, and waits until `now().earliest > s` before acknowledging. Any write that starts after the acknowledgement gets a later revision.
+- A read at revision t waits until its node's safe time reaches t, so no write at or before t is still in flight.
+- The writer ports call the clock inside the commit. The domain never ticks it.
+
 ## Pieces already in place
 
 - `FactWriter` keeps each fact's history as spans (the revision that wrote it and the one that deleted it), and reads filter by revision. Theory versions keep history the same way.
