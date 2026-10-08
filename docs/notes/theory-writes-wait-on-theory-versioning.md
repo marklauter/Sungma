@@ -9,10 +9,10 @@ status: evolving
 
 ## Where it stands
 
-- Theories enter only as theory documents (`docs/specs/theory-documents.md`), through `fixture::load_theories`, or built in code through `fixture::declare` (`crates/sungma-core/src/fixture.rs`), into `MemoryTheoryStore` (`crates/sungma-core/src/memory.rs`). `sungma-api` loads them once at startup.
-- `TheoryStore` (`crates/sungma-core/src/store.rs`) is read-only and unversioned: `rewrite(theory, relation)` returns the current rewrite.
-- A `Decision` (`crates/sungma-core/src/decision.rs`) records the fact `Revision` and the `Semantics` version, not which theories it was judged under. `replay` (`crates/sungma-core/src/replay.rs`) reads the current theories, so a theory change since the decision shows up as `Replay::Differs`, or as `Replay::Regrounded` when only the grounds move.
-- `Theory::new` (`crates/sungma-core/src/theory.rs`) checks a theory whole and returns every problem. A theory is valid once built, and a write port keeps that: no stored theory fails to evaluate.
+- Theories enter only as theory documents (`docs/specs/theory-documents.md`), through `theory::load_theories` (`crates/sungma-lang/src/theory.rs`), or built in code by the tests through `Theory::new`, into `MemoryTheoryStore` (`crates/sungma/src/memory.rs`). `sungma-api` loads them once at startup.
+- `TheoryStore` (`crates/sungma/src/store.rs`) is read-only and unversioned: `rewrite(theory, relation)` returns the current rewrite.
+- A `Decision` (`crates/sungma/src/decision.rs`) records the fact `Revision` and the `Semantics` version, not which theories it was judged under. `replay` (`crates/sungma/src/replay.rs`) reads the current theories, so a theory change since the decision shows up as `Replay::Differs`, or as `Replay::Regrounded` when only the grounds move.
+- `Theory::new` (`crates/sungma/src/theory.rs`) checks a theory whole and returns every problem. A theory is valid once built, and a write port keeps that: no stored theory fails to evaluate.
 
 ## The versioning questions are answered
 

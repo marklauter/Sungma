@@ -7,7 +7,9 @@ edition.workspace = true
 axum.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sungma-core.workspace = true
+sungma.workspace = true
+sungma-lang.workspace = true
+thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
 
 [dev-dependencies]

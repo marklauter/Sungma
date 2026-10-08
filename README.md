@@ -8,7 +8,7 @@ Sungma is a ReBAC. WIP.
 
 ## Architecture
 
-Sungma is a Zanzibar-style authorization service. It answers one question: is subject S in set `resource#relation` at revision R? It has two crates, a pure core library and a thin HTTP shell around it. Below is how it fits together, from bottom to top.
+Sungma is a Zanzibar-style authorization service. It answers one question: is subject S in set `resource#relation` at revision R? It has three crates: `sungma`, a pure core library; `sungma-lang`, which reads theories and facts from text; and `sungma-api`, a thin HTTP shell around them. Below is how it fits together, from bottom to top.
 
 **The model** (`model.rs`)
 - A **fact** is `subjectset@subject`, for example `file:design.md#owner@carol`. The subject is one of three things:
@@ -54,9 +54,9 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
 - `resolve.rs` maps names to ids. A name that was never interned is denied without touching the fact store.
 - `check.rs` has `CheckService`, which does three things: resolve, decide, then append an `AuditRecord` to an `AuditLog` (in memory for now).
 
-**Fixtures and the API**
-- `document.rs` parses and prints theory documents: one theory per JSON object, each relation's rewrite an expression such as `"(this | editor) ! banned"`. [docs/specs/theory-documents.md](docs/specs/theory-documents.md) specifies them.
-- `fixture.rs` loads theory documents and fact JSON from the files under `tests/fixtures`.
+**Languages and the API**
+- `sungma-lang`'s `theory.rs` parses and prints theory documents: one theory per JSON object, each relation's rewrite an expression such as `"(this | editor) ! banned"`. [docs/specs/theory-documents.md](docs/specs/theory-documents.md) specifies them.
+- `sungma-lang`'s `theory.rs` loads theory documents, and its `fact.rs` loads fact documents, from the files under `crates/sungma/tests/fixtures`.
 - `sungma-api` is an axum app with one route, `POST /check`. It loads the fixtures at startup and returns `{request_id, verdict, zookie}`. Errors are always JSON.
 
 **Not built yet**
@@ -86,7 +86,7 @@ cargo +nightly fuzz run document
 ## Check API
 
 ```sh
-F=crates/sungma-core/tests/fixtures
+F=crates/sungma/tests/fixtures
 cargo run -p sungma-api -- $F/docs.facts.json $F/theories/*.json
 
 curl -d '{"set": "file:design.md#viewer", "identity": "alice"}'   -H 'content-type: application/json' localhost:8080/check
@@ -102,19 +102,31 @@ The subject is an `identity` or a `subjectset`; an optional
 A fact binds a subject to a subjectset. A theory names a kind of resource and declares its relations.
 
 ```ebnf
-⟨fact⟩            ::= ⟨subjectset⟩ '@' ⟨subject⟩
-⟨subject⟩         ::= ⟨identity⟩ | ⟨subjectset⟩ | ⟨resource member⟩
-⟨resource member⟩ ::= ⟨resource⟩ '#' '...'
-⟨subjectset⟩      ::= ⟨resource⟩ '#' ⟨relation name⟩
-⟨resource⟩        ::= ⟨theory name⟩ ':' ⟨resource id⟩
+⟨fact⟩          ::= ⟨subjectset⟩ ⟨subject⟩
+⟨subject⟩       ::= ⟨identity⟩ | ⟨subjectset⟩ | ⟨resource⟩
+⟨subjectset⟩    ::= ⟨resource⟩ ⟨relation name⟩
+⟨resource⟩      ::= ⟨theory name⟩ ⟨opaque key⟩
+⟨identity⟩      ::= ⟨opaque key⟩
 
-⟨identity⟩        ::= opaque string
-⟨resource id⟩     ::= opaque string
-⟨theory name⟩     ::= ⟨name⟩
-⟨relation name⟩   ::= ⟨name⟩
+⟨opaque key⟩    ::= one or more characters, none of them whitespace
+⟨theory name⟩   ::= ⟨name⟩ { '.' ⟨name⟩ }
+⟨relation name⟩ ::= ⟨name⟩
 ```
 
-Identities and resource ids are owned by external systems, and Sungma puts no constraints on them. Because they may contain any delimiter, this grammar describes the model rather than a parseable text format.
+Resources and identities are owned by external systems, and may be emails, paths or URIs. A fact document gives each part its own JSON key, so no string is split, and a subject's keys say which kind it is:
+
+```json
+[
+  { "theory": "file", "resource": "readme", "relation": "owner",
+    "subject": { "identity": "anne@example.com" } },
+  { "theory": "folder", "resource": "root", "relation": "viewer",
+    "subject": { "theory": "group", "resource": "eng", "relation": "member" } },
+  { "theory": "file", "resource": "readme", "relation": "parent",
+    "subject": { "theory": "folder", "resource": "root" } }
+]
+```
+
+[docs/specs/fact-documents.md](docs/specs/fact-documents.md) specifies fact documents, and [docs/specs/theory-documents.md](docs/specs/theory-documents.md#names) the name grammar.
 
 ## Rewrites
 

@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 
 use proptest::{collection::vec, prelude::*, test_runner::TestCaseError};
-use sungma_core::{
+use sungma::{
     memory::MemoryFactStore,
     model::{
         Fact, IdentityId, RelationId, Resource, ResourceId, Revision, Subject, Subjectset, TheoryId,

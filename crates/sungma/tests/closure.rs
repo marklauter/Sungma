@@ -7,16 +7,16 @@ use std::{
     sync::Arc,
 };
 
-use common::{World, head, identity, subjectset, world};
+use common::{World, declare, head, identity, subjectset, world};
 use proptest::{prelude::*, sample::subsequence, test_runner::TestCaseError};
-use sungma_core::{
+use sungma::{
     closure::{Closure, ClosureError, Expansion, MAX_DEPTH},
-    fixture,
     model::{RelationId, Revision, Subject, Subjectset, TheoryId},
     rewrite::Rewrite::{self, Computed, Exclusion, Intersection, This, Union},
     store::{Dictionary, FactStore, Pool, StoreError, TheoryStore},
     theory::TheoryError,
 };
+use sungma_lang::fact::load_facts;
 
 /// Whether an identity is in the closure of `theory:id#relation` at `revision`.
 async fn check_at(
@@ -155,18 +155,18 @@ async fn unknown_names_are_denied() {
 fn ringed_world() -> World {
     let world = world();
     let facts = r#"[
-        { "set": "group:ring_a#member", "subjectset": "group:ring_b#member" },
-        { "set": "group:ring_b#member", "subjectset": "group:ring_a#member" },
-        { "set": "group:cyc_a#member", "subjectset": "group:cyc_b#member" },
-        { "set": "group:cyc_b#member", "subjectset": "group:cyc_a#member" },
-        { "set": "group:cyc_a#member", "subjectset": "group:cyc_c#member" },
-        { "set": "group:cyc_c#member", "identity": "alice" },
-        { "set": "folder:open#viewer", "identity": "alice" },
-        { "set": "folder:open#banned", "subjectset": "group:ring_a#member" },
-        { "set": "file:ring.md#viewer", "subjectset": "group:ring_a#member" },
-        { "set": "file:ring.md#owner", "identity": "alice" }
+        { "theory": "group", "resource": "ring_a", "relation": "member", "subject": { "theory": "group", "resource": "ring_b", "relation": "member" } },
+        { "theory": "group", "resource": "ring_b", "relation": "member", "subject": { "theory": "group", "resource": "ring_a", "relation": "member" } },
+        { "theory": "group", "resource": "cyc_a", "relation": "member", "subject": { "theory": "group", "resource": "cyc_b", "relation": "member" } },
+        { "theory": "group", "resource": "cyc_b", "relation": "member", "subject": { "theory": "group", "resource": "cyc_a", "relation": "member" } },
+        { "theory": "group", "resource": "cyc_a", "relation": "member", "subject": { "theory": "group", "resource": "cyc_c", "relation": "member" } },
+        { "theory": "group", "resource": "cyc_c", "relation": "member", "subject": { "identity": "alice" } },
+        { "theory": "folder", "resource": "open", "relation": "viewer", "subject": { "identity": "alice" } },
+        { "theory": "folder", "resource": "open", "relation": "banned", "subject": { "theory": "group", "resource": "ring_a", "relation": "member" } },
+        { "theory": "file", "resource": "ring.md", "relation": "viewer", "subject": { "theory": "group", "resource": "ring_a", "relation": "member" } },
+        { "theory": "file", "resource": "ring.md", "relation": "owner", "subject": { "identity": "alice" } }
     ]"#;
-    fixture::load_facts(facts, &world.dictionary, &world.facts).unwrap();
+    load_facts(facts, &world.dictionary, &world.facts).unwrap();
     world
 }
 
@@ -211,14 +211,14 @@ async fn chain(length: usize, more: &[&str]) -> Result<bool, ClosureError> {
     let mut facts: Vec<String> = (1..length)
         .map(|i| {
             format!(
-                r#"{{ "set": "group:g{}#member", "subjectset": "group:g{i}#member" }}"#,
+                r#"{{ "theory": "group", "resource": "g{}", "relation": "member", "subject": {{ "theory": "group", "resource": "g{i}", "relation": "member" }} }}"#,
                 i - 1
             )
         })
         .collect();
     facts.extend(more.iter().map(ToString::to_string));
     let facts = format!("[{}]", facts.join(","));
-    fixture::load_facts(&facts, &world.dictionary, &world.facts).unwrap();
+    load_facts(&facts, &world.dictionary, &world.facts).unwrap();
     check(&world, "group:g0#member", "alice").await
 }
 
@@ -241,8 +241,8 @@ async fn passing_the_depth_limit_ends_the_check() {
     // g1 is interned before `holds`, so the chain is walked first, and
     // `holds` would find alice after it.
     let holds = [
-        r#"{ "set": "group:g0#member", "subjectset": "group:holds#member" }"#,
-        r#"{ "set": "group:holds#member", "identity": "alice" }"#,
+        r#"{ "theory": "group", "resource": "g0", "relation": "member", "subject": { "theory": "group", "resource": "holds", "relation": "member" } }"#,
+        r#"{ "theory": "group", "resource": "holds", "relation": "member", "subject": { "identity": "alice" } }"#,
     ];
     let result = chain(MAX_DEPTH + 1, &holds).await;
     assert!(matches!(
@@ -265,8 +265,8 @@ async fn late_bound_relation_missing_on_target_is_empty() {
 #[tokio::test]
 async fn a_parent_of_an_undeclared_theory_is_empty() {
     let world = world();
-    let fact = r#"[{ "set": "file:haunted.md#parent", "resource": "ghost:attic" }]"#;
-    fixture::load_facts(fact, &world.dictionary, &world.facts).unwrap();
+    let fact = r#"[{ "theory": "file", "resource": "haunted.md", "relation": "parent", "subject": { "theory": "ghost", "resource": "attic" } }]"#;
+    load_facts(fact, &world.dictionary, &world.facts).unwrap();
     assert!(
         !check(&world, "file:haunted.md#viewer", "alice")
             .await
@@ -497,11 +497,11 @@ async fn a_store_error_that_nothing_outweighs_fails_the_check() {
 async fn an_operand_that_settles_the_check_outweighs_a_store_error() {
     let world = world();
     let facts = r#"[
-        { "set": "file:twin.md#parent", "resource": "folder:specs" },
-        { "set": "file:twin.md#parent", "resource": "folder:shared" },
-        { "set": "folder:shared#viewer", "identity": "alice" }
+        { "theory": "file", "resource": "twin.md", "relation": "parent", "subject": { "theory": "folder", "resource": "specs" } },
+        { "theory": "file", "resource": "twin.md", "relation": "parent", "subject": { "theory": "folder", "resource": "shared" } },
+        { "theory": "folder", "resource": "shared", "relation": "viewer", "subject": { "identity": "alice" } }
     ]"#;
-    fixture::load_facts(facts, &world.dictionary, &world.facts).unwrap();
+    load_facts(facts, &world.dictionary, &world.facts).unwrap();
     let cases = [
         // A union's later operand holds: alice views through the parent.
         (
@@ -567,7 +567,7 @@ async fn a_store_error_anywhere_in_the_tree_fails_expand() {
     // The docs theories exclude only computed subjectsets, which expand
     // leaves as references without a read.
     let unowned = Exclusion(Box::new(Computed("owner")), Box::new(This));
-    fixture::declare(
+    declare(
         &mut world.theories,
         &world.dictionary,
         "file",
@@ -626,7 +626,7 @@ async fn expand_of_an_undeclared_relation_is_none() {
 #[test]
 fn empty_union_is_refused() {
     let mut world = world();
-    let result = fixture::declare(
+    let result = declare(
         &mut world.theories,
         &world.dictionary,
         "file",
@@ -639,7 +639,7 @@ fn empty_union_is_refused() {
 #[test]
 fn empty_intersection_is_refused() {
     let mut world = world();
-    let result = fixture::declare(
+    let result = declare(
         &mut world.theories,
         &world.dictionary,
         "file",
@@ -671,8 +671,8 @@ async fn expand_keeps_an_intersection() {
 async fn facts_written_after_the_revision_are_not_visible() {
     let world = world();
     let before = head(&world).await;
-    let fact = r#"[{ "set": "file:design.md#viewer", "identity": "zed" }]"#;
-    fixture::load_facts(fact, &world.dictionary, &world.facts).unwrap();
+    let fact = r#"[{ "theory": "file", "resource": "design.md", "relation": "viewer", "subject": { "identity": "zed" } }]"#;
+    load_facts(fact, &world.dictionary, &world.facts).unwrap();
     assert!(
         !check_at(&world, "file:design.md#viewer", "zed", before)
             .await
@@ -757,34 +757,39 @@ fn random_sets() -> Vec<String> {
     sets
 }
 
-/// Every fact a random world may hold, as fixture JSON.
+/// Every fact a random world may hold, as fact JSON.
 fn candidate_facts() -> Vec<String> {
-    let people = PEOPLE.map(|who| format!(r#""identity": "{who}""#));
-    let groups = GROUPS.map(|group| format!(r#""subjectset": "group:{group}#member""#));
-    let folders = FOLDERS.map(|folder| format!(r#""resource": "folder:{folder}""#));
+    let people = PEOPLE.map(|who| format!(r#"{{ "identity": "{who}" }}"#));
+    let groups = GROUPS.map(|group| {
+        format!(r#"{{ "theory": "group", "resource": "{group}", "relation": "member" }}"#)
+    });
+    let folders =
+        FOLDERS.map(|folder| format!(r#"{{ "theory": "folder", "resource": "{folder}" }}"#));
     let mut facts = Vec::new();
-    let mut add = |set: String, subjects: &[String]| {
+    let mut add = |theory: &str, resource: &str, relation: &str, subjects: &[String]| {
         for subject in subjects {
-            facts.push(format!(r#"{{ "set": "{set}", {subject} }}"#));
+            facts.push(format!(
+                r#"{{ "theory": "{theory}", "resource": "{resource}", "relation": "{relation}", "subject": {subject} }}"#
+            ));
         }
     };
     for file in FILES {
         for relation in ["owner", "viewer", "auditor", "banned"] {
-            add(format!("file:{file}#{relation}"), &people);
+            add("file", file, relation, &people);
         }
-        add(format!("file:{file}#viewer"), &groups);
-        add(format!("file:{file}#parent"), &folders);
+        add("file", file, "viewer", &groups);
+        add("file", file, "parent", &folders);
     }
     for folder in FOLDERS {
         for relation in ["viewer", "banned"] {
-            add(format!("folder:{folder}#{relation}"), &people);
-            add(format!("folder:{folder}#{relation}"), &groups);
+            add("folder", folder, relation, &people);
+            add("folder", folder, relation, &groups);
         }
-        add(format!("folder:{folder}#parent"), &folders);
+        add("folder", folder, "parent", &folders);
     }
     for group in GROUPS {
-        add(format!("group:{group}#member"), &people);
-        add(format!("group:{group}#member"), &groups);
+        add("group", group, "member", &people);
+        add("group", group, "member", &groups);
     }
     facts
 }
@@ -817,7 +822,7 @@ async fn random_world(facts: &[String]) -> World {
         world.dictionary.intern(Pool::Identities, who);
     }
     let facts = format!("[{}]", facts.join(","));
-    fixture::load_facts(&facts, &world.dictionary, &world.facts).unwrap();
+    load_facts(&facts, &world.dictionary, &world.facts).unwrap();
     world
 }
 

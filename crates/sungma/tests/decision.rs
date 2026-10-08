@@ -5,17 +5,17 @@ mod common;
 
 use std::time::SystemTime;
 
-use common::{World, head, identity, subjectset, world};
-use sungma_core::{
+use common::{World, declare, head, identity, subjectset, world};
+use sungma::{
     check::{CheckRequest, CheckService, MemoryAuditLog, RequestContext, SubjectName, Verdict},
     closure::Closure,
     decision::{Decision, Outcome, SEMANTICS, Semantics},
-    fixture,
     model::{Fact, Revision, Subject},
     replay::{Replay, replay},
     resolve,
     rewrite::Rewrite::This,
 };
+use sungma_lang::fact::load_facts;
 
 /// `theory:id#relation@subject`
 async fn fact(world: &World, set: &str, subject: Subject) -> Fact {
@@ -124,8 +124,8 @@ async fn replay_at_the_recorded_revision_ignores_later_writes() {
     let world = world();
     let decision = decide(&world, "file:design.md#viewer", "alice", head(&world).await).await;
 
-    let ban = r#"[{ "set": "file:design.md#banned", "identity": "alice" }]"#;
-    fixture::load_facts(ban, &world.dictionary, &world.facts).unwrap();
+    let ban = r#"[{ "theory": "file", "resource": "design.md", "relation": "banned", "subject": { "identity": "alice" } }]"#;
+    load_facts(ban, &world.dictionary, &world.facts).unwrap();
 
     let replayed = replay(&decision, &world.theories, &world.facts).await;
     assert_eq!(replayed.unwrap(), Replay::Matches);
@@ -139,7 +139,7 @@ async fn replay_differs_when_a_theory_changes() {
     let decision = decide(&world, "file:design.md#viewer", "alice", head(&world).await).await;
 
     // Theories aren't versioned yet, so this edit reaches the past revision.
-    fixture::declare(
+    declare(
         &mut world.theories,
         &world.dictionary,
         "file",

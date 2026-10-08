@@ -5,19 +5,19 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use sungma_core::document;
+use sungma_lang::theory;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(text) = std::str::from_utf8(data) else {
         return;
     };
-    let Ok(parsed) = document::parse(text) else {
+    let Ok(parsed) = theory::parse(text) else {
         return;
     };
-    let printed = document::print(&parsed.theory, &parsed.relations);
-    let again = document::parse(&printed).expect("a printed theory parses");
-    let sorted = |theory: &document::TheoryDocument| {
-        let mut relations: Vec<_> = theory.relations.relations().collect();
+    let printed = theory::print(&parsed.theory, &parsed.relations);
+    let again = theory::parse(&printed).expect("a printed theory parses");
+    let sorted = |document: &theory::TheoryDocument| {
+        let mut relations: Vec<_> = document.relations.relations().collect();
         relations.sort_by_key(|(name, _)| *name);
         relations
             .into_iter()

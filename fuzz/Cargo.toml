@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-sungma-core = { path = "../crates/sungma-core" }
+sungma-lang = { path = "../crates/sungma-lang" }
 
 [[bin]]
 name = "document"

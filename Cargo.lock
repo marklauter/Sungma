@@ -574,6 +574,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sungma"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "sungma-lang",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "sungma-api"
 version = "0.1.0"
 dependencies = [
@@ -581,18 +591,21 @@ dependencies = [
  "http-body-util",
  "serde",
  "serde_json",
- "sungma-core",
+ "sungma",
+ "sungma-lang",
+ "thiserror",
  "tokio",
  "tower",
 ]
 
 [[package]]
-name = "sungma-core"
+name = "sungma-lang"
 version = "0.1.0"
 dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "sungma",
  "thiserror",
  "tokio",
 ]

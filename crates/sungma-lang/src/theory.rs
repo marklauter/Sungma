@@ -30,10 +30,13 @@ use serde::{
 };
 use thiserror::Error;
 
-pub use crate::name::{MAX_NAME_BYTES, MAX_QUOTE_BYTES};
-use crate::{
+pub use sungma::name::{MAX_NAME_BYTES, MAX_QUOTE_BYTES};
+use sungma::{
+    memory::{MemoryDictionary, MemoryTheoryStore},
+    model::{RelationId, TheoryId},
     name::{NameError, RelationName, TheoryName, quote},
     rewrite::Rewrite,
+    store::Pool,
     theory::{MAX_REWRITE_DEPTH, Problem, Theory, TheoryError},
 };
 
@@ -200,6 +203,29 @@ pub fn parse(text: &str) -> Result<TheoryDocument, Vec<DocumentError>> {
         (None, Ok(relations)) => Ok(TheoryDocument { theory, relations }),
         (errors, _) => Err(errors.unwrap_or_default()),
     }
+}
+
+/// Every problem a refused theory document was found with.
+#[derive(Debug, Error)]
+#[error("{}", .0.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
+pub struct Refusal(pub Vec<DocumentError>);
+
+/// Parses each document in turn and declares its theory, interning its
+/// names in `dictionary`.
+pub fn load_theories(
+    documents: &[&str],
+    dictionary: &MemoryDictionary,
+    theories: &mut MemoryTheoryStore,
+) -> Result<(), Refusal> {
+    for document in documents {
+        let document = parse(document).map_err(Refusal)?;
+        let id = TheoryId(dictionary.intern(Pool::Theories, document.theory.as_str()));
+        let relations = document
+            .relations
+            .map(|name| RelationId(dictionary.intern(Pool::Relations, name.as_str())));
+        theories.declare(id, relations);
+    }
+    Ok(())
 }
 
 fn error(relation: Option<&str>, column: Option<usize>, kind: ErrorKind) -> DocumentError {

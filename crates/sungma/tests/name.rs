@@ -1,9 +1,56 @@
 //! Resource and subjectset names, parsed at the edge.
 
 use proptest::prelude::*;
-use sungma_core::name::{
-    MAX_NAME_BYTES, NameError, RelationName, ResourceName, SubjectsetName, TheoryName,
+use sungma::name::{
+    Identity, MAX_IDENTITY_BYTES, MAX_NAME_BYTES, MAX_RESOURCE_BYTES, NameError, RelationName,
+    ResourceName, SubjectsetName, TheoryName,
 };
+
+#[test]
+fn a_resource_name_is_at_most_max_resource_bytes() {
+    let name = |len: usize| format!("file:{}", "x".repeat(len - "file:".len()));
+    assert!(name(MAX_RESOURCE_BYTES).parse::<ResourceName>().is_ok());
+    assert!(matches!(
+        name(MAX_RESOURCE_BYTES + 1).parse::<ResourceName>(),
+        Err(NameError::ResourceTooLong(_))
+    ));
+}
+
+#[test]
+fn a_resource_id_holds_no_whitespace() {
+    for text in ["file:a b", "file:a\tb", "file:a\u{a0}b", "file:a\n"] {
+        assert!(
+            matches!(text.parse::<ResourceName>(), Err(NameError::Whitespace(_))),
+            "{text:?}"
+        );
+    }
+    assert!(matches!(
+        "file:a b#owner".parse::<SubjectsetName>(),
+        Err(NameError::Whitespace(_))
+    ));
+}
+
+#[test]
+fn an_identity_is_opaque_but_holds_no_whitespace() {
+    let identity: Identity = "x@y#z:...".parse().unwrap();
+    assert_eq!(identity.as_str(), "x@y#z:...");
+    assert_eq!("".parse::<Identity>(), Err(NameError::EmptyIdentity));
+    for text in ["a b", "a\tb", "a\u{2003}b"] {
+        assert!(
+            matches!(text.parse::<Identity>(), Err(NameError::Whitespace(_))),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn an_identity_is_at_most_max_identity_bytes() {
+    assert!("x".repeat(MAX_IDENTITY_BYTES).parse::<Identity>().is_ok());
+    assert!(matches!(
+        "x".repeat(MAX_IDENTITY_BYTES + 1).parse::<Identity>(),
+        Err(NameError::IdentityTooLong(_))
+    ));
+}
 
 #[test]
 fn a_subjectset_name_splits_at_the_first_colon_and_the_last_hash() {
@@ -119,12 +166,12 @@ fn a_name_error_quotes_a_bounded_and_escaped_cut_of_the_text() {
 }
 
 proptest! {
-    /// A theory name, any id, and a relation name make a subjectset name
-    /// that parses back into its parts.
+    /// A theory name, any id without whitespace, and a relation name make a
+    /// subjectset name that parses back into its parts.
     #[test]
     fn a_subjectset_name_parses_into_its_parts(
         theory in THEORY,
-        id in ".+",
+        id in r"\S{1,64}",
         relation in RELATION,
     ) {
         prop_assume!(!relation.eq_ignore_ascii_case("this"));
@@ -137,7 +184,7 @@ proptest! {
     }
 
     #[test]
-    fn a_resource_name_parses_into_its_parts(theory in THEORY, id in ".+") {
+    fn a_resource_name_parses_into_its_parts(theory in THEORY, id in r"\S{1,64}") {
         let text = format!("{theory}:{id}");
         let name: ResourceName = text.parse().unwrap();
         prop_assert_eq!(name.theory().as_str(), &theory);

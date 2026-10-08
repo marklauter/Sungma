@@ -3,7 +3,7 @@
 
 use std::process::{Command, Output};
 
-const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../sungma-core/tests/fixtures");
+const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../sungma/tests/fixtures");
 
 fn run(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_sungma-api"))

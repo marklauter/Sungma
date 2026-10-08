@@ -10,16 +10,16 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
+use sungma::check::Verdict;
 use sungma_api::{AppState, router};
-use sungma_core::check::Verdict;
 use tower::ServiceExt;
 
 const THEORIES: [&str; 3] = [
-    include_str!("../../sungma-core/tests/fixtures/theories/file.json"),
-    include_str!("../../sungma-core/tests/fixtures/theories/folder.json"),
-    include_str!("../../sungma-core/tests/fixtures/theories/group.json"),
+    include_str!("../../sungma/tests/fixtures/theories/file.json"),
+    include_str!("../../sungma/tests/fixtures/theories/folder.json"),
+    include_str!("../../sungma/tests/fixtures/theories/group.json"),
 ];
-const FACTS: &str = include_str!("../../sungma-core/tests/fixtures/docs.facts.json");
+const FACTS: &str = include_str!("../../sungma/tests/fixtures/docs.facts.json");
 
 fn state() -> Arc<AppState> {
     Arc::new(AppState::load(&THEORIES, FACTS).unwrap())
