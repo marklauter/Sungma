@@ -10,6 +10,7 @@ edition = "2024"
 [workspace.dependencies]
 aes-siv = "0.8.0"
 axum = "0.8.9"
+divan = "0.1.21"
 getrandom = "0.4.3"
 http-body-util = "0.1.5"
 libc = "0.2.190"

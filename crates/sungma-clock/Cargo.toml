@@ -24,7 +24,12 @@ webpki-roots.workspace = true
 libc.workspace = true
 
 [dev-dependencies]
+divan.workspace = true
 proptest.workspace = true
 rcgen.workspace = true
 sungma-clock = { path = ".", features = ["test-util"] }
 tokio = { workspace = true, features = ["macros", "rt", "test-util", "time"] }
+
+[[bench]]
+name = "clock"
+harness = false
