@@ -20,6 +20,7 @@ The clock that [[clock]] specifies is built in `sungma` (the port) and `sungma-c
   - Allowance = that rate × (1 + a margin, around 25–50%, for a rate that creeps) + a floor of 10–20 ppm (for wander as temperature changes), capped at 500 ppm.
   - Fall back to 500 ppm whenever the window can't measure: fewer than two samples, a baseline too short to beat 500 ppm, or pairs that don't overlap.
   - Eight samples 64 s apart with ±20 ms bounds span about 512 s and bound the rate to about ±80 ppm, so the sawtooth's climb should shrink several times over.
+  - `ClockStatus` reports the measured rate's range and the allowance in use, and the watch example prints them on its status line, as `drift 12 ppm (allowance 35 ppm)`, or `drift unmeasured (allowance 500 ppm)` while it falls back.
   - An underestimate silently reorders revisions, so it gets a spec section and the review loop.
 
 Both the ClockBound clock and the soak test are also in `docs/roadmap.md` under Deferred.
