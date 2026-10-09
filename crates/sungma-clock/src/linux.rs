@@ -41,6 +41,30 @@ struct Last {
     carry: Carry,
 }
 
+impl Last {
+    /// What a reading at moment `now`, with the kernel's bound at `kernel`
+    /// nanoseconds, leaves as the last reading; the slack its step widens
+    /// the bound by, or the jump it saw; and the steps it carries.
+    fn next(self, kernel: u64, now: Moment) -> (Self, Result<u64, ClockFault>, u64) {
+        let moved = i128::from(now.wall) - i128::from(self.moment.wall);
+        let elapsed = Duration::from_nanos(now.monotonic.saturating_sub(self.moment.monotonic));
+        let slack = self.moment.uncertainty.saturating_add(now.uncertainty);
+        // On Linux the monotonic clock is slewed with the system clock, so
+        // only a step parts them.
+        let step = wall::step(moved - wall::nanos(elapsed), slack, 0);
+        let dropped = kernel < self.kernel;
+        let carry = self
+            .carry
+            .next(wall::stepped(step, slack), dropped, now.monotonic);
+        let next = Self {
+            moment: now,
+            kernel,
+            carry,
+        };
+        (next, step.map(|_| slack), carry.at(now.monotonic))
+    }
+}
+
 impl LinuxClock {
     /// `None` when the kernel's clock isn't synchronized, or its bound is
     /// wider than a write should wait.
@@ -86,25 +110,8 @@ impl<T: TimeSource> LinuxClock<T> {
         let (state, status, maxerror) = read();
         let kernel = bound(state, maxerror);
         let now = self.time.moment();
-        let (step, carried) = {
-            let then = last.moment;
-            let moved = i128::from(now.wall) - i128::from(then.wall);
-            let elapsed = Duration::from_nanos(now.monotonic.saturating_sub(then.monotonic));
-            let slack = then.uncertainty.saturating_add(now.uncertainty);
-            // On Linux the monotonic clock is slewed with the system clock, so
-            // only a step parts them.
-            let step = wall::step(moved - wall::nanos(elapsed), slack, 0);
-            let dropped = kernel < last.kernel;
-            let carry = last
-                .carry
-                .next(wall::stepped(step, slack), dropped, now.monotonic);
-            *last = Last {
-                moment: now,
-                kernel,
-                carry,
-            };
-            (step.map(|_| slack), carry.at(now.monotonic))
-        };
+        let (next, step, carried) = last.next(kernel, now);
+        *last = next;
         drop(last);
         let slack = step?;
         let widen = carried.saturating_add(slack);
@@ -192,6 +199,35 @@ mod tests {
             assess(libc::TIME_OK, libc::STA_UNSYNC, 1_500, 0),
             Err(ClockFault::Unsynchronized)
         );
+    }
+
+    #[test]
+    fn a_step_is_carried_until_the_kernels_bound_drops_twice() {
+        let ms = 1_000_000;
+        let at = |millis: u64, stepped: u64| Moment {
+            wall: (millis + stepped) * ms,
+            monotonic: millis * ms,
+            uncertainty: 0,
+        };
+        let mut last = Last {
+            moment: at(0, 0),
+            kernel: 2 * ms,
+            carry: Carry::default(),
+        };
+        let mut read = |kernel: u64, now: Moment| {
+            let (next, step, carried) = last.next(kernel, now);
+            last = next;
+            assert_eq!(step, Ok(0));
+            carried
+        };
+        // A 5 ms step, then a bound that holds or grows: still carried.
+        assert_eq!(read(2 * ms, at(1, 5)), 5 * ms);
+        assert_eq!(read(2 * ms, at(101, 5)), 5 * ms);
+        assert_eq!(read(3 * ms, at(201, 5)), 5 * ms);
+        // Two drops, and the carry decays from the second.
+        assert_eq!(read(2 * ms, at(301, 5)), 5 * ms);
+        assert_eq!(read(ms, at(401, 5)), 5 * ms);
+        assert_eq!(read(ms, at(501, 5)), 0);
     }
 
     #[test]

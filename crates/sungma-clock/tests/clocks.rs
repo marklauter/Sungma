@@ -692,6 +692,7 @@ fn a_status_reports_the_clock_without_counting_or_disturbing_it() {
     assert_eq!(status.faults, FaultCounts::default());
     assert_eq!(status.since_sample, Some(Duration::ZERO));
     assert_eq!(status.failed_syncs, 0);
+    assert_eq!(status.drift.map(|drift| drift.allowance), Some(500_000));
     assert!(
         status
             .last_sync
@@ -767,6 +768,30 @@ fn a_slow_resolver_leaves_its_server_unanswered_in_time() {
         vec!["slow.test:123".to_owned()]
     );
     assert!(started.elapsed() < Duration::from_millis(1_500));
+}
+
+#[test]
+fn the_last_address_waits_out_the_time_left() {
+    let good = counting_trio(vec![Answer::Ahead(0)]);
+    let (_first, first) = silent();
+    let (_second, second) = silent();
+    let names = ["a.test:123", "b.test:123", "c.test:123", "quiet.test:123"];
+    let servers = Servers::new(names).resolving_with(move |name: &str| {
+        if name == "quiet.test:123" {
+            return Ok(vec![first, second]);
+        }
+        let at = usize::from(name.as_bytes()[0] - b'a');
+        Ok(vec![good[at]])
+    });
+    let started = Instant::now();
+    let clock = NtpClock::sync(servers).unwrap();
+    assert_eq!(
+        clock.last_sync().unanswered,
+        vec!["quiet.test:123".to_owned()]
+    );
+    // Half the second on each silent address, the second's half all that's
+    // left, not a third of it.
+    assert!(started.elapsed() >= Duration::from_millis(900));
 }
 
 #[test]

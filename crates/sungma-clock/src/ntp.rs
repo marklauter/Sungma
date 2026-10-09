@@ -520,11 +520,10 @@ fn ask<R>(
                         return result;
                     }
                 }
-                Err(error) if refused(&error) || silent(&error) => {
+                Err(error) => {
                     failed = error.into();
                     continue 'addresses;
                 }
-                Err(error) => return Err(error.into()),
             }
         }
     }
@@ -534,22 +533,6 @@ fn ask<R>(
 /// An equal share of `left` for each of `addresses` still to try.
 pub(crate) fn share(left: Duration, addresses: usize) -> Duration {
     left / u32::try_from(addresses.max(1)).unwrap_or(u32::MAX)
-}
-
-/// Whether a socket error says the address kept silent until the timeout.
-fn silent(error: &io::Error) -> bool {
-    matches!(
-        error.kind(),
-        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
-    )
-}
-
-/// Whether a socket error says nothing listens at the address.
-fn refused(error: &io::Error) -> bool {
-    matches!(
-        error.kind(),
-        io::ErrorKind::ConnectionRefused | io::ErrorKind::ConnectionReset
-    )
 }
 
 fn query(
