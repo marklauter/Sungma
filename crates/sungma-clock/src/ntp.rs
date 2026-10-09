@@ -12,13 +12,14 @@ use std::{
     future::Future,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
     sync::{
-        Mutex, PoisonError,
+        Arc, Mutex, PoisonError,
         atomic::{AtomicU64, Ordering},
     },
     thread,
     time::{Duration, Instant},
 };
 
+use rustls::ClientConfig;
 use sungma::clock::{Clock, ClockFault, Reading, Revision};
 
 use crate::{
@@ -327,8 +328,8 @@ fn query_all(
             .map(|(&at, association)| {
                 let name = &servers.names[at];
                 scope.spawn(move || {
-                    if servers.nts[at] {
-                        query_nts(name, association, servers, time)
+                    if let Some(tls) = &servers.tls[at] {
+                        query_nts(name, tls, association, servers, time)
                     } else {
                         let resolved = servers.resolver.resolve(name);
                         let result = resolved
@@ -456,14 +457,11 @@ fn query(server: SocketAddr, time: &impl TimeSource) -> Result<Answer, ClockErro
 /// has no cookie left, and gives the association back.
 fn query_nts(
     host: &str,
+    tls: &Arc<ClientConfig>,
     association: Option<Association>,
     servers: &Servers,
     time: &impl TimeSource,
 ) -> (Reply, Option<Association>) {
-    let tls = servers
-        .tls
-        .as_ref()
-        .expect("NTS servers bring TLS settings");
     let association = match association.filter(|association| !association.cookies.is_empty()) {
         Some(association) => association,
         None => match nts::exchange(host, servers.resolver.as_ref(), tls) {

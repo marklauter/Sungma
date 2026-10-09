@@ -42,11 +42,10 @@ impl Resolve for Dns {
 #[derive(Clone)]
 pub struct Servers {
     pub(crate) names: Vec<String>,
-    /// Whether each server is asked over NTS.
-    pub(crate) nts: Vec<bool>,
+    /// Each server's TLS settings for NTS key exchange, or `None` for a
+    /// plain NTP server. Lists joined with [`Servers::and`] keep their own.
+    pub(crate) tls: Vec<Option<Arc<ClientConfig>>>,
     pub(crate) resolver: Arc<dyn Resolve>,
-    /// TLS settings for NTS key exchange, when there are NTS servers.
-    pub(crate) tls: Option<Arc<ClientConfig>>,
 }
 
 impl Servers {
@@ -54,18 +53,16 @@ impl Servers {
     pub fn new<S: ToString>(names: impl IntoIterator<Item = S>) -> Self {
         let names: Vec<String> = names.into_iter().map(|name| name.to_string()).collect();
         Self {
-            nts: vec![false; names.len()],
+            tls: vec![None; names.len()],
             names,
             resolver: Arc::new(Dns),
-            tls: None,
         }
     }
 
     /// NTS servers, by host, whose certificates chain to Mozilla's roots.
     pub fn nts<S: ToString>(hosts: impl IntoIterator<Item = S>) -> Self {
         let mut servers = Self::new(hosts);
-        servers.nts.fill(true);
-        servers.tls = Some(nts::tls(nts::public_roots()));
+        servers.tls.fill(Some(nts::tls(nts::public_roots())));
         servers
     }
 
@@ -73,22 +70,23 @@ impl Servers {
     #[must_use]
     pub fn and(mut self, others: Self) -> Self {
         self.names.extend(others.names);
-        self.nts.extend(others.nts);
-        self.tls = self.tls.or(others.tls);
+        self.tls.extend(others.tls);
         self
     }
 
-    /// The same servers, trusting only `certificate`, DER-encoded, for NTS
-    /// key exchange: a private deployment's own certificate authority.
-    pub fn trusting_only(self, certificate: &[u8]) -> Result<Self, ClockError> {
+    /// The same servers, their NTS servers trusting only `certificate`,
+    /// DER-encoded: a private deployment's own certificate authority. Join
+    /// other lists after this, with [`Servers::and`], to keep their trust.
+    pub fn trusting_only(mut self, certificate: &[u8]) -> Result<Self, ClockError> {
         let mut roots = RootCertStore::empty();
         roots
             .add(CertificateDer::from(certificate.to_vec()))
             .map_err(|failed| ClockError::Nts(failed.to_string()))?;
-        Ok(Self {
-            tls: Some(nts::tls(roots)),
-            ..self
-        })
+        let pinned = nts::tls(roots);
+        for tls in self.tls.iter_mut().flatten() {
+            *tls = pinned.clone();
+        }
+        Ok(self)
     }
 
     /// The same servers, resolved through `resolver`.
@@ -103,9 +101,10 @@ impl Servers {
 
 impl fmt::Debug for Servers {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let nts: Vec<bool> = self.tls.iter().map(Option::is_some).collect();
         f.debug_struct("Servers")
             .field("names", &self.names)
-            .field("nts", &self.nts)
+            .field("nts", &nts)
             .finish_non_exhaustive()
     }
 }
@@ -133,12 +132,38 @@ mod tests {
     }
 
     #[test]
+    fn each_list_keeps_its_own_trust_when_joined() {
+        let certificate = rcgen::generate_simple_self_signed(vec!["p.test".to_owned()])
+            .unwrap()
+            .cert
+            .der()
+            .to_vec();
+        let private = Servers::nts(["p.test"])
+            .trusting_only(&certificate)
+            .unwrap();
+        let servers = Servers::new(["a:123"])
+            .and(private)
+            .and(Servers::nts(["q.test"]));
+        let tls: Vec<_> = servers.tls.iter().map(Option::as_ref).collect();
+        assert!(tls[0].is_none());
+        let (pinned, public) = (tls[1].unwrap(), tls[2].unwrap());
+        assert!(!Arc::ptr_eq(pinned, public));
+        // Pinning a joined list pins its NTS servers and leaves plain ones.
+        let pinned = Servers::new(["a:123"])
+            .and(Servers::nts(["q.test"]))
+            .trusting_only(&certificate)
+            .unwrap();
+        assert!(pinned.tls[0].is_none());
+        assert!(!Arc::ptr_eq(pinned.tls[1].as_ref().unwrap(), public));
+    }
+
+    #[test]
     fn nts_servers_join_plain_ones_and_bring_their_tls() {
         let servers = Servers::new(["a:123"]).and(Servers::nts(["b", "c"]));
         assert_eq!(servers.names, ["a:123", "b", "c"]);
-        assert_eq!(servers.nts, [false, true, true]);
-        assert!(servers.tls.is_some());
-        assert!(Servers::new(["a:123"]).tls.is_none());
+        let nts: Vec<bool> = servers.tls.iter().map(Option::is_some).collect();
+        assert_eq!(nts, [false, true, true]);
+        assert!(Servers::new(["a:123"]).tls.iter().all(Option::is_none));
         assert!(
             Servers::nts(["b"])
                 .trusting_only(b"not a certificate")
