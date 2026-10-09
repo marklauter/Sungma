@@ -1,22 +1,24 @@
 //! An SNTP client, for when the platform reports no bound of its own.
 //!
-//! Each server is asked once per sync. A reply gives the system clock's
+//! A sync asks every server at once. A reply gives the system clock's
 //! offset from the server and a bound: half the round trip, plus half the
 //! server's root delay, plus its root dispersion, which is RFC 5905's root
-//! distance. The clock takes the intersection of every reply's range, so a
-//! server that is wrong and sure of itself fails the sync instead of moving
-//! the clock.
+//! distance. The clock keeps the range where most servers agree, as
+//! Marzullo's algorithm does. A server outside it is a falseticker, and a
+//! sync fails unless more than half the servers that answered agree.
 
 use std::{
     future::Future,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs, UdpSocket},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
+    sync::{Mutex, PoisonError},
+    thread,
     time::Duration,
 };
 
 use sungma::clock::{Clock, ClockFault, Reading};
 
 use crate::{
-    ClockError, OsTime, TimeSource,
+    ClockError, OsTime, Servers, TimeSource,
     wall::{self, Sample, Sampled},
 };
 
@@ -26,46 +28,123 @@ const NANOS: i128 = 1_000_000_000;
 const PACKET: usize = 48;
 const TIMEOUT: Duration = Duration::from_secs(1);
 
+/// How often a server is asked at most, NTP's shortest standard poll,
+/// 64 s, which a Kiss-o'-Death `RATE` doubles.
+const MIN_POLL: u64 = 64_000_000_000;
+
+/// The longest a `RATE` stretches a server's poll, NTP's maximum, 2^17 s.
+const MAX_POLL: u64 = 131_072_000_000_000;
+
+/// A leap second a server announces for the end of the day.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Leap {
+    Insert,
+    Delete,
+}
+
+/// What the last successful sync found.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct SyncReport {
+    /// Servers that answered outside the majority's range.
+    pub falsetickers: Vec<String>,
+    /// Servers that didn't answer, or whose answer was refused.
+    pub unanswered: Vec<String>,
+    /// Servers that sent Kiss-o'-Death, with its code.
+    pub kissed: Vec<(String, [u8; 4])>,
+    /// A leap second announced by a server in the majority.
+    pub leap: Option<Leap>,
+}
+
+/// When a server may next be asked, after a Kiss-o'-Death.
+#[derive(Clone, Copy, Debug)]
+struct Schedule {
+    poll: u64,
+    /// The monotonic time before which the server isn't asked.
+    held_until: u64,
+    /// `DENY` or `RSTR`: the server asked not to be asked again.
+    denied: bool,
+}
+
+impl Default for Schedule {
+    fn default() -> Self {
+        Self {
+            poll: MIN_POLL,
+            held_until: 0,
+            denied: false,
+        }
+    }
+}
+
+impl Schedule {
+    /// Takes in a Kiss-o'-Death sent at monotonic time `now`.
+    fn kissed(&mut self, code: [u8; 4], now: u64) {
+        match &code {
+            b"RATE" => {
+                self.poll = self.poll.saturating_mul(2).min(MAX_POLL);
+                self.held_until = now.saturating_add(self.poll);
+            }
+            b"DENY" | b"RSTR" => self.denied = true,
+            _ => {}
+        }
+    }
+
+    fn askable(&self, now: u64) -> bool {
+        !self.denied && now >= self.held_until
+    }
+}
+
 /// The system clock, corrected by the servers' offset, give or take their
-/// bound. Syncing blocks on the network, so an async caller runs it on a
-/// blocking thread.
+/// bound. Syncing blocks on the network for up to a second, so an async
+/// caller runs it on a blocking thread.
 #[derive(Debug)]
 pub struct NtpClock<T = OsTime> {
-    servers: Vec<SocketAddr>,
+    servers: Servers,
+    schedules: Mutex<Vec<Schedule>>,
+    last: Mutex<SyncReport>,
     sampled: Sampled<T>,
 }
 
 impl NtpClock {
-    /// Resolves `servers` and takes a first sample, on the operating
-    /// system's clocks. A server that doesn't answer is skipped, and every
-    /// one that does must agree.
-    pub fn sync<A: ToSocketAddrs>(servers: &[A]) -> Result<Self, ClockError> {
+    /// Takes a first sample from `servers`, on the operating system's
+    /// clocks.
+    pub fn sync(servers: Servers) -> Result<Self, ClockError> {
         Self::sync_with(servers, OsTime)
     }
 }
 
 impl<T: TimeSource> NtpClock<T> {
     /// [`NtpClock::sync`], on the clocks `time` reads.
-    pub fn sync_with<A: ToSocketAddrs>(servers: &[A], time: T) -> Result<Self, ClockError> {
-        let mut addresses = Vec::new();
-        for server in servers {
-            addresses.extend(server.to_socket_addrs()?);
-        }
-        let sampled = Sampled::new(sample(&addresses, &time)?, time);
+    pub fn sync_with(servers: Servers, time: T) -> Result<Self, ClockError> {
+        let mut schedules = vec![Schedule::default(); servers.names.len()];
+        let (sample, report) = sync(&servers, &mut schedules, &time)?;
         Ok(Self {
-            servers: addresses,
-            sampled,
+            servers,
+            schedules: Mutex::new(schedules),
+            last: Mutex::new(report),
+            sampled: Sampled::new(sample, time),
         })
     }
 
-    /// Takes a fresh sample into the window. When the servers can't be
+    /// Takes a fresh sample into the window. When no server can be
     /// reached, the window stays as it was and its bounds keep growing.
     /// [`ClockFault::Drifted`] when the sample disagrees with the window,
     /// which the clock then replaces with the sample alone.
     pub fn resync(&self) -> Result<(), ClockError> {
-        Ok(self
-            .sampled
-            .add(sample(&self.servers, self.sampled.time())?)?)
+        let mut schedules = self
+            .schedules
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let (sample, report) = sync(&self.servers, &mut schedules, self.sampled.time())?;
+        *self.last.lock().unwrap_or_else(PoisonError::into_inner) = report;
+        Ok(self.sampled.add(sample)?)
+    }
+
+    /// What the last successful sync found.
+    pub fn last_sync(&self) -> SyncReport {
+        self.last
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -79,22 +158,99 @@ impl<T: TimeSource> Clock for NtpClock<T> {
     }
 }
 
-fn sample(servers: &[SocketAddr], time: &impl TimeSource) -> Result<Sample, ClockError> {
-    let mut samples = Vec::new();
+/// Asks every server that may be asked, at once, and keeps the majority's
+/// range.
+fn sync(
+    servers: &Servers,
+    schedules: &mut [Schedule],
+    time: &impl TimeSource,
+) -> Result<(Sample, SyncReport), ClockError> {
+    let now = time.monotonic();
+    let asked: Vec<usize> = (0..servers.names.len())
+        .filter(|&at| schedules[at].askable(now))
+        .collect();
+    let replies: Vec<_> = thread::scope(|scope| {
+        let queries: Vec<_> = asked
+            .iter()
+            .map(|&at| {
+                let name = &servers.names[at];
+                scope.spawn(move || query(servers.resolver.resolve(name)?, time))
+            })
+            .collect();
+        queries
+            .into_iter()
+            .map(|query| query.join().expect("a query doesn't panic"))
+            .collect()
+    });
+    let mut report = SyncReport::default();
+    let mut answers = Vec::new();
     let mut error = ClockError::NoServers;
-    for &server in servers {
-        match query(server, time) {
-            Ok(sample) => samples.push(sample),
-            Err(failed) => error = failed,
+    for (&at, reply) in asked.iter().zip(replies) {
+        let name = servers.names[at].clone();
+        match reply {
+            Ok(answer) => answers.push((name, answer)),
+            Err(ClockError::Kiss(code)) => {
+                schedules[at].kissed(code, now);
+                report.kissed.push((name, code));
+                error = ClockError::Kiss(code);
+            }
+            Err(failed) => {
+                report.unanswered.push(name);
+                error = failed;
+            }
         }
     }
-    if samples.is_empty() {
+    if answers.is_empty() {
         return Err(error);
     }
-    intersect(&samples)
+    let ranges: Vec<_> = answers
+        .iter()
+        .map(|(_, answer)| range(&answer.sample))
+        .collect();
+    let agreeing = majority(&ranges).ok_or(ClockError::Disagree)?;
+    let mut samples = Vec::new();
+    for (at, (name, answer)) in answers.into_iter().enumerate() {
+        if agreeing.contains(&at) {
+            samples.push(answer.sample);
+            report.leap = report.leap.or(answer.leap);
+        } else {
+            report.falsetickers.push(name);
+        }
+    }
+    Ok((intersect(&samples)?, report))
 }
 
-fn query(server: SocketAddr, time: &impl TimeSource) -> Result<Sample, ClockError> {
+/// The range a sample allows, its low and high ends.
+fn range(sample: &Sample) -> (i128, i128) {
+    let offset = i128::from(sample.offset);
+    let bound = i128::from(sample.bound);
+    (offset - bound, offset + bound)
+}
+
+/// The ranges that share the point most of them share, by index, or `None`
+/// unless more than half do. Of points shared by equally many, the
+/// earliest wins, so the order of the ranges doesn't matter.
+fn majority(ranges: &[(i128, i128)]) -> Option<Vec<usize>> {
+    let covering = |point: i128| {
+        (0..ranges.len())
+            .filter(|&at| ranges[at].0 <= point && point <= ranges[at].1)
+            .collect::<Vec<_>>()
+    };
+    let (point, count) = ranges
+        .iter()
+        .map(|&(low, _)| (low, covering(low).len()))
+        .min_by_key(|&(point, count)| (std::cmp::Reverse(count), point))?;
+    (count * 2 > ranges.len()).then(|| covering(point))
+}
+
+/// One server's answer: its sample, and any leap second it announces.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Answer {
+    sample: Sample,
+    leap: Option<Leap>,
+}
+
+fn query(server: SocketAddr, time: &impl TimeSource) -> Result<Answer, ClockError> {
     let local: SocketAddr = match server {
         SocketAddr::V4(_) => (Ipv4Addr::UNSPECIFIED, 0).into(),
         SocketAddr::V6(_) => (Ipv6Addr::UNSPECIFIED, 0).into(),
@@ -119,9 +275,10 @@ fn request(sent: u64) -> [u8; PACKET] {
     packet
 }
 
-/// The sample a server's reply gives, from the system clock's readings when
-/// the request was sent and the reply received.
-fn answer(reply: &[u8], sent: u64, received: u64) -> Result<Sample, ClockError> {
+/// What a server's reply gives, from the system clock's readings when the
+/// request was sent and the reply received. A reply with stratum 0 is a
+/// Kiss-o'-Death, whose code is in the reference id.
+fn answer(reply: &[u8], sent: u64, received: u64) -> Result<Answer, ClockError> {
     let reply: &[u8; PACKET] = reply
         .try_into()
         .map_err(|_| ClockError::Reply("not 48 bytes"))?;
@@ -131,11 +288,20 @@ fn answer(reply: &[u8], sent: u64, received: u64) -> Result<Sample, ClockError> 
     if reply[0] & 0b111 != 4 {
         return Err(ClockError::Reply("not a server's reply"));
     }
-    if reply[0] >> 6 == 3 || !(1..=15).contains(&reply[1]) {
-        return Err(ClockError::Reply("the server isn't synchronized"));
-    }
     if stamp(24) != to_ntp(sent) {
         return Err(ClockError::Reply("it answers another request"));
+    }
+    if reply[1] == 0 {
+        return Err(ClockError::Kiss(word(12).to_be_bytes()));
+    }
+    let leap = match reply[0] >> 6 {
+        0 => None,
+        1 => Some(Leap::Insert),
+        2 => Some(Leap::Delete),
+        _ => return Err(ClockError::Reply("the server isn't synchronized")),
+    };
+    if reply[1] > 15 {
+        return Err(ClockError::Reply("the server isn't synchronized"));
     }
     let (t1, t4) = (i128::from(sent), i128::from(received));
     let t2 = from_ntp(stamp(32), sent);
@@ -143,10 +309,11 @@ fn answer(reply: &[u8], sent: u64, received: u64) -> Result<Sample, ClockError> 
     let offset = ((t2 - t1) + (t3 - t4)) / 2;
     let round_trip = ((t4 - t1) - (t3 - t2)).max(0);
     let bound = round_trip / 2 + short(word(4)) / 2 + short(word(8));
-    Ok(Sample {
+    let sample = Sample {
         offset: i64::try_from(offset).map_err(|_| ClockError::Reply("offset out of range"))?,
         bound: u64::try_from(bound).unwrap_or(u64::MAX),
-    })
+    };
+    Ok(Answer { sample, leap })
 }
 
 /// Runs the reply parser on arbitrary bytes, for the fuzzer. The first 16
@@ -236,12 +403,41 @@ mod tests {
         vec(sample, 1..6)
     }
 
-    fn range(sample: &Sample) -> (i128, i128) {
-        let (offset, bound) = (i128::from(sample.offset), i128::from(sample.bound));
-        (offset - bound, offset + bound)
-    }
-
     proptest! {
+        #[test]
+        fn the_majority_shares_a_point_and_doesnt_depend_on_order(
+            ranges in vec((-1_000i128..1_000, 0i128..500), 1..8),
+        ) {
+            let ranges: Vec<_> = ranges.into_iter().map(|(at, bound)| (at - bound, at + bound)).collect();
+            let mut reversed = ranges.clone();
+            reversed.reverse();
+            let kept = |ranges: &[(i128, i128)], indices: Option<Vec<usize>>| {
+                indices.map(|indices| {
+                    let mut kept: Vec<_> = indices.into_iter().map(|at| ranges[at]).collect();
+                    kept.sort_unstable();
+                    kept
+                })
+            };
+            let forward = kept(&ranges, majority(&ranges));
+            prop_assert_eq!(&forward, &kept(&reversed, majority(&reversed)));
+            // The most ranges any point is in.
+            let most = ranges
+                .iter()
+                .map(|&(low, _)| ranges.iter().filter(|r| r.0 <= low && low <= r.1).count())
+                .max()
+                .unwrap();
+            match forward {
+                Some(kept) => {
+                    prop_assert_eq!(kept.len(), most);
+                    prop_assert!(most * 2 > ranges.len());
+                    let low = kept.iter().map(|r| r.0).max().unwrap();
+                    let high = kept.iter().map(|r| r.1).min().unwrap();
+                    prop_assert!(low <= high);
+                }
+                None => prop_assert!(most * 2 <= ranges.len()),
+            }
+        }
+
         #[test]
         fn a_timestamp_round_trips_in_either_era(nanos in 0..LATER) {
             let back = from_ntp(to_ntp(nanos), nanos);
@@ -363,7 +559,7 @@ mod tests {
         let ms = 1_000_000;
         let server = 5_000 * ms;
         let packet = reply(NOW, NOW + server + 10 * ms, NOW + server + 12 * ms);
-        let sample = answer(&packet, NOW, NOW + 42 * ms).unwrap();
+        let sample = answer(&packet, NOW, NOW + 42 * ms).unwrap().sample;
         // ((10 + 5000) + (5012 - 42)) / 2 = 4990 ms, the round trip is
         // 42 - 2 = 40 ms, and the root delay and dispersion are 0.5 s and 1 s.
         assert!((sample.offset - 4_990 * ms as i64).abs() <= 1);
@@ -373,8 +569,76 @@ mod tests {
     #[test]
     fn a_reply_whose_clock_ran_backwards_has_no_negative_round_trip() {
         let packet = reply(NOW, NOW + 50, NOW + 100);
-        let sample = answer(&packet, NOW, NOW + 10).unwrap();
+        let sample = answer(&packet, NOW, NOW + 10).unwrap().sample;
         assert_eq!(sample.bound, 250_000_000 + 1_000_000_000);
+    }
+
+    #[test]
+    fn stratum_0_is_a_kiss_o_death_with_its_code() {
+        let mut kiss = reply(NOW, NOW, NOW);
+        kiss[0] = 0xe4;
+        kiss[1] = 0;
+        kiss[12..16].copy_from_slice(b"RATE");
+        assert!(matches!(answer(&kiss, NOW, NOW), Err(ClockError::Kiss(code)) if &code == b"RATE"));
+        assert_eq!(
+            ClockError::Kiss(*b"DENY").to_string(),
+            "the NTP server sent Kiss-o'-Death DENY"
+        );
+    }
+
+    #[test]
+    fn a_reply_carries_the_leap_second_it_announces() {
+        let leap = |indicator: u8| {
+            let mut packet = reply(NOW, NOW, NOW);
+            packet[0] = indicator << 6 | 0x24;
+            answer(&packet, NOW, NOW).unwrap().leap
+        };
+        assert_eq!(leap(0), None);
+        assert_eq!(leap(1), Some(Leap::Insert));
+        assert_eq!(leap(2), Some(Leap::Delete));
+    }
+
+    #[test]
+    fn the_majority_is_more_than_half() {
+        assert_eq!(majority(&[(0, 10), (5, 15), (20, 30)]), Some(vec![0, 1]));
+        assert_eq!(majority(&[(0, 10), (20, 30)]), None);
+        assert_eq!(majority(&[(0, 10), (10, 20), (30, 40), (31, 41)]), None);
+        assert_eq!(
+            majority(&[(0, 10), (10, 20), (10, 15), (30, 40)]),
+            Some(vec![0, 1, 2])
+        );
+        assert_eq!(majority(&[(3, 3)]), Some(vec![0]));
+        assert_eq!(majority(&[]), None);
+        // Two points shared by three of four: the earlier wins.
+        let ranges = [(0, 10), (5, 20), (5, 20), (15, 30)];
+        assert_eq!(majority(&ranges), Some(vec![0, 1, 2]));
+    }
+
+    #[test]
+    fn a_rate_kiss_doubles_the_poll_and_holds_the_server() {
+        let mut schedule = Schedule::default();
+        assert!(schedule.askable(0));
+        schedule.kissed(*b"RATE", 1_000);
+        assert_eq!(schedule.poll, 2 * MIN_POLL);
+        assert!(!schedule.askable(1_000 + 2 * MIN_POLL - 1));
+        assert!(schedule.askable(1_000 + 2 * MIN_POLL));
+        for _ in 0..20 {
+            schedule.kissed(*b"RATE", 0);
+        }
+        assert_eq!(schedule.poll, MAX_POLL);
+    }
+
+    #[test]
+    fn a_deny_or_rstr_kiss_stops_the_server_and_others_change_nothing() {
+        for code in [*b"DENY", *b"RSTR"] {
+            let mut schedule = Schedule::default();
+            schedule.kissed(code, 0);
+            assert!(!schedule.askable(u64::MAX));
+        }
+        let mut schedule = Schedule::default();
+        schedule.kissed(*b"INIT", 5);
+        assert!(schedule.askable(0));
+        assert_eq!(schedule.poll, MIN_POLL);
     }
 
     #[test]
@@ -391,15 +655,16 @@ mod tests {
         let mut alarm = good;
         alarm[0] = 0xe4;
         refused(&alarm, "the server isn't synchronized");
-        for stratum in [0, 16] {
-            let mut unsynced = good;
-            unsynced[1] = stratum;
-            refused(&unsynced, "the server isn't synchronized");
-        }
+        let mut unsynced = good;
+        unsynced[1] = 16;
+        refused(&unsynced, "the server isn't synchronized");
         let mut stratum_15 = good;
         stratum_15[1] = 15;
         assert!(answer(&stratum_15, NOW, NOW).is_ok());
         refused(&reply(NOW + 1_000, NOW, NOW), "it answers another request");
+        let mut kiss = reply(NOW + 1_000, NOW, NOW);
+        kiss[1] = 0;
+        refused(&kiss, "it answers another request");
         // Answered at 1970 and received at the end of u64 time.
         match answer(&reply(NOW, 0, 0), NOW, u64::MAX) {
             Err(ClockError::Reply(reason)) => assert_eq!(reason, "offset out of range"),

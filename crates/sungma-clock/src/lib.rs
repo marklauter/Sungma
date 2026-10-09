@@ -15,6 +15,7 @@ mod linux;
 #[cfg(feature = "test-util")]
 mod manual;
 mod ntp;
+mod servers;
 mod system;
 mod time;
 mod wall;
@@ -26,9 +27,10 @@ pub use dev::DevClock;
 pub use linux::LinuxClock;
 #[cfg(feature = "test-util")]
 pub use manual::ManualClock;
-pub use ntp::NtpClock;
 #[cfg(fuzzing)]
 pub use ntp::fuzz_answer;
+pub use ntp::{Leap, NtpClock, SyncReport};
+pub use servers::{Resolve, Servers};
 pub use system::SystemClock;
 #[cfg(feature = "test-util")]
 pub use time::ManualTime;
@@ -43,8 +45,10 @@ pub enum ClockError {
     Io(#[from] io::Error),
     #[error("NTP reply refused: {0}")]
     Reply(&'static str),
-    #[error("NTP servers disagree: their ranges don't overlap")]
+    #[error("NTP servers disagree: no range holds a majority")]
     Disagree,
+    #[error("the NTP server sent Kiss-o'-Death {}", String::from_utf8_lossy(.0))]
+    Kiss([u8; 4]),
     #[error(transparent)]
     Fault(#[from] sungma::clock::ClockFault),
 }

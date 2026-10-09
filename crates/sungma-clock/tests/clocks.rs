@@ -3,14 +3,17 @@
 
 use std::{
     net::{SocketAddr, UdpSocket},
-    sync::Arc,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use sungma::clock::{Clock, ClockFault, Reading, Revision};
 use sungma_clock::{
-    ClockError, DevClock, ManualClock, ManualTime, NtpClock, SystemClock, TimeSource,
+    ClockError, DevClock, Leap, ManualClock, ManualTime, NtpClock, Servers, SystemClock, TimeSource,
 };
 use tokio::time::timeout;
 
@@ -51,6 +54,63 @@ fn server(address: &str, ahead: Vec<u32>) -> SocketAddr {
         }
     });
     address
+}
+
+/// What a counting server answers, one request at a time.
+#[derive(Clone, Copy)]
+enum Answer {
+    /// That many seconds ahead of the client.
+    Ahead(i32),
+    /// Kiss-o'-Death with this code.
+    Kiss(&'static [u8; 4]),
+    /// In step with the client, announcing this leap indicator.
+    Leap(u8),
+}
+
+/// A server that gives `answers` in order and then stays silent, counting
+/// every request it receives.
+fn counting(answers: Vec<Answer>) -> (SocketAddr, Arc<AtomicUsize>) {
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let address = socket.local_addr().unwrap();
+    let asked = Arc::new(AtomicUsize::new(0));
+    let count = asked.clone();
+    thread::spawn(move || {
+        let mut answers = answers.into_iter();
+        loop {
+            let mut request = [0; 48];
+            let (_, client) = socket.recv_from(&mut request).unwrap();
+            count.fetch_add(1, Ordering::SeqCst);
+            let Some(answer) = answers.next() else {
+                continue;
+            };
+            let sent = u64::from_be_bytes(request[40..48].try_into().unwrap());
+            let mut reply = [0; 48];
+            reply[0] = 0x24;
+            reply[1] = 2;
+            reply[8..12].copy_from_slice(&655u32.to_be_bytes());
+            reply[24..32].copy_from_slice(&request[40..48]);
+            let mut now = sent;
+            match answer {
+                Answer::Ahead(seconds) => {
+                    now = sent.wrapping_add_signed(i64::from(seconds) << 32);
+                }
+                Answer::Kiss(code) => {
+                    reply[0] = 0xe4;
+                    reply[1] = 0;
+                    reply[12..16].copy_from_slice(code);
+                }
+                Answer::Leap(indicator) => reply[0] |= indicator << 6,
+            }
+            reply[32..40].copy_from_slice(&now.to_be_bytes());
+            reply[40..48].copy_from_slice(&now.to_be_bytes());
+            socket.send_to(&reply, client).unwrap();
+        }
+    });
+    (address, asked)
+}
+
+fn asked(count: &AtomicUsize) -> usize {
+    count.load(Ordering::SeqCst)
 }
 
 /// A server that never answers.
@@ -140,14 +200,14 @@ fn a_revision_stamped_past_the_clocks_reading_is_a_fault() {
 
 #[test]
 fn an_ntp_clock_reads_the_servers_time() {
-    let clock = NtpClock::sync(&[server("127.0.0.1:0", vec![3])]).unwrap();
+    let clock = NtpClock::sync(Servers::new([server("127.0.0.1:0", vec![3])])).unwrap();
     reads_ahead(&clock, 3);
 }
 
 #[test]
 fn an_ntp_clock_reaches_a_server_over_ipv6() {
     if UdpSocket::bind("[::1]:0").is_ok() {
-        let clock = NtpClock::sync(&[server("[::1]:0", vec![0])]).unwrap();
+        let clock = NtpClock::sync(Servers::new([server("[::1]:0", vec![0])])).unwrap();
         reads_ahead(&clock, 0);
     }
 }
@@ -159,7 +219,7 @@ fn servers_that_disagree_fail_the_sync() {
         server("127.0.0.1:0", vec![100]),
     ];
     assert!(matches!(
-        NtpClock::sync(&servers),
+        NtpClock::sync(Servers::new(servers)),
         Err(ClockError::Disagree)
     ));
 }
@@ -167,21 +227,27 @@ fn servers_that_disagree_fail_the_sync() {
 #[test]
 fn a_server_that_doesnt_answer_is_skipped() {
     let (_socket, quiet) = silent();
-    let clock = NtpClock::sync(&[quiet, server("127.0.0.1:0", vec![2])]).unwrap();
+    let clock = NtpClock::sync(Servers::new([quiet, server("127.0.0.1:0", vec![2])])).unwrap();
     reads_ahead(&clock, 2);
 }
 
 #[test]
 fn a_sync_with_no_answer_fails() {
     let (_socket, quiet) = silent();
-    assert!(matches!(NtpClock::sync(&[quiet]), Err(ClockError::Io(_))));
+    assert!(matches!(
+        NtpClock::sync(Servers::new([quiet])),
+        Err(ClockError::Io(_))
+    ));
     let none: [&str; 0] = [];
-    assert!(matches!(NtpClock::sync(&none), Err(ClockError::NoServers)));
+    assert!(matches!(
+        NtpClock::sync(Servers::new(none)),
+        Err(ClockError::NoServers)
+    ));
 }
 
 #[test]
 fn a_resync_adds_to_the_window_and_a_failed_one_keeps_it() {
-    let clock = NtpClock::sync(&[server("127.0.0.1:0", vec![3, 3])]).unwrap();
+    let clock = NtpClock::sync(Servers::new([server("127.0.0.1:0", vec![3, 3])])).unwrap();
     reads_ahead(&clock, 3);
     clock.resync().unwrap();
     reads_ahead(&clock, 3);
@@ -191,7 +257,7 @@ fn a_resync_adds_to_the_window_and_a_failed_one_keeps_it() {
 
 #[test]
 fn a_resync_that_disagrees_is_a_drift_and_starts_the_window_over() {
-    let clock = NtpClock::sync(&[server("127.0.0.1:0", vec![0, 50])]).unwrap();
+    let clock = NtpClock::sync(Servers::new([server("127.0.0.1:0", vec![0, 50])])).unwrap();
     reads_ahead(&clock, 0);
     assert!(matches!(
         clock.resync(),
@@ -202,7 +268,7 @@ fn a_resync_that_disagrees_is_a_drift_and_starts_the_window_over() {
 
 #[tokio::test]
 async fn an_ntp_clock_waits_until_settled_passes() {
-    let clock = NtpClock::sync(&[server("127.0.0.1:0", vec![0])]).unwrap();
+    let clock = NtpClock::sync(Servers::new([server("127.0.0.1:0", vec![0])])).unwrap();
     let stamped = clock.now().unwrap();
     timeout(Duration::from_secs(5), clock.wait(stamped))
         .await
@@ -215,7 +281,7 @@ async fn an_ntp_clock_waits_until_settled_passes() {
 async fn the_system_clock_reads_true_time_and_waits_it_out() {
     // A server in step with the system clock, for a platform without a
     // bound of its own.
-    let clock = SystemClock::detect(&[server("127.0.0.1:0", vec![0])]).unwrap();
+    let clock = SystemClock::detect(Servers::new([server("127.0.0.1:0", vec![0])])).unwrap();
     let before = wall();
     let now = clock.now().unwrap();
     assert!(
@@ -231,7 +297,7 @@ async fn the_system_clock_reads_true_time_and_waits_it_out() {
 
 #[test]
 fn a_system_clock_over_ntp_refreshes_with_a_new_sample() {
-    let ntp = NtpClock::sync(&[server("127.0.0.1:0", vec![0, 50])]).unwrap();
+    let ntp = NtpClock::sync(Servers::new([server("127.0.0.1:0", vec![0, 50])])).unwrap();
     let clock = SystemClock::Ntp(ntp);
     reads_ahead(&clock, 0);
     assert!(matches!(
@@ -243,7 +309,7 @@ fn a_system_clock_over_ntp_refreshes_with_a_new_sample() {
 
 #[test]
 fn a_system_clock_refresh_keeps_it_reading() {
-    let clock = SystemClock::detect(&[server("127.0.0.1:0", vec![0, 0])]).unwrap();
+    let clock = SystemClock::detect(Servers::new([server("127.0.0.1:0", vec![0, 0])])).unwrap();
     clock.refresh().unwrap();
     let before = wall();
     let now = clock.now().unwrap();
@@ -257,7 +323,8 @@ fn a_system_clock_refresh_keeps_it_reading() {
 fn an_ntp_clock_reads_its_time_source() {
     let start = wall();
     let time = Arc::new(ManualTime::new(start));
-    let clock = NtpClock::sync_with(&[server("127.0.0.1:0", vec![3])], time.clone()).unwrap();
+    let clock =
+        NtpClock::sync_with(Servers::new([server("127.0.0.1:0", vec![3])]), time.clone()).unwrap();
     let reading = |clock: &NtpClock<Arc<ManualTime>>| {
         let now = clock.now().unwrap();
         (now.settled.0 + now.revision.0) / 2
@@ -287,7 +354,7 @@ fn a_small_step_either_way_widens_the_reading_by_its_size() {
 fn driven(answers: usize) -> (Arc<ManualTime>, NtpClock<Arc<ManualTime>>) {
     let time = Arc::new(ManualTime::new(wall()));
     let server = server("127.0.0.1:0", vec![0; answers]);
-    let clock = NtpClock::sync_with(&[server], time.clone()).unwrap();
+    let clock = NtpClock::sync_with(Servers::new([server]), time.clone()).unwrap();
     (time, clock)
 }
 
@@ -348,4 +415,99 @@ async fn a_long_outage_refuses_writes_instead_of_hanging_them() {
     assert_eq!(wait.unwrap(), Err(ClockFault::Unsynchronized));
     assert!(matches!(clock.resync(), Err(ClockError::Io(_))));
     assert_eq!(clock.now(), Err(ClockFault::Unsynchronized));
+}
+
+#[test]
+fn a_falseticker_is_outvoted_and_named() {
+    let honest = (0..3).map(|_| counting(vec![Answer::Ahead(0)]).0);
+    let (wrong, _) = counting(vec![Answer::Ahead(100)]);
+    let servers: Vec<_> = honest.chain([wrong]).collect();
+    let clock = NtpClock::sync(Servers::new(servers)).unwrap();
+    reads_ahead(&clock, 0);
+    assert_eq!(clock.last_sync().falsetickers, vec![wrong.to_string()]);
+}
+
+#[test]
+fn two_wrong_servers_of_four_fail_the_sync() {
+    let servers: Vec<_> = [0, 0, 100, -100]
+        .into_iter()
+        .map(|ahead| counting(vec![Answer::Ahead(ahead)]).0)
+        .collect();
+    assert!(matches!(
+        NtpClock::sync(Servers::new(servers)),
+        Err(ClockError::Disagree)
+    ));
+}
+
+#[test]
+fn a_sync_asks_every_server_at_once() {
+    let quiet: Vec<_> = (0..3).map(|_| silent()).collect();
+    let (good, _) = counting(vec![Answer::Ahead(0)]);
+    let servers = quiet.iter().map(|(_, address)| *address).chain([good]);
+    let started = Instant::now();
+    let clock = NtpClock::sync(Servers::new(servers)).unwrap();
+    // One timeout for all three silent servers, not one each.
+    assert!(started.elapsed() < Duration::from_millis(1_500));
+    assert_eq!(clock.last_sync().unanswered.len(), 3);
+}
+
+#[test]
+fn a_rate_kiss_holds_the_server_off_for_twice_the_poll() {
+    let time = Arc::new(ManualTime::new(wall()));
+    let (kisser, kissed) = counting(vec![Answer::Kiss(b"RATE"), Answer::Ahead(0)]);
+    let honest = (0..2).map(|_| counting(vec![Answer::Ahead(0); 3]).0);
+    let servers: Vec<_> = [kisser].into_iter().chain(honest).collect();
+    let clock = NtpClock::sync_with(Servers::new(servers), time.clone()).unwrap();
+    assert_eq!(
+        clock.last_sync().kissed,
+        vec![(kisser.to_string(), *b"RATE")]
+    );
+    clock.resync().unwrap();
+    assert_eq!(asked(&kissed), 1);
+    time.advance(Duration::from_secs(127));
+    clock.resync().unwrap();
+    assert_eq!(asked(&kissed), 1);
+    time.advance(Duration::from_secs(1));
+    clock.resync().unwrap();
+    assert_eq!(asked(&kissed), 2);
+    assert!(clock.last_sync().kissed.is_empty());
+}
+
+#[test]
+fn a_deny_kiss_stops_the_server_for_good() {
+    let time = Arc::new(ManualTime::new(wall()));
+    let (denier, denied) = counting(vec![Answer::Kiss(b"DENY")]);
+    let (honest, _) = counting(vec![Answer::Ahead(0); 2]);
+    let clock = NtpClock::sync_with(Servers::new([denier, honest]), time.clone()).unwrap();
+    time.advance(Duration::from_secs(86_400));
+    clock.resync().unwrap();
+    assert_eq!(asked(&denied), 1);
+    let (alone, _) = counting(vec![Answer::Kiss(b"DENY")]);
+    assert!(matches!(
+        NtpClock::sync(Servers::new([alone])),
+        Err(ClockError::Kiss(code)) if &code == b"DENY"
+    ));
+}
+
+#[test]
+fn a_name_is_resolved_again_on_every_sync() {
+    let (first, asked_first) = counting(vec![Answer::Ahead(0)]);
+    let (second, asked_second) = counting(vec![Answer::Ahead(0)]);
+    let address = Arc::new(Mutex::new(first));
+    let resolving = address.clone();
+    let servers = Servers::new(["ntp.test:123"])
+        .resolving_with(move |_: &str| Ok(*resolving.lock().unwrap()));
+    let clock = NtpClock::sync(servers).unwrap();
+    *address.lock().unwrap() = second;
+    clock.resync().unwrap();
+    assert_eq!((asked(&asked_first), asked(&asked_second)), (1, 1));
+}
+
+#[test]
+fn a_leap_second_a_server_announces_is_noted() {
+    for (indicator, leap) in [(0, None), (1, Some(Leap::Insert)), (2, Some(Leap::Delete))] {
+        let (server, _) = counting(vec![Answer::Leap(indicator)]);
+        let clock = NtpClock::sync(Servers::new([server])).unwrap();
+        assert_eq!(clock.last_sync().leap, leap);
+    }
 }

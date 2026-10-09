@@ -1,12 +1,12 @@
 //! The production clock, chosen at startup.
 
-use std::{future::Future, net::ToSocketAddrs};
+use std::future::Future;
 
 use sungma::clock::{Clock, ClockFault, Reading};
 
 #[cfg(target_os = "linux")]
 use crate::LinuxClock;
-use crate::{ClockError, NtpClock, wall};
+use crate::{ClockError, NtpClock, Servers, wall};
 
 /// The Linux kernel's clock when it reports a bound, else NTP. An enum
 /// rather than a `Box<dyn Clock>`: [`Clock::wait`] returns `impl Future`,
@@ -22,7 +22,7 @@ pub enum SystemClock {
 impl SystemClock {
     /// The Linux kernel's clock when it is synchronized, else an
     /// [`NtpClock`] synced from `servers`, which blocks on the network.
-    pub fn detect<A: ToSocketAddrs>(servers: &[A]) -> Result<Self, ClockError> {
+    pub fn detect(servers: Servers) -> Result<Self, ClockError> {
         #[cfg(target_os = "linux")]
         if let Some(clock) = LinuxClock::detect() {
             return Ok(Self::Linux(clock));
