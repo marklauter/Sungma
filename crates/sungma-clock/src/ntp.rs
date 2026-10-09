@@ -4,8 +4,9 @@
 //! offset from the server and a bound: half the round trip, plus half the
 //! server's root delay, plus its root dispersion, which is RFC 5905's root
 //! distance. The clock keeps the range where most servers agree, as
-//! Marzullo's algorithm does. A server outside it is a falseticker, and a
-//! sync fails unless more than half the servers that answered agree.
+//! Marzullo's algorithm does. A server outside it is a falseticker. A sync
+//! fails unless at least three servers answer and more than half of those
+//! agree.
 
 use std::{
     future::Future,
@@ -27,6 +28,10 @@ const UNIX_EPOCH_SECONDS: i128 = 2_208_988_800;
 const NANOS: i128 = 1_000_000_000;
 const PACKET: usize = 48;
 const TIMEOUT: Duration = Duration::from_secs(1);
+
+/// The fewest answers a sync takes. Fewer can't outvote a falseticker, so
+/// the sync fails, and the window's bound grows until a sync succeeds.
+const MIN_ANSWERS: usize = 3;
 
 /// How often a server is asked at most, NTP's shortest standard poll,
 /// 64 s, which a Kiss-o'-Death `RATE` doubles.
@@ -253,6 +258,11 @@ fn agree(
     }
     if answers.is_empty() {
         return Err(error);
+    }
+    if answers.len() < MIN_ANSWERS {
+        return Err(ClockError::TooFewAnswers {
+            answered: answers.len(),
+        });
     }
     let ranges: Vec<_> = answers
         .iter()
