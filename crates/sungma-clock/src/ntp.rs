@@ -141,6 +141,16 @@ impl Schedule {
     fn askable(&self, now: u64) -> bool {
         now >= self.held_until
     }
+
+    /// Takes in an answer. One that wasn't `authenticated` halves a poll a
+    /// `RATE` raised, back toward [`MIN_POLL`], so a spoofed `RATE` wears
+    /// off; a poll an authenticated `RATE` raised stays.
+    fn answered(&mut self, authenticated: bool) {
+        self.denied = false;
+        if !authenticated {
+            self.poll = (self.poll / 2).max(MIN_POLL);
+        }
+    }
 }
 
 /// The system clock, corrected by the servers' offset, give or take their
@@ -351,7 +361,7 @@ fn agree(
         let name = servers.names[at].clone();
         match reply.result {
             Ok(answer) => {
-                peers[at].schedule.denied = false;
+                peers[at].schedule.answered(reply.authenticated);
                 answers.push((name, answer));
             }
             Err(ClockError::Kiss(code)) => {
@@ -901,6 +911,26 @@ mod tests {
         schedule.asked(1_000);
         assert!(!schedule.askable(1_000 + 2 * MIN_POLL - 1));
         assert!(schedule.askable(1_000 + 2 * MIN_POLL));
+    }
+
+    #[test]
+    fn an_unauthenticated_answer_halves_a_raised_poll() {
+        let mut schedule = Schedule::default();
+        for _ in 0..3 {
+            schedule.kissed(*b"RATE", 0, false);
+        }
+        assert_eq!(schedule.poll, 8 * MIN_POLL);
+        schedule.answered(false);
+        assert_eq!(schedule.poll, 4 * MIN_POLL);
+        schedule.answered(true);
+        assert_eq!(schedule.poll, 4 * MIN_POLL);
+        for _ in 0..3 {
+            schedule.answered(false);
+        }
+        assert_eq!(schedule.poll, MIN_POLL);
+        schedule.kissed(*b"DENY", 0, false);
+        schedule.answered(true);
+        assert!(!schedule.denied);
     }
 
     #[test]

@@ -473,8 +473,9 @@ fn a_rate_kiss_holds_the_server_off_for_twice_the_poll() {
         Answer::Kiss(b"RATE"),
         Answer::Ahead(0),
         Answer::Ahead(0),
+        Answer::Ahead(0),
     ]);
-    let honest = counting_trio(vec![Answer::Ahead(0); 6]);
+    let honest = counting_trio(vec![Answer::Ahead(0); 7]);
     let servers: Vec<_> = [kisser].into_iter().chain(honest).collect();
     let clock = NtpClock::sync_with(Servers::new(servers), time.clone()).unwrap();
     assert_eq!(
@@ -490,13 +491,16 @@ fn a_rate_kiss_holds_the_server_off_for_twice_the_poll() {
     clock.resync().unwrap();
     assert_eq!(asked(&kissed), 2);
     assert!(clock.last_sync().kissed.is_empty());
-    // The raised poll stays: the server is held off after every ask.
+    // That ask held the server for the raised poll again, but its answer
+    // halved the poll back to 64 s: a spoofed RATE wears off.
     time.advance(Duration::from_secs(127));
     clock.resync().unwrap();
     assert_eq!(asked(&kissed), 2);
     time.advance(Duration::from_secs(1));
     clock.resync().unwrap();
     assert_eq!(asked(&kissed), 3);
+    clock.resync().unwrap();
+    assert_eq!(asked(&kissed), 4);
 }
 
 #[test]
