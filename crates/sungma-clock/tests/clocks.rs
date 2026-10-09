@@ -454,8 +454,12 @@ fn a_sync_asks_every_server_at_once() {
 #[test]
 fn a_rate_kiss_holds_the_server_off_for_twice_the_poll() {
     let time = Arc::new(ManualTime::new(wall()));
-    let (kisser, kissed) = counting(vec![Answer::Kiss(b"RATE"), Answer::Ahead(0)]);
-    let honest = (0..2).map(|_| counting(vec![Answer::Ahead(0); 3]).0);
+    let (kisser, kissed) = counting(vec![
+        Answer::Kiss(b"RATE"),
+        Answer::Ahead(0),
+        Answer::Ahead(0),
+    ]);
+    let honest = (0..2).map(|_| counting(vec![Answer::Ahead(0); 5]).0);
     let servers: Vec<_> = [kisser].into_iter().chain(honest).collect();
     let clock = NtpClock::sync_with(Servers::new(servers), time.clone()).unwrap();
     assert_eq!(
@@ -471,6 +475,13 @@ fn a_rate_kiss_holds_the_server_off_for_twice_the_poll() {
     clock.resync().unwrap();
     assert_eq!(asked(&kissed), 2);
     assert!(clock.last_sync().kissed.is_empty());
+    // The raised poll stays: the server is held off after every ask.
+    time.advance(Duration::from_secs(127));
+    clock.resync().unwrap();
+    assert_eq!(asked(&kissed), 2);
+    time.advance(Duration::from_secs(1));
+    clock.resync().unwrap();
+    assert_eq!(asked(&kissed), 3);
 }
 
 #[test]
@@ -479,9 +490,13 @@ fn a_deny_kiss_stops_the_server_for_good() {
     let (denier, denied) = counting(vec![Answer::Kiss(b"DENY")]);
     let (honest, _) = counting(vec![Answer::Ahead(0); 2]);
     let clock = NtpClock::sync_with(Servers::new([denier, honest]), time.clone()).unwrap();
+    assert_eq!(clock.last_sync().denied, vec![denier.to_string()]);
     time.advance(Duration::from_secs(86_400));
     clock.resync().unwrap();
     assert_eq!(asked(&denied), 1);
+    // A denied server is listed on every sync, though it isn't asked.
+    assert_eq!(clock.last_sync().denied, vec![denier.to_string()]);
+    assert!(clock.last_sync().kissed.is_empty());
     let (alone, _) = counting(vec![Answer::Kiss(b"DENY")]);
     assert!(matches!(
         NtpClock::sync(Servers::new([alone])),
@@ -501,6 +516,15 @@ fn a_name_is_resolved_again_on_every_sync() {
     *address.lock().unwrap() = second;
     clock.resync().unwrap();
     assert_eq!((asked(&asked_first), asked(&asked_second)), (1, 1));
+}
+
+#[test]
+fn a_failed_resync_reports_what_it_found() {
+    let (server, _) = counting(vec![Answer::Ahead(0)]);
+    let clock = NtpClock::sync(Servers::new([server])).unwrap();
+    assert!(clock.last_sync().unanswered.is_empty());
+    assert!(matches!(clock.resync(), Err(ClockError::Io(_))));
+    assert_eq!(clock.last_sync().unanswered, vec![server.to_string()]);
 }
 
 #[test]

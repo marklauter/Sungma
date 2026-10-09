@@ -42,15 +42,17 @@ pub enum Leap {
     Delete,
 }
 
-/// What the last successful sync found.
+/// What the last sync found, whether it succeeded or not.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct SyncReport {
     /// Servers that answered outside the majority's range.
     pub falsetickers: Vec<String>,
     /// Servers that didn't answer, or whose answer was refused.
     pub unanswered: Vec<String>,
-    /// Servers that sent Kiss-o'-Death, with its code.
+    /// Servers that sent Kiss-o'-Death this sync, with its code.
     pub kissed: Vec<(String, [u8; 4])>,
+    /// Servers that asked, by `DENY` or `RSTR`, never to be asked again.
+    pub denied: Vec<String>,
     /// A leap second announced by a server in the majority.
     pub leap: Option<Leap>,
 }
@@ -76,12 +78,21 @@ impl Default for Schedule {
 }
 
 impl Schedule {
+    /// Notes that the server was asked at monotonic time `now`. A server
+    /// whose poll a `RATE` raised is held off for that poll after every
+    /// ask, not only after the kiss.
+    fn asked(&mut self, now: u64) {
+        if self.poll > MIN_POLL {
+            self.held_until = now.saturating_add(self.poll);
+        }
+    }
+
     /// Takes in a Kiss-o'-Death sent at monotonic time `now`.
     fn kissed(&mut self, code: [u8; 4], now: u64) {
         match &code {
             b"RATE" => {
                 self.poll = self.poll.saturating_mul(2).min(MAX_POLL);
-                self.held_until = now.saturating_add(self.poll);
+                self.asked(now);
             }
             b"DENY" | b"RSTR" => self.denied = true,
             _ => {}
@@ -116,7 +127,8 @@ impl<T: TimeSource> NtpClock<T> {
     /// [`NtpClock::sync`], on the clocks `time` reads.
     pub fn sync_with(servers: Servers, time: T) -> Result<Self, ClockError> {
         let mut schedules = vec![Schedule::default(); servers.names.len()];
-        let (sample, report) = sync(&servers, &mut schedules, &time)?;
+        let (sample, report) = sync(&servers, &mut schedules, &time);
+        let sample = sample?;
         Ok(Self {
             servers,
             schedules: Mutex::new(schedules),
@@ -134,12 +146,12 @@ impl<T: TimeSource> NtpClock<T> {
             .schedules
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let (sample, report) = sync(&self.servers, &mut schedules, self.sampled.time())?;
+        let (sample, report) = sync(&self.servers, &mut schedules, self.sampled.time());
         *self.last.lock().unwrap_or_else(PoisonError::into_inner) = report;
-        Ok(self.sampled.add(sample)?)
+        Ok(self.sampled.add(sample?)?)
     }
 
-    /// What the last successful sync found.
+    /// What the last sync found, whether it succeeded or not.
     pub fn last_sync(&self) -> SyncReport {
         self.last
             .lock()
@@ -159,17 +171,43 @@ impl<T: TimeSource> Clock for NtpClock<T> {
 }
 
 /// Asks every server that may be asked, at once, and keeps the majority's
-/// range.
+/// range. The report says what the sync found, even when it fails.
 fn sync(
     servers: &Servers,
     schedules: &mut [Schedule],
     time: &impl TimeSource,
-) -> Result<(Sample, SyncReport), ClockError> {
+) -> (Result<Sample, ClockError>, SyncReport) {
     let now = time.monotonic();
+    let mut report = SyncReport::default();
+    for (name, schedule) in servers.names.iter().zip(schedules.iter()) {
+        if schedule.denied {
+            report.denied.push(name.clone());
+        }
+    }
     let asked: Vec<usize> = (0..servers.names.len())
         .filter(|&at| schedules[at].askable(now))
         .collect();
-    let replies: Vec<_> = thread::scope(|scope| {
+    for &at in &asked {
+        schedules[at].asked(now);
+    }
+    let sample = agree(
+        servers,
+        schedules,
+        &asked,
+        query_all(servers, &asked, time),
+        now,
+        &mut report,
+    );
+    (sample, report)
+}
+
+/// Queries the servers at `asked`, each on its own thread.
+fn query_all(
+    servers: &Servers,
+    asked: &[usize],
+    time: &impl TimeSource,
+) -> Vec<Result<Answer, ClockError>> {
+    thread::scope(|scope| {
         let queries: Vec<_> = asked
             .iter()
             .map(|&at| {
@@ -181,8 +219,18 @@ fn sync(
             .into_iter()
             .map(|query| query.join().expect("a query doesn't panic"))
             .collect()
-    });
-    let mut report = SyncReport::default();
+    })
+}
+
+/// Sorts the replies into the report, and keeps the majority's range.
+fn agree(
+    servers: &Servers,
+    schedules: &mut [Schedule],
+    asked: &[usize],
+    replies: Vec<Result<Answer, ClockError>>,
+    now: u64,
+    report: &mut SyncReport,
+) -> Result<Sample, ClockError> {
     let mut answers = Vec::new();
     let mut error = ClockError::NoServers;
     for (&at, reply) in asked.iter().zip(replies) {
@@ -191,6 +239,9 @@ fn sync(
             Ok(answer) => answers.push((name, answer)),
             Err(ClockError::Kiss(code)) => {
                 schedules[at].kissed(code, now);
+                if schedules[at].denied {
+                    report.denied.push(name.clone());
+                }
                 report.kissed.push((name, code));
                 error = ClockError::Kiss(code);
             }
@@ -217,7 +268,7 @@ fn sync(
             report.falsetickers.push(name);
         }
     }
-    Ok((intersect(&samples)?, report))
+    intersect(&samples)
 }
 
 /// The range a sample allows, its low and high ends.
@@ -626,6 +677,17 @@ mod tests {
             schedule.kissed(*b"RATE", 0);
         }
         assert_eq!(schedule.poll, MAX_POLL);
+    }
+
+    #[test]
+    fn only_a_raised_poll_holds_a_server_after_it_is_asked() {
+        let mut schedule = Schedule::default();
+        schedule.asked(1_000);
+        assert!(schedule.askable(1_000));
+        schedule.kissed(*b"RATE", 0);
+        schedule.asked(1_000);
+        assert!(!schedule.askable(1_000 + 2 * MIN_POLL - 1));
+        assert!(schedule.askable(1_000 + 2 * MIN_POLL));
     }
 
     #[test]
