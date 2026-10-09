@@ -13,7 +13,7 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
     sync::{Mutex, PoisonError},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use sungma::clock::{Clock, ClockFault, Reading};
@@ -453,33 +453,51 @@ fn ask_nts(
         .request(request(sent), unique)
         .ok_or_else(|| ClockError::Nts("no cookie is left".to_owned()))?;
     socket.send(&packet)?;
-    let mut reply = [0; REPLY];
-    let length = socket.recv(&mut reply)?;
-    let received = time.wall();
-    let reply = &reply[..length];
-    if let Some(header) = association.verify(reply, &unique) {
-        return Ok(Reply {
-            result: answer(header, sent, received),
-            authenticated: true,
-        });
+    // Packets that don't verify, such as a late reply to an earlier
+    // request, are skipped until the timeout.
+    let until = Instant::now() + TIMEOUT;
+    loop {
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(ClockError::Nts("no authenticated reply came".to_owned()));
+        }
+        socket.set_read_timeout(Some(left))?;
+        let mut reply = [0; REPLY];
+        let length = socket.recv(&mut reply)?;
+        let received = time.wall();
+        let reply = &reply[..length];
+        if let Some(header) = association.verify(reply, &unique) {
+            return Ok(Reply {
+                result: answer(header, sent, received),
+                authenticated: true,
+            });
+        }
+        if nak(reply, sent, &unique) {
+            association.cookies.clear();
+            return Err(ClockError::Nts(
+                "the server no longer knows our cookies".to_owned(),
+            ));
+        }
     }
-    if nak(reply, sent) {
-        association.cookies.clear();
-        return Err(ClockError::Nts(
-            "the server no longer knows our cookies".to_owned(),
-        ));
-    }
-    Err(ClockError::Nts("a reply isn't authenticated".to_owned()))
 }
 
-/// Whether `reply` is an NTS NAK to the request sent at `sent`: a
-/// Kiss-o'-Death `NTSN`, which comes unauthenticated.
-fn nak(reply: &[u8], sent: u64) -> bool {
-    reply.len() >= PACKET
-        && reply[0] & 0b111 == 4
-        && reply[1] == 0
-        && &reply[12..16] == b"NTSN"
-        && reply[24..32] == to_ntp(sent).to_be_bytes()
+/// Whether `reply` is an NTS NAK to the request sent at `sent` with
+/// `unique`: a Kiss-o'-Death `NTSN`, which comes unauthenticated but echoes
+/// the request's time and identifier.
+fn nak(reply: &[u8], sent: u64, unique: &[u8; 32]) -> bool {
+    let Some((header, extensions)) = reply.split_at_checked(PACKET) else {
+        return false;
+    };
+    let echoed = nts::fields(extensions).is_some_and(|fields| {
+        fields
+            .iter()
+            .any(|&(_, kind, body)| kind == nts::UNIQUE_ID && body == unique)
+    });
+    echoed
+        && header[0] & 0b111 == 4
+        && header[1] == 0
+        && &header[12..16] == b"NTSN"
+        && header[24..32] == to_ntp(sent).to_be_bytes()
 }
 
 /// A client request, version 4, with `sent` as its transmit time, which the
@@ -870,6 +888,29 @@ mod tests {
         schedule.kissed(*b"INIT", 5, false);
         assert!(schedule.askable(0));
         assert_eq!(schedule.poll, MIN_POLL);
+    }
+
+    #[test]
+    fn a_nak_must_echo_the_requests_time_and_identifier() {
+        let mut header = reply(NOW, NOW, NOW);
+        header[0] = 0xe4;
+        header[1] = 0;
+        header[12..16].copy_from_slice(b"NTSN");
+        let with =
+            |unique: [u8; 32]| [header.to_vec(), nts::field(nts::UNIQUE_ID, &unique)].concat();
+        assert!(nak(&with([4; 32]), NOW, &[4; 32]));
+        assert!(!nak(&with([5; 32]), NOW, &[4; 32]));
+        assert!(!nak(&header, NOW, &[4; 32]));
+        assert!(!nak(&with([4; 32]), NOW + 1_000, &[4; 32]));
+        assert!(!nak(&with([4; 32])[..47], NOW, &[4; 32]));
+        let mut malformed = header.to_vec();
+        malformed.extend([0, 1, 0, 3]);
+        assert!(!nak(&malformed, NOW, &[4; 32]));
+        for (at, byte) in [(0, 0xe3), (1, 2), (12, b'X')] {
+            let mut other = with([4; 32]);
+            other[at] = byte;
+            assert!(!nak(&other, NOW, &[4; 32]), "{at}");
+        }
     }
 
     #[test]

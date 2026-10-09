@@ -7,10 +7,10 @@
 //! encrypted part, so a forged or altered reply is refused.
 
 use std::{
-    io::{Read, Write},
+    io::{self, Read, Write},
     net::TcpStream,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use aes_siv::{
@@ -23,7 +23,13 @@ use crate::{ClockError, Resolve};
 
 /// The key exchange's port.
 pub(crate) const KE_PORT: u16 = 4460;
-const KE_TIMEOUT: Duration = Duration::from_secs(2);
+/// The longest a whole key exchange may take, so a server that trickles
+/// bytes can't stall a sync.
+pub(crate) const KE_DEADLINE: Duration = Duration::from_secs(5);
+
+/// The most a key exchange response may hold, so a server can't stream
+/// records without end.
+const KE_LIMIT: usize = 64 * 1024;
 const ALPN: &[u8] = b"ntske/1";
 const EXPORTER: &[u8] = b"EXPORTER-network-time-security";
 
@@ -122,15 +128,21 @@ pub(crate) struct Negotiated {
     pub(crate) port: Option<u16>,
 }
 
-/// Reads key exchange records from `stream` until the end record.
+/// Reads key exchange records from `stream` until the end record, keeping
+/// at most eight cookies, and refusing a response past 64 KiB.
 pub(crate) fn ke_response(stream: &mut impl Read) -> Result<Negotiated, ClockError> {
     let mut negotiated = Negotiated::default();
     let (mut protocol, mut aead) = (false, false);
+    let mut read = 0;
     loop {
         let mut header = [0; 4];
         stream.read_exact(&mut header)?;
         let kind = u16::from_be_bytes([header[0], header[1]]);
         let mut body = vec![0; usize::from(u16::from_be_bytes([header[2], header[3]]))];
+        read += header.len() + body.len();
+        if read > KE_LIMIT {
+            return Err(nts("the key exchange response is too long"));
+        }
         stream.read_exact(&mut body)?;
         let pairs = || {
             body.as_chunks::<2>()
@@ -143,7 +155,8 @@ pub(crate) fn ke_response(stream: &mut impl Read) -> Result<Negotiated, ClockErr
             NEXT_PROTOCOL => protocol = pairs().eq([NTPV4]),
             AEAD => aead = pairs().eq([AES_SIV]),
             ERROR => return Err(nts("the key exchange server refused")),
-            NEW_COOKIE => negotiated.cookies.push(body),
+            NEW_COOKIE if negotiated.cookies.len() < COOKIES => negotiated.cookies.push(body),
+            NEW_COOKIE => {}
             SERVER => {
                 let host = String::from_utf8(body).map_err(|_| nts("a server name isn't text"))?;
                 negotiated.server = Some(host);
@@ -175,23 +188,67 @@ pub(crate) fn exported(
     Ok(Aes128SivAead::new(&Key::<Aes128SivAead>::from(key)))
 }
 
-/// Runs a key exchange with `host`, on port 4460.
+/// A TLS stream that gives up at a deadline, however the bytes trickle.
+struct Deadline {
+    stream: StreamOwned<ClientConnection, TcpStream>,
+    until: Instant,
+}
+
+impl Deadline {
+    /// Sets the socket's timeouts to the time left, or fails once none is.
+    fn remaining(&self) -> io::Result<()> {
+        let left = self.until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the key exchange took too long",
+            ));
+        }
+        self.stream.sock.set_read_timeout(Some(left))?;
+        self.stream.sock.set_write_timeout(Some(left))
+    }
+}
+
+impl Read for Deadline {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.remaining()?;
+        self.stream.read(buffer)
+    }
+}
+
+impl Write for Deadline {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.remaining()?;
+        self.stream.write(buffer)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.remaining()?;
+        self.stream.flush()
+    }
+}
+
+/// Runs a key exchange with `host`, on port 4460, giving up after
+/// [`KE_DEADLINE`].
 pub(crate) fn exchange(
     host: &str,
     resolver: &dyn Resolve,
     tls: &Arc<ClientConfig>,
 ) -> Result<Association, ClockError> {
+    let until = Instant::now() + KE_DEADLINE;
     let address = resolver.resolve(&format!("{host}:{KE_PORT}"))?;
-    let tcp = TcpStream::connect_timeout(&address, KE_TIMEOUT)?;
-    tcp.set_read_timeout(Some(KE_TIMEOUT))?;
-    tcp.set_write_timeout(Some(KE_TIMEOUT))?;
+    let tcp = TcpStream::connect_timeout(&address, KE_DEADLINE)?;
     let name = ServerName::try_from(host.to_owned()).map_err(|_| nts("a host name isn't valid"))?;
     let connection = ClientConnection::new(tls.clone(), name)
         .map_err(|failed| ClockError::Nts(failed.to_string()))?;
-    let mut stream = StreamOwned::new(connection, tcp);
+    let mut stream = Deadline {
+        stream: StreamOwned::new(connection, tcp),
+        until,
+    };
     stream.write_all(&ke_request())?;
     stream.flush()?;
     let negotiated = ke_response(&mut stream)?;
+    let stream = stream.stream;
     let export = |direction| {
         exported(
             |key, label, context| {
@@ -337,6 +394,9 @@ impl Association {
                 self.cookies.push(cookie.to_vec());
             }
         }
+        // A server that sends more than were asked for doesn't grow the
+        // store past eight.
+        self.cookies.truncate(COOKIES);
         Some(header)
     }
 }
@@ -443,6 +503,36 @@ mod tests {
     }
 
     #[test]
+    fn a_response_keeps_eight_cookies_and_stops_at_64_kib() {
+        let mut records = agreed();
+        records.extend((0..12).map(|n| record(NEW_COOKIE, &[n])));
+        records.push(record(CRITICAL | END, &[]));
+        let negotiated = response(&records).unwrap();
+        assert_eq!(
+            negotiated.cookies,
+            (0..8).map(|n| vec![n]).collect::<Vec<_>>()
+        );
+        // A 4-byte header and 1,020-byte body is 1,024 bytes a record.
+        let mut flood = agreed();
+        flood.extend((0..64).map(|_| record(NEW_COOKIE, &[0; 1_020])));
+        flood.push(record(CRITICAL | END, &[]));
+        match response(&flood) {
+            Err(ClockError::Nts(reason)) => {
+                assert_eq!(reason, "the key exchange response is too long");
+            }
+            other => panic!("{other:?}"),
+        }
+        // Exactly 64 KiB is read.
+        let mut full = agreed();
+        let used = full.iter().map(Vec::len).sum::<usize>() + 4;
+        full.extend((0..63).map(|_| record(NEW_COOKIE, &[0; 1_020])));
+        full.push(record(NEW_COOKIE, &vec![0; 1_024 - used - 4]));
+        full.push(record(CRITICAL | END, &[]));
+        assert_eq!(full.iter().map(Vec::len).sum::<usize>(), KE_LIMIT);
+        assert!(response(&full).is_ok());
+    }
+
+    #[test]
     fn keys_are_exported_for_each_direction() {
         let seen = std::cell::RefCell::new(Vec::new());
         let export = |key: &mut [u8; 32], label: &[u8], context: &[u8]| {
@@ -544,6 +634,16 @@ mod tests {
         assert_eq!(association.verify(&packet, &[4; 32]), Some(&packet[..48]));
         assert_eq!(association.cookies.len(), 4);
         assert_eq!(association.cookies[3], b"new2");
+    }
+
+    #[test]
+    fn a_reply_with_more_cookies_than_asked_keeps_eight() {
+        let mut association = association();
+        let cookies: Vec<[u8; 4]> = (0..20).map(|n| [n; 4]).collect();
+        let cookies: Vec<&[u8]> = cookies.iter().map(|cookie| &cookie[..]).collect();
+        let packet = reply([4; 32], &cipher(2), &cookies);
+        assert!(association.verify(&packet, &[4; 32]).is_some());
+        assert_eq!(association.cookies.len(), 8);
     }
 
     #[test]

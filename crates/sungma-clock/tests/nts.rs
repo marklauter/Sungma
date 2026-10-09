@@ -7,7 +7,7 @@ use std::{
     net::{SocketAddr, TcpListener, UdpSocket},
     sync::{Arc, Mutex},
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use aes_siv::{
@@ -37,6 +37,10 @@ enum Behavior {
     WrongKey,
     /// Answers with an unauthenticated NTS NAK.
     Nak,
+    /// Answers with a NAK that doesn't echo the request's identifier.
+    NakWithoutId,
+    /// Sends a stray packet, then an honest reply.
+    Stray,
     /// Answers with an authenticated Kiss-o'-Death DENY.
     Deny,
 }
@@ -50,6 +54,16 @@ struct State {
     exchanges: usize,
     requests: usize,
     behaviors: VecDeque<Behavior>,
+}
+
+/// How a server runs its key exchange.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Exchange {
+    Honest,
+    /// Trickles its response a byte every 50 ms.
+    Slow,
+    /// Streams more than 64 KiB of cookies.
+    Flood,
 }
 
 /// An NTS server: a key exchange listener and an NTP socket.
@@ -156,6 +170,15 @@ fn tls(certified: &rcgen::CertifiedKey<rcgen::KeyPair>) -> Arc<ServerConfig> {
 /// Starts a server for `host` that behaves as `behaviors` says, request by
 /// request, and honestly after them.
 fn serve(host: &'static str, config: Arc<ServerConfig>, behaviors: &[Behavior]) -> NtsServer {
+    serve_exchanging(host, config, behaviors, Exchange::Honest)
+}
+
+fn serve_exchanging(
+    host: &'static str,
+    config: Arc<ServerConfig>,
+    behaviors: &[Behavior],
+    exchange: Exchange,
+) -> NtsServer {
     let state = Arc::new(Mutex::new(State {
         behaviors: behaviors.iter().copied().collect(),
         ..State::default()
@@ -204,8 +227,26 @@ fn serve(host: &'static str, config: Arc<ServerConfig>, behaviors: &[Behavior]) 
             for cookie in &cookies {
                 response.extend(record(5, cookie));
             }
+            if exchange == Exchange::Flood {
+                for _ in 0..80 {
+                    response.extend(record(5, &[0; 1_020]));
+                }
+            }
             response.extend(record(0x8000, &[]));
-            stream.write_all(&response).unwrap();
+            if exchange == Exchange::Slow {
+                for byte in response {
+                    if stream
+                        .write_all(&[byte])
+                        .and_then(|()| stream.flush())
+                        .is_err()
+                    {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(50));
+                }
+                continue;
+            }
+            let _ = stream.write_all(&response);
             stream.conn.send_close_notify();
             let _ = stream.flush();
         }
@@ -239,19 +280,33 @@ fn serve(host: &'static str, config: Arc<ServerConfig>, behaviors: &[Behavior]) 
             for at in [24, 32, 40] {
                 header[at..at + 8].copy_from_slice(origin);
             }
-            if matches!(behavior, Behavior::Nak | Behavior::Deny) {
+            if matches!(
+                behavior,
+                Behavior::Nak | Behavior::NakWithoutId | Behavior::Deny
+            ) {
                 header[0] = 0xe4;
                 header[1] = 0;
-                let code = if behavior == Behavior::Nak {
-                    b"NTSN"
-                } else {
+                let code = if behavior == Behavior::Deny {
                     b"DENY"
+                } else {
+                    b"NTSN"
                 };
                 header[12..16].copy_from_slice(code);
             }
-            if behavior == Behavior::Nak {
-                ntp.send_to(&header, client).unwrap();
-                continue;
+            match behavior {
+                Behavior::Nak => {
+                    let nak = [header.to_vec(), field(UNIQUE_ID, unique)].concat();
+                    ntp.send_to(&nak, client).unwrap();
+                    continue;
+                }
+                Behavior::NakWithoutId => {
+                    ntp.send_to(&header, client).unwrap();
+                    continue;
+                }
+                Behavior::Stray => {
+                    ntp.send_to(&[0x24; 48], client).unwrap();
+                }
+                _ => {}
             }
             let mut packet = header.to_vec();
             packet.extend(field(UNIQUE_ID, unique));
@@ -369,6 +424,80 @@ fn a_nak_exchanges_keys_again() {
     clock.resync().unwrap();
     assert!(clock.last_sync().unanswered.is_empty());
     assert_eq!(nts[3].state().exchanges, 2);
+}
+
+#[test]
+fn a_nak_without_our_identifier_is_ignored() {
+    let (nts, certificate) = four(&[Behavior::Honest, Behavior::NakWithoutId]);
+    let clock = NtpClock::sync(servers(&all(&nts), &certificate)).unwrap();
+    clock.resync().unwrap();
+    assert_eq!(clock.last_sync().unanswered, vec!["d.test".to_owned()]);
+    clock.resync().unwrap();
+    // Its cookies weren't dropped, so there was no second exchange.
+    assert_eq!(nts[3].state().exchanges, 1);
+}
+
+#[test]
+fn a_stray_packet_before_the_reply_is_skipped() {
+    let (nts, certificate) = four(&[Behavior::Stray]);
+    let clock = NtpClock::sync(servers(&all(&nts), &certificate)).unwrap();
+    assert!(clock.last_sync().unanswered.is_empty());
+}
+
+/// Three honest servers and a fourth whose key exchange runs as
+/// `exchange` says.
+fn four_exchanging(exchange: Exchange) -> (Vec<NtsServer>, Vec<u8>) {
+    let certified = certificate();
+    let config = tls(&certified);
+    let servers = vec![
+        serve("a.test", config.clone(), &[]),
+        serve("b.test", config.clone(), &[]),
+        serve("c.test", config.clone(), &[]),
+        serve_exchanging("d.test", config, &[], exchange),
+    ];
+    (servers, certified.cert.der().to_vec())
+}
+
+#[test]
+fn a_key_exchange_that_trickles_gives_up_at_its_deadline() {
+    let (nts, certificate) = four_exchanging(Exchange::Slow);
+    let started = Instant::now();
+    let clock = NtpClock::sync(servers(&all(&nts), &certificate)).unwrap();
+    let took = started.elapsed();
+    assert!(
+        took >= Duration::from_secs(5) && took < Duration::from_secs(7),
+        "{took:?}"
+    );
+    assert_eq!(clock.last_sync().unanswered, vec!["d.test".to_owned()]);
+}
+
+#[test]
+fn a_key_exchange_that_floods_is_refused() {
+    let (nts, certificate) = four_exchanging(Exchange::Flood);
+    let clock = NtpClock::sync(servers(&all(&nts), &certificate)).unwrap();
+    assert_eq!(clock.last_sync().unanswered, vec!["d.test".to_owned()]);
+}
+
+/// Real NTS servers on the internet, so a misreading of RFC 8915 that our
+/// own server shares can't pass. Run with `cargo test -- --ignored`.
+#[test]
+#[ignore = "needs the internet"]
+fn public_nts_servers_sync() {
+    let hosts = [
+        "time.cloudflare.com",
+        "nts.netnod.se",
+        "ptbtime1.ptb.de",
+        "nts.time.nl",
+    ];
+    let clock = NtpClock::sync(Servers::nts(hosts)).unwrap();
+    let report = clock.last_sync();
+    let now = clock.now().unwrap();
+    println!("{report:?}");
+    println!("bound: {} ms", (now.revision.0 - now.settled.0) / 2_000_000);
+    let (before, after) = (wall() - 2_000_000_000, wall() + 2_000_000_000);
+    assert!(now.settled.0 <= after && before <= now.revision.0);
+    clock.resync().unwrap();
+    println!("{:?}", clock.last_sync());
 }
 
 #[test]
