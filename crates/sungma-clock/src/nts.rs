@@ -183,13 +183,15 @@ pub(crate) fn ke_response(stream: &mut impl Read) -> Result<Negotiated, ClockErr
 /// The key a direction of an association uses, exported from the TLS
 /// session: 0 for client to server, 1 for server to client.
 pub(crate) fn exported(
-    export: impl FnOnce(&mut [u8; 32], &[u8], &[u8]) -> Result<(), rustls::Error>,
+    export: impl FnOnce(&mut [u8], &[u8], &[u8]) -> Result<(), rustls::Error>,
     direction: u8,
 ) -> Result<Aes128SivAead, ClockError> {
     let context = [0, 0, 0, 15, direction];
-    let mut key = [0; 32];
-    export(&mut key, EXPORTER, &context).map_err(|failed| ClockError::Nts(failed.to_string()))?;
-    Ok(Aes128SivAead::new(&Key::<Aes128SivAead>::from(key)))
+    // The exporter fills the key in place.
+    let mut key = Key::<Aes128SivAead>::default();
+    export(key.as_mut_slice(), EXPORTER, &context)
+        .map_err(|failed| ClockError::Nts(failed.to_string()))?;
+    Ok(Aes128SivAead::new(&key))
 }
 
 /// A socket that gives up at a deadline, however the bytes trickle. TLS
@@ -558,7 +560,7 @@ mod tests {
     #[test]
     fn keys_are_exported_for_each_direction() {
         let seen = std::cell::RefCell::new(Vec::new());
-        let export = |key: &mut [u8; 32], label: &[u8], context: &[u8]| {
+        let export = |key: &mut [u8], label: &[u8], context: &[u8]| {
             seen.borrow_mut().push((label.to_vec(), context.to_vec()));
             key.fill(context[4]);
             Ok(())
@@ -572,7 +574,7 @@ mod tests {
                 (EXPORTER.to_vec(), vec![0, 0, 0, 15, 1]),
             ]
         );
-        let sealed = authenticator(&to_server, [3; 16], b"ad", b"");
+        let sealed = authenticator(&to_server, random(), b"ad", b"");
         assert!(open(&cipher(0), &sealed[4..], b"ad").is_some());
         assert!(open(&to_client, &sealed[4..], b"ad").is_none());
         let failed = exported(|_, _, _| Err(rustls::Error::HandshakeNotComplete), 0);
@@ -610,7 +612,7 @@ mod tests {
 
     #[test]
     fn a_sealed_message_opens_only_unaltered() {
-        let sealed = authenticator(&cipher(1), [3; 16], b"before", b"secret");
+        let sealed = authenticator(&cipher(1), random(), b"before", b"secret");
         let body = &sealed[4..];
         assert_eq!(open(&cipher(1), body, b"before"), Some(b"secret".to_vec()));
         assert_eq!(open(&cipher(1), body, b"altered"), None);
@@ -653,7 +655,7 @@ mod tests {
             .iter()
             .flat_map(|cookie| field(COOKIE, cookie))
             .collect();
-        let sealed = authenticator(key, [5; 16], &packet, &plaintext);
+        let sealed = authenticator(key, random(), &packet, &plaintext);
         packet.extend(sealed);
         packet
     }
@@ -696,14 +698,14 @@ mod tests {
         refused(&malformed, &mut association);
         // The identifier must come before the authenticator, not after.
         let mut late = vec![0x24; 48];
-        let sealed = authenticator(&cipher(2), [5; 16], &late, &[]);
+        let sealed = authenticator(&cipher(2), random(), &late, &[]);
         late.extend(sealed);
         late.extend(field(UNIQUE_ID, &[4; 32]));
         refused(&late, &mut association);
         // Plaintext that isn't fields gives no cookies.
         let mut garbled = vec![0x24; 48];
         garbled.extend(field(UNIQUE_ID, &[4; 32]));
-        let sealed = authenticator(&cipher(2), [5; 16], &garbled, &[0, 1, 0, 3]);
+        let sealed = authenticator(&cipher(2), random(), &garbled, &[0, 1, 0, 3]);
         garbled.extend(sealed);
         refused(&garbled, &mut association);
     }
