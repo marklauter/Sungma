@@ -20,8 +20,8 @@ pub enum SystemClock {
 }
 
 impl SystemClock {
-    /// The platform's clock when it is synchronized, else an [`NtpClock`]
-    /// synced from `servers`, which blocks on the network.
+    /// The Linux kernel's clock when it is synchronized, else an
+    /// [`NtpClock`] synced from `servers`, which blocks on the network.
     pub fn detect<A: ToSocketAddrs>(servers: &[A]) -> Result<Self, ClockError> {
         #[cfg(target_os = "linux")]
         if let Some(clock) = LinuxClock::detect() {
