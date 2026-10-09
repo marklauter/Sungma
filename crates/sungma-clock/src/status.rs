@@ -8,7 +8,7 @@ use std::{
 
 use sungma::clock::{ClockFault, Reading};
 
-use crate::SyncReport;
+use crate::{Drift, SyncReport};
 
 /// How often a clock has reported each fault since it started.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -35,6 +35,8 @@ pub struct ClockStatus {
     pub failed_syncs: u64,
     /// What the last sync found, for an NTP clock.
     pub last_sync: Option<SyncReport>,
+    /// The drift the window measures, for a clock that samples.
+    pub drift: Option<Drift>,
 }
 
 impl ClockStatus {
@@ -47,6 +49,7 @@ impl ClockStatus {
             since_sample: None,
             failed_syncs: 0,
             last_sync: None,
+            drift: None,
         }
     }
 }

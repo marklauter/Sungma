@@ -40,6 +40,7 @@ pub use system::SystemClock;
 #[cfg(feature = "test-util")]
 pub use time::ManualTime;
 pub use time::{Moment, OsTime, TimeSource};
+pub use wall::Drift;
 
 /// Why a clock couldn't take a sample.
 #[derive(Debug, thiserror::Error)]

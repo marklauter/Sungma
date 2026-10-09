@@ -216,6 +216,7 @@ impl<T: TimeSource> NtpClock<T> {
             since_sample: Some(self.sampled.since_newest()),
             failed_syncs: self.failed_syncs.load(Ordering::Relaxed),
             last_sync: Some(self.last_sync()),
+            drift: Some(self.sampled.drift()),
             ..ClockStatus::of(self.sampled.now(), self.faults.counts())
         }
     }

@@ -69,6 +69,18 @@ fn status(status: &ClockStatus) -> String {
         faults.unsynchronized
     ));
     parts.push(format!("failed syncs {}", status.failed_syncs));
+    if let Some(drift) = status.drift {
+        let ppm = |ppb: i64| ppb as f64 / 1_000.0;
+        let allowance = ppm(drift.allowance as i64);
+        parts.push(match drift.measured {
+            Some((low, high)) => format!(
+                "drift {:.1}..{:.1} ppm (allowance {allowance:.1} ppm)",
+                ppm(low),
+                ppm(high)
+            ),
+            None => format!("drift unmeasured (allowance {allowance:.0} ppm)"),
+        });
+    }
     if let Some(sync) = &status.last_sync {
         let mut listed = |name: &str, servers: &[String]| {
             if !servers.is_empty() {
