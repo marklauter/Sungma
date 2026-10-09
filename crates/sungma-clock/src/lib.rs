@@ -18,6 +18,7 @@ mod ntp;
 mod nts;
 mod refresher;
 mod servers;
+mod status;
 mod system;
 mod time;
 mod wall;
@@ -34,6 +35,7 @@ pub use ntp::fuzz_answer;
 pub use ntp::{Leap, NtpClock, SyncReport};
 pub use refresher::{POLL, Refresh, refresher};
 pub use servers::{Resolve, Servers};
+pub use status::{ClockStatus, FaultCounts};
 pub use system::SystemClock;
 #[cfg(feature = "test-util")]
 pub use time::ManualTime;

@@ -11,16 +11,20 @@
 use std::{
     future::Future,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
-    sync::{Mutex, PoisonError},
+    sync::{
+        Mutex, PoisonError,
+        atomic::{AtomicU64, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
 
-use sungma::clock::{Clock, ClockFault, Reading};
+use sungma::clock::{Clock, ClockFault, Reading, Revision};
 
 use crate::{
-    ClockError, OsTime, Resolve, Servers, TimeSource,
+    ClockError, ClockStatus, OsTime, Resolve, Servers, TimeSource,
     nts::{self, Association},
+    status::{self, Faults},
     wall::{self, Sample, Sampled},
 };
 
@@ -148,6 +152,8 @@ pub struct NtpClock<T = OsTime> {
     peers: Mutex<Vec<Peer>>,
     last: Mutex<SyncReport>,
     sampled: Sampled<T>,
+    faults: Faults,
+    failed_syncs: AtomicU64,
 }
 
 impl NtpClock {
@@ -169,6 +175,8 @@ impl<T: TimeSource> NtpClock<T> {
             peers: Mutex::new(peers),
             last: Mutex::new(report),
             sampled: Sampled::new(sample, time),
+            faults: Faults::default(),
+            failed_syncs: AtomicU64::new(0),
         })
     }
 
@@ -180,7 +188,22 @@ impl<T: TimeSource> NtpClock<T> {
         let mut peers = self.peers.lock().unwrap_or_else(PoisonError::into_inner);
         let (sample, report) = sync(&self.servers, &mut peers, self.sampled.time());
         *self.last.lock().unwrap_or_else(PoisonError::into_inner) = report;
-        Ok(self.sampled.add(sample?)?)
+        let Ok(sample) = sample else {
+            self.failed_syncs.fetch_add(1, Ordering::Relaxed);
+            return sample.map(|_| ());
+        };
+        Ok(self.faults.record(self.sampled.add(sample))?)
+    }
+
+    /// The clock's state, read without counting a fault or touching the
+    /// network.
+    pub fn status(&self) -> ClockStatus {
+        ClockStatus {
+            since_sample: Some(self.sampled.since_newest()),
+            failed_syncs: self.failed_syncs.load(Ordering::Relaxed),
+            last_sync: Some(self.last_sync()),
+            ..ClockStatus::of(self.sampled.now(), self.faults.counts())
+        }
     }
 
     /// What the last sync found, whether it succeeded or not.
@@ -194,11 +217,16 @@ impl<T: TimeSource> NtpClock<T> {
 
 impl<T: TimeSource> Clock for NtpClock<T> {
     fn now(&self) -> Result<Reading, ClockFault> {
-        self.sampled.now()
+        self.faults.record(self.sampled.now())
     }
 
     fn wait(&self, stamped: Reading) -> impl Future<Output = Result<(), ClockFault>> + Send {
         wall::wait(self, stamped)
+    }
+
+    fn observe(&self, seen: Revision) -> Result<(), ClockFault> {
+        let now = self.now()?;
+        self.faults.record(status::behind(now, seen))
     }
 }
 

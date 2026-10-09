@@ -177,6 +177,13 @@ impl<T: TimeSource> Sampled<T> {
         }
     }
 
+    /// Monotonic time since the newest sample was taken.
+    pub(crate) fn since_newest(&self) -> Duration {
+        let window = self.window.lock().unwrap_or_else(PoisonError::into_inner);
+        let newest = window.back().expect("a window always holds a sample");
+        Duration::from_nanos(self.time.monotonic().saturating_sub(newest.at.monotonic))
+    }
+
     pub(crate) fn time(&self) -> &T {
         &self.time
     }

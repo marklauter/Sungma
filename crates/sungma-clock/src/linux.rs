@@ -9,10 +9,11 @@ use std::{
 };
 
 use libc::{c_int, c_long};
-use sungma::clock::{Clock, ClockFault, Reading};
+use sungma::clock::{Clock, ClockFault, Reading, Revision};
 
 use crate::{
-    Moment, OsTime, TimeSource,
+    ClockStatus, Moment, OsTime, TimeSource,
+    status::{self, Faults},
     wall::{self, MAX_BOUND},
 };
 
@@ -27,6 +28,7 @@ const PHASE_LIMIT_MICROS: u64 = 16_000_000;
 pub struct LinuxClock<T = OsTime> {
     time: T,
     last: Mutex<Moment>,
+    faults: Faults,
 }
 
 impl LinuxClock {
@@ -43,7 +45,37 @@ impl<T: TimeSource> LinuxClock<T> {
         let (state, status, maxerror) = read();
         assess(state, status, maxerror, 0).ok()?;
         let last = Mutex::new(time.moment());
-        Some(Self { time, last })
+        Some(Self {
+            time,
+            last,
+            faults: Faults::default(),
+        })
+    }
+
+    /// The clock's state, read from the kernel without counting a fault or
+    /// disturbing jump detection.
+    pub fn status(&self) -> ClockStatus {
+        let (state, status, maxerror) = read();
+        let reading = assess(state, status, maxerror, 0)
+            .and_then(|bound| wall::reading(self.time.wall(), bound));
+        ClockStatus::of(reading, self.faults.counts())
+    }
+
+    fn reading(&self) -> Result<Reading, ClockFault> {
+        let (state, status, maxerror) = read();
+        let now = self.time.moment();
+        // Two threads may swap `last` out of order, leaving the older
+        // moment behind. That's harmless: every stored moment is a
+        // consistent pair, and the next reading compares against one.
+        let then = std::mem::replace(
+            &mut *self.last.lock().unwrap_or_else(PoisonError::into_inner),
+            now,
+        );
+        let moved = i128::from(now.wall) - i128::from(then.wall);
+        let elapsed = Duration::from_nanos(now.monotonic.saturating_sub(then.monotonic));
+        let slack = then.uncertainty.saturating_add(now.uncertainty);
+        let step = wall::step(moved - wall::nanos(elapsed), slack)?;
+        wall::reading(now.wall, assess(state, status, maxerror, step)?)
     }
 }
 
@@ -82,24 +114,16 @@ fn assess(state: c_int, status: c_int, maxerror: c_long, step: u64) -> Result<u6
 
 impl<T: TimeSource> Clock for LinuxClock<T> {
     fn now(&self) -> Result<Reading, ClockFault> {
-        let (state, status, maxerror) = read();
-        let now = self.time.moment();
-        // Two threads may swap `last` out of order, leaving the older
-        // moment behind. That's harmless: every stored moment is a
-        // consistent pair, and the next reading compares against one.
-        let then = std::mem::replace(
-            &mut *self.last.lock().unwrap_or_else(PoisonError::into_inner),
-            now,
-        );
-        let moved = i128::from(now.wall) - i128::from(then.wall);
-        let elapsed = Duration::from_nanos(now.monotonic.saturating_sub(then.monotonic));
-        let slack = then.uncertainty.saturating_add(now.uncertainty);
-        let step = wall::step(moved - wall::nanos(elapsed), slack)?;
-        wall::reading(now.wall, assess(state, status, maxerror, step)?)
+        self.faults.record(self.reading())
     }
 
     fn wait(&self, stamped: Reading) -> impl Future<Output = Result<(), ClockFault>> + Send {
         wall::wait(self, stamped)
+    }
+
+    fn observe(&self, seen: Revision) -> Result<(), ClockFault> {
+        let now = self.now()?;
+        self.faults.record(status::behind(now, seen))
     }
 }
 
@@ -154,6 +178,22 @@ mod tests {
             assert_eq!(clock.now(), Err(ClockFault::Jumped { by: 20_000_000 }));
             time.advance(Duration::from_millis(1));
             assert!(clock.now().is_ok());
+        }
+    }
+
+    #[test]
+    fn a_status_reads_the_kernel_without_disturbing_jump_detection() {
+        let time = std::sync::Arc::new(crate::ManualTime::new(wall::wall_nanos()));
+        if let Some(clock) = LinuxClock::detect_with(time.clone()) {
+            time.step(20_000_000);
+            let status = clock.status();
+            assert!(status.width.is_some_and(|width| width > 0));
+            assert_eq!((status.fault, status.faults.jumped), (None, 0));
+            // The status didn't take the moment, so the step still shows.
+            assert_eq!(clock.now(), Err(ClockFault::Jumped { by: 20_000_000 }));
+            assert_eq!(clock.status().faults.jumped, 1);
+            assert!(clock.observe(Revision(u64::MAX)).is_err());
+            assert_eq!(clock.status().faults.behind, 1);
         }
     }
 

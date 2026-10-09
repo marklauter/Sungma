@@ -2,11 +2,11 @@
 
 use std::future::Future;
 
-use sungma::clock::{Clock, ClockFault, Reading};
+use sungma::clock::{Clock, ClockFault, Reading, Revision};
 
 #[cfg(target_os = "linux")]
 use crate::LinuxClock;
-use crate::{ClockError, NtpClock, Servers, wall};
+use crate::{ClockError, ClockStatus, NtpClock, Servers, wall};
 
 /// The Linux kernel's clock when it reports a bound, else NTP. An enum
 /// rather than a `Box<dyn Clock>`: [`Clock::wait`] returns `impl Future`,
@@ -37,6 +37,15 @@ impl SystemClock {
         NtpClock::sync(servers).map(Self::Ntp)
     }
 
+    /// The clock's state, read without disturbing it.
+    pub fn status(&self) -> ClockStatus {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::Linux(clock) => clock.status(),
+            Self::Ntp(clock) => clock.status(),
+        }
+    }
+
     /// Takes a fresh sample, for a clock that samples. The kernel keeps
     /// Linux's bound current, so it needs none.
     pub fn refresh(&self) -> Result<(), ClockError> {
@@ -59,5 +68,13 @@ impl Clock for SystemClock {
 
     fn wait(&self, stamped: Reading) -> impl Future<Output = Result<(), ClockFault>> + Send {
         wall::wait(self, stamped)
+    }
+
+    fn observe(&self, seen: Revision) -> Result<(), ClockFault> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::Linux(clock) => clock.observe(seen),
+            Self::Ntp(clock) => clock.observe(seen),
+        }
     }
 }

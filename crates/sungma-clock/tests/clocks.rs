@@ -13,8 +13,8 @@ use std::{
 
 use sungma::clock::{Clock, ClockFault, Reading, Revision};
 use sungma_clock::{
-    ClockError, DevClock, Leap, ManualClock, ManualTime, NtpClock, Refresh, Servers, SystemClock,
-    TimeSource,
+    ClockError, DevClock, FaultCounts, Leap, ManualClock, ManualTime, NtpClock, Refresh, Servers,
+    SystemClock, TimeSource,
 };
 use tokio::time::timeout;
 
@@ -676,4 +676,48 @@ fn fewer_than_three_answers_fail_the_sync_and_are_reported() {
         ClockError::TooFewAnswers { answered: 2 }.to_string(),
         "2 of the NTP servers answered; a sync needs 3"
     );
+}
+
+#[test]
+fn a_status_reports_the_clock_without_counting_or_disturbing_it() {
+    let (time, clock) = driven(3);
+    let status = clock.status();
+    // No round trip on frozen clocks: twice the 9.99 ms root dispersion.
+    assert_eq!(status.width, Some(19_989_012));
+    assert_eq!(status.fault, None);
+    assert_eq!(status.faults, FaultCounts::default());
+    assert_eq!(status.since_sample, Some(Duration::ZERO));
+    assert_eq!(status.failed_syncs, 0);
+    assert!(
+        status
+            .last_sync
+            .is_some_and(|report| report.unanswered.is_empty())
+    );
+    time.advance(Duration::from_secs(7));
+    assert_eq!(clock.status().since_sample, Some(Duration::from_secs(7)));
+    time.step(20_000_000);
+    let status = clock.status();
+    assert_eq!(status.fault, Some(ClockFault::Jumped { by: 20_000_000 }));
+    assert_eq!(status.faults.jumped, 0);
+    assert!(clock.now().is_err());
+    assert_eq!(clock.status().faults.jumped, 1);
+    clock.resync().unwrap();
+    assert!(clock.observe(Revision(u64::MAX)).is_err());
+    assert_eq!(clock.status().faults.behind, 1);
+    clock.resync().unwrap();
+    assert!(matches!(clock.resync(), Err(ClockError::Io(_))));
+    assert_eq!(clock.status().failed_syncs, 1);
+}
+
+#[test]
+fn a_drift_found_by_a_resync_is_counted() {
+    let clock = NtpClock::sync(Servers::new(trio("127.0.0.1:0", vec![0, 50]))).unwrap();
+    assert!(clock.resync().is_err());
+    let status = clock.status();
+    assert_eq!((status.faults.drifted, status.failed_syncs), (1, 0));
+    let system =
+        SystemClock::Ntp(NtpClock::sync(Servers::new(trio("127.0.0.1:0", vec![0]))).unwrap());
+    assert_eq!(system.status().fault, None);
+    assert!(system.observe(Revision(u64::MAX)).is_err());
+    assert_eq!(system.status().faults.behind, 1);
 }
