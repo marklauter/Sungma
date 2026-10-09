@@ -15,7 +15,7 @@ use std::{
 
 use sungma::clock::{Clock, ClockFault, Reading, Revision};
 
-use crate::TimeSource;
+use crate::{Moment, TimeSource};
 
 /// The most a disciplined clock is assumed to drift, in parts per million:
 /// the rate the Linux kernel grows its own error bound by.
@@ -61,16 +61,17 @@ pub(crate) fn reading(at: u64, bound: u64) -> Result<Reading, ClockFault> {
     })
 }
 
-/// The size of `step`, how far the system clock moved against the
-/// monotonic clock, or [`ClockFault::Jumped`] when it is past
-/// [`MAX_STEP`].
-pub(crate) fn step(step: i128) -> Result<u64, ClockFault> {
+/// How much `step`, how far the system clock moved against the monotonic
+/// clock, widens a bound: its size plus `slack`, the uncertainty of the
+/// moments it was measured between. [`ClockFault::Jumped`] when it is past
+/// [`MAX_STEP`] by more than the slack.
+pub(crate) fn step(step: i128, slack: u64) -> Result<u64, ClockFault> {
     let size = step.unsigned_abs();
-    if size > u128::from(MAX_STEP) {
+    if size > u128::from(MAX_STEP) + u128::from(slack) {
         let by = step.clamp(i64::MIN.into(), i64::MAX.into()) as i64;
         return Err(ClockFault::Jumped { by });
     }
-    Ok(saturate(size))
+    Ok(saturate(size).saturating_add(slack))
 }
 
 /// Nanoseconds of `elapsed`, signed.
@@ -105,30 +106,26 @@ pub(crate) struct Sample {
 #[derive(Clone, Copy, Debug)]
 struct Taken {
     sample: Sample,
-    wall: u64,
-    monotonic: u64,
+    at: Moment,
 }
 
 impl Taken {
     fn read(sample: Sample, time: &impl TimeSource) -> Self {
         Self {
             sample,
-            wall: time.wall(),
-            monotonic: time.monotonic(),
+            at: time.moment(),
         }
     }
 
-    /// The monotonic time since this sample, at monotonic time `now`.
-    fn since(&self, now: u64) -> Duration {
-        Duration::from_nanos(now.saturating_sub(self.monotonic))
-    }
-
-    /// True time as this sample bounds it, its low and high ends, when the
-    /// system clock reads `wall` after `elapsed` on the monotonic clock.
-    fn range(&self, wall: u64, elapsed: Duration) -> Result<(i128, i128), ClockFault> {
+    /// True time as this sample bounds it, its low and high ends, at
+    /// moment `now`.
+    fn range(&self, now: Moment) -> Result<(i128, i128), ClockFault> {
+        let elapsed = Duration::from_nanos(now.monotonic.saturating_sub(self.at.monotonic));
         let elapsed_nanos = nanos(elapsed);
-        let widen = step(i128::from(wall) - i128::from(self.wall) - elapsed_nanos)?;
-        let center = i128::from(self.wall) + i128::from(self.sample.offset) + elapsed_nanos;
+        let moved = i128::from(now.wall) - i128::from(self.at.wall);
+        let slack = self.at.uncertainty.saturating_add(now.uncertainty);
+        let widen = step(moved - elapsed_nanos, slack)?;
+        let center = i128::from(self.at.wall) + i128::from(self.sample.offset) + elapsed_nanos;
         let bound = i128::from(self.sample.bound) + i128::from(drift(elapsed)) + i128::from(widen);
         Ok((center - bound, center + bound))
     }
@@ -184,14 +181,11 @@ impl<T: TimeSource> Sampled<T> {
     pub(crate) fn add(&self, sample: Sample) -> Result<(), ClockFault> {
         let fresh = Taken::read(sample, &self.time);
         let mut window = self.window.lock().unwrap_or_else(PoisonError::into_inner);
-        let ranges: Vec<_> = window
-            .iter()
-            .map(|taken| taken.range(fresh.wall, taken.since(fresh.monotonic)))
-            .collect();
+        let ranges: Vec<_> = window.iter().map(|taken| taken.range(fresh.at)).collect();
         let mut kept = ranges.iter().map(Result::is_ok);
         window.retain(|_| kept.next().unwrap_or(false));
         let earlier = ranges.into_iter().filter_map(Result::ok);
-        let ours = fresh.range(fresh.wall, Duration::ZERO)?;
+        let ours = fresh.range(fresh.at)?;
         let agrees = window.is_empty() || meet(earlier.chain([ours])).is_some();
         if !agrees {
             window.clear();
@@ -210,13 +204,11 @@ impl<T: TimeSource> Sampled<T> {
     /// Where the window's samples meet. [`ClockFault::Jumped`] when the
     /// system clock jumped since the newest sample.
     pub(crate) fn now(&self) -> Result<Reading, ClockFault> {
-        let (wall, monotonic) = (self.time.wall(), self.time.monotonic());
+        let now = self.time.moment();
         let window = self.window.lock().unwrap_or_else(PoisonError::into_inner);
         let newest = window.back().expect("a window always holds a sample");
-        newest.range(wall, newest.since(monotonic))?;
-        let ranges = window
-            .iter()
-            .filter_map(|taken| taken.range(wall, taken.since(monotonic)).ok());
+        newest.range(now)?;
+        let ranges = window.iter().filter_map(|taken| taken.range(now).ok());
         let (low, high) = meet(ranges).ok_or(ClockFault::Drifted)?;
         spanning(low, high)
     }
@@ -293,15 +285,27 @@ mod tests {
     #[test]
     fn a_step_past_10_ms_is_a_jump() {
         let max = i128::from(MAX_STEP);
-        assert_eq!(step(max), Ok(MAX_STEP));
-        assert_eq!(step(-max), Ok(MAX_STEP));
-        assert_eq!(step(max + 1), Err(ClockFault::Jumped { by: 10_000_001 }));
-        assert_eq!(step(-max - 1), Err(ClockFault::Jumped { by: -10_000_001 }));
-        assert_eq!(step(i128::MAX), Err(ClockFault::Jumped { by: i64::MAX }));
+        assert_eq!(step(max, 0), Ok(MAX_STEP));
+        assert_eq!(step(-max, 0), Ok(MAX_STEP));
+        assert_eq!(step(max + 1, 0), Err(ClockFault::Jumped { by: 10_000_001 }));
         assert_eq!(
-            step(i128::MIN + 1),
+            step(-max - 1, 0),
+            Err(ClockFault::Jumped { by: -10_000_001 })
+        );
+        assert_eq!(step(i128::MAX, 0), Err(ClockFault::Jumped { by: i64::MAX }));
+        assert_eq!(
+            step(i128::MIN + 1, 0),
             Err(ClockFault::Jumped { by: i64::MIN })
         );
+    }
+
+    #[test]
+    fn uncertain_moments_excuse_a_step_and_widen_the_bound() {
+        let max = i128::from(MAX_STEP);
+        assert_eq!(step(max + 3, 3), Ok(MAX_STEP + 6));
+        assert_eq!(step(max + 4, 3), Err(ClockFault::Jumped { by: 10_000_004 }));
+        assert_eq!(step(0, 3), Ok(3));
+        assert_eq!(step(0, u64::MAX), Ok(u64::MAX));
     }
 
     #[test]
@@ -314,26 +318,30 @@ mod tests {
 
     #[test]
     fn a_sample_reads_off_the_monotonic_clock_and_widens_with_drift() {
+        let at = |wall, monotonic, uncertainty| Moment {
+            wall,
+            monotonic,
+            uncertainty,
+        };
         let taken = Taken {
             sample: sample(100, 7),
-            wall: 1_000,
-            monotonic: 0,
+            at: at(1_000, 500, 2),
         };
-        // 10 µs on both clocks: drift adds 5 ns.
-        assert_eq!(
-            taken.range(11_000, Duration::from_micros(10)),
-            Ok((11_088, 11_112))
-        );
+        // 10 µs on both clocks: drift adds 5 ns, and the two moments' 2 ns
+        // and 3 ns of uncertainty add 5 more.
+        assert_eq!(taken.range(at(11_000, 10_500, 3)), Ok((11_083, 11_117)));
         // The system clock stepped 1 ms ahead: true time still follows the
         // monotonic clock, and the step widens the bound.
         assert_eq!(
-            taken.range(1_011_000, Duration::from_micros(10)),
-            Ok((11_088 - 1_000_000, 11_112 + 1_000_000))
+            taken.range(at(1_011_000, 10_500, 3)),
+            Ok((11_083 - 1_000_000, 11_117 + 1_000_000))
         );
         assert_eq!(
-            taken.range(1_000 + 11 * MS, Duration::ZERO),
+            taken.range(at(1_000 + 11 * MS, 500, 0)),
             Err(ClockFault::Jumped { by: 11_000_000 })
         );
+        // A moment from before the sample counts no time as elapsed.
+        assert_eq!(taken.range(at(1_000, 0, 0)), Ok((1_091, 1_109)));
     }
 
     #[test]

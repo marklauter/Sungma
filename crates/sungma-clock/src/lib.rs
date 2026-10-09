@@ -30,7 +30,7 @@ pub use ntp::NtpClock;
 pub use system::SystemClock;
 #[cfg(feature = "test-util")]
 pub use time::ManualTime;
-pub use time::{OsTime, TimeSource};
+pub use time::{Moment, OsTime, TimeSource};
 
 /// Why a clock couldn't take a sample.
 #[derive(Debug, thiserror::Error)]

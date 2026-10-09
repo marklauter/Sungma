@@ -12,7 +12,7 @@ use libc::{c_int, c_long};
 use sungma::clock::{Clock, ClockFault, Reading};
 
 use crate::{
-    OsTime, TimeSource,
+    Moment, OsTime, TimeSource,
     wall::{self, MAX_BOUND},
 };
 
@@ -26,7 +26,7 @@ const PHASE_LIMIT_MICROS: u64 = 16_000_000;
 #[derive(Debug)]
 pub struct LinuxClock<T = OsTime> {
     time: T,
-    last: Mutex<(u64, u64)>,
+    last: Mutex<Moment>,
 }
 
 impl LinuxClock {
@@ -42,7 +42,7 @@ impl<T: TimeSource> LinuxClock<T> {
     pub fn detect_with(time: T) -> Option<Self> {
         let (state, status, maxerror) = read();
         assess(state, status, maxerror, 0).ok()?;
-        let last = Mutex::new((time.wall(), time.monotonic()));
+        let last = Mutex::new(time.moment());
         Some(Self { time, last })
     }
 }
@@ -83,15 +83,19 @@ fn assess(state: c_int, status: c_int, maxerror: c_long, step: u64) -> Result<u6
 impl<T: TimeSource> Clock for LinuxClock<T> {
     fn now(&self) -> Result<Reading, ClockFault> {
         let (state, status, maxerror) = read();
-        let (wall, monotonic) = (self.time.wall(), self.time.monotonic());
-        let (then, since) = std::mem::replace(
+        let now = self.time.moment();
+        // Two threads may swap `last` out of order, leaving the older
+        // moment behind. That's harmless: every stored moment is a
+        // consistent pair, and the next reading compares against one.
+        let then = std::mem::replace(
             &mut *self.last.lock().unwrap_or_else(PoisonError::into_inner),
-            (wall, monotonic),
+            now,
         );
-        let moved = i128::from(wall) - i128::from(then);
-        let elapsed = Duration::from_nanos(monotonic.saturating_sub(since));
-        let step = wall::step(moved - wall::nanos(elapsed))?;
-        wall::reading(wall, assess(state, status, maxerror, step)?)
+        let moved = i128::from(now.wall) - i128::from(then.wall);
+        let elapsed = Duration::from_nanos(now.monotonic.saturating_sub(then.monotonic));
+        let slack = then.uncertainty.saturating_add(now.uncertainty);
+        let step = wall::step(moved - wall::nanos(elapsed), slack)?;
+        wall::reading(now.wall, assess(state, status, maxerror, step)?)
     }
 
     fn wait(&self, stamped: Reading) -> impl Future<Output = Result<(), ClockFault>> + Send {

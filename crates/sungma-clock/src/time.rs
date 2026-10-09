@@ -11,6 +11,24 @@ use std::{
 
 use crate::wall;
 
+/// A bracket this narrow, 1 ms, is taken without trying for a narrower
+/// one.
+const NARROW: u64 = 1_000_000;
+
+/// How many brackets [`TimeSource::moment`] tries for a narrow one.
+const TRIES: usize = 3;
+
+/// Both clocks read as one moment. The system clock is read between two
+/// readings of the monotonic clock, `monotonic` is their middle, and
+/// `uncertainty` is how far apart they were: a thread descheduled between
+/// the reads widens it rather than skewing the pair.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Moment {
+    pub wall: u64,
+    pub monotonic: u64,
+    pub uncertainty: u64,
+}
+
 /// A system clock and a monotonic clock. The clocks that read time take
 /// both from a source, [`OsTime`] in production.
 pub trait TimeSource: Send + Sync {
@@ -22,6 +40,35 @@ pub trait TimeSource: Send + Sync {
     /// It keeps counting while the machine is suspended where the platform
     /// allows, as Linux's `CLOCK_BOOTTIME` does.
     fn monotonic(&self) -> u64;
+
+    /// Both clocks as one moment: the narrowest of up to three
+    /// brackets, stopping at the first no wider than 1 ms.
+    fn moment(&self) -> Moment {
+        let mut best = bracket(self);
+        for _ in 1..TRIES {
+            if best.uncertainty <= NARROW {
+                break;
+            }
+            let next = bracket(self);
+            if next.uncertainty < best.uncertainty {
+                best = next;
+            }
+        }
+        best
+    }
+}
+
+/// The system clock read between two readings of the monotonic clock.
+fn bracket(time: &(impl TimeSource + ?Sized)) -> Moment {
+    let before = time.monotonic();
+    let wall = time.wall();
+    let after = time.monotonic();
+    let uncertainty = after.saturating_sub(before);
+    Moment {
+        wall,
+        monotonic: before + uncertainty / 2,
+        uncertainty,
+    }
 }
 
 impl<T: TimeSource + ?Sized> TimeSource for Arc<T> {
@@ -115,9 +162,66 @@ impl TimeSource for ManualTime {
 
 #[cfg(test)]
 mod tests {
-    use std::{thread, time::Duration};
+    use std::{sync::Mutex, thread, time::Duration};
 
     use super::*;
+
+    /// A source whose monotonic clock reads from a script, one value per
+    /// read, with the system clock at 1,000.
+    struct Scripted(Mutex<Vec<u64>>);
+
+    impl Scripted {
+        fn new(monotonic: &[u64]) -> Self {
+            Self(Mutex::new(monotonic.iter().rev().copied().collect()))
+        }
+
+        fn left(&self) -> usize {
+            self.0.lock().unwrap().len()
+        }
+    }
+
+    impl TimeSource for Scripted {
+        fn wall(&self) -> u64 {
+            1_000
+        }
+
+        fn monotonic(&self) -> u64 {
+            self.0.lock().unwrap().pop().unwrap()
+        }
+    }
+
+    fn moment(monotonic: u64, uncertainty: u64) -> Moment {
+        Moment {
+            wall: 1_000,
+            monotonic,
+            uncertainty,
+        }
+    }
+
+    #[test]
+    fn a_narrow_bracket_is_taken_at_once() {
+        let time = Scripted::new(&[10, 10 + NARROW, 0, 0]);
+        assert_eq!(time.moment(), moment(10 + NARROW / 2, NARROW));
+        assert_eq!(time.left(), 2);
+    }
+
+    #[test]
+    fn a_wide_bracket_is_tried_again_and_the_narrowest_kept() {
+        let wide = 3 * NARROW;
+        let time = Scripted::new(&[0, wide, 100, 100 + 2 * NARROW, 200, 200 + 2 * NARROW]);
+        assert_eq!(time.moment(), moment(100 + NARROW, 2 * NARROW));
+        let time = Scripted::new(&[0, wide, 100, 100 + wide, 200, 200 + 4 * NARROW]);
+        assert_eq!(time.moment(), moment(wide / 2, wide));
+        let time = Scripted::new(&[0, wide, 100, 100 + NARROW, 7, 7]);
+        assert_eq!(time.moment(), moment(100 + NARROW / 2, NARROW));
+        assert_eq!(time.left(), 2);
+    }
+
+    #[test]
+    fn a_monotonic_clock_read_out_of_order_has_no_uncertainty() {
+        let time = Scripted::new(&[50, 40]);
+        assert_eq!(bracket(&time), moment(50, 0));
+    }
 
     #[test]
     fn the_os_clocks_both_count_time_passing() {
