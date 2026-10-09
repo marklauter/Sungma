@@ -14,7 +14,7 @@ use sungma::clock::{Clock, ClockFault, Reading, Revision};
 use crate::{
     ClockStatus, Moment, OsTime, TimeSource,
     status::{self, Faults},
-    wall::{self, MAX_BOUND},
+    wall::{self, Carry, MAX_BOUND},
 };
 
 /// The kernel caps `maxerror` at 16 s, NTP's phase limit. A clock that
@@ -23,9 +23,8 @@ const PHASE_LIMIT_MICROS: u64 = 16_000_000;
 
 /// The system clock, give or take the kernel's `maxerror`. Each reading
 /// also compares the system clock with the monotonic clock since the last
-/// one, to catch a step the kernel's bound doesn't cover. A step stays in
-/// the bound of every later reading, until the kernel's bound drops, which
-/// shows chrony has measured the clock again.
+/// one, to catch a step the kernel's bound doesn't cover, and carries it in
+/// every later reading's bound until chrony can have corrected it.
 #[derive(Debug)]
 pub struct LinuxClock<T = OsTime> {
     time: T,
@@ -39,14 +38,7 @@ pub struct LinuxClock<T = OsTime> {
 struct Last {
     moment: Moment,
     kernel: u64,
-    stepped: u64,
-}
-
-/// The steps carried into a reading: none once the kernel's bound has
-/// dropped from `before` to `now`, since chrony has measured the clock
-/// again; else all of `stepped`.
-fn carried(stepped: u64, before: u64, now: u64) -> u64 {
-    if now < before { 0 } else { stepped }
+    carry: Carry,
 }
 
 impl LinuxClock {
@@ -65,7 +57,7 @@ impl<T: TimeSource> LinuxClock<T> {
         let last = Mutex::new(Last {
             moment: time.moment(),
             kernel: bound(state, maxerror),
-            stepped: 0,
+            carry: Carry::default(),
         });
         Some(Self {
             time,
@@ -79,8 +71,8 @@ impl<T: TimeSource> LinuxClock<T> {
     pub fn status(&self) -> ClockStatus {
         let (state, status, maxerror) = read();
         let last = *self.last.lock().unwrap_or_else(PoisonError::into_inner);
-        let stepped = carried(last.stepped, last.kernel, bound(state, maxerror));
-        let reading = assess(state, status, maxerror, stepped)
+        let carried = last.carry.at(self.time.monotonic());
+        let reading = assess(state, status, maxerror, carried)
             .and_then(|bound| wall::reading(self.time.wall(), bound));
         ClockStatus::of(reading, self.faults.counts())
     }
@@ -92,7 +84,7 @@ impl<T: TimeSource> LinuxClock<T> {
         // Two threads may store `last` out of order, leaving the older
         // reading behind. That's harmless: every stored reading is
         // consistent, and its steps are carried either way.
-        let (step, stepped) = {
+        let (step, carried) = {
             let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
             let then = last.moment;
             let moved = i128::from(now.wall) - i128::from(then.wall);
@@ -101,21 +93,19 @@ impl<T: TimeSource> LinuxClock<T> {
             // On Linux the monotonic clock is slewed with the system clock, so
             // only a step parts them.
             let step = wall::step(moved - wall::nanos(elapsed), slack, 0);
-            let size = match step {
-                Ok(widen) => widen.saturating_sub(slack),
-                Err(ClockFault::Jumped { by }) => by.unsigned_abs(),
-                Err(_) => 0,
-            };
-            let stepped = carried(last.stepped, last.kernel, kernel).saturating_add(size);
+            let dropped = kernel < last.kernel;
+            let carry = last
+                .carry
+                .next(wall::stepped(step, slack), dropped, now.monotonic);
             *last = Last {
                 moment: now,
                 kernel,
-                stepped,
+                carry,
             };
-            (step.map(|_| slack), stepped)
+            (step.map(|_| slack), carry.at(now.monotonic))
         };
         let slack = step?;
-        let widen = stepped.saturating_add(slack);
+        let widen = carried.saturating_add(slack);
         wall::reading(now.wall, assess(state, status, maxerror, widen)?)
     }
 }
@@ -200,13 +190,6 @@ mod tests {
             assess(libc::TIME_OK, libc::STA_UNSYNC, 1_500, 0),
             Err(ClockFault::Unsynchronized)
         );
-    }
-
-    #[test]
-    fn steps_are_carried_until_the_kernels_bound_drops() {
-        assert_eq!(carried(5, 10, 10), 5);
-        assert_eq!(carried(5, 10, 11), 5);
-        assert_eq!(carried(5, 10, 9), 0);
     }
 
     #[test]

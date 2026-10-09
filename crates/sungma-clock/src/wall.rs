@@ -21,6 +21,17 @@ use crate::{Moment, TimeSource};
 /// the rate the Linux kernel grows its own error bound by.
 const MAX_DRIFT_PPM: u128 = 500;
 
+/// The fastest chrony slews the system clock to correct it, in parts per
+/// million: its maxslewrate default, 83,333 ppm.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) const MAX_SLEW_PPM: u128 = 83_333;
+
+/// How far chrony can have slewed the clock in `elapsed` nanoseconds.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn slewed(elapsed: u64) -> u64 {
+    saturate(u128::from(elapsed) * MAX_SLEW_PPM / 1_000_000)
+}
+
 /// A clock whose bound is wider than this is unsynchronized: a write would
 /// wait seconds to be acknowledged.
 pub(crate) const MAX_BOUND: u64 = 1_000_000_000;
@@ -100,6 +111,74 @@ pub(crate) async fn wait(clock: &(impl Clock + Sync), stamped: Reading) -> Resul
             return Ok(());
         }
         tokio::time::sleep(until_past(settled, stamped.revision)).await;
+    }
+}
+
+/// Steps of the system clock the kernel's bound doesn't cover yet.
+///
+/// chrony rewrites the kernel's bound on every update, so the bound
+/// dropping shows an update, not that the update saw the step: the first
+/// drop after a step may come from a measurement taken before it. The
+/// second can't, since its measurement followed the first update. So the
+/// carry holds until the second drop, then decays at the fastest chrony
+/// slews, [`MAX_SLEW_PPM`]. After a large step that can keep the
+/// clock `Unsynchronized` for up to two chrony polls, 1024 s each at its
+/// longest: the price of never claiming a bound that misses true time.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) struct Carry {
+    steps: u64,
+    /// Drops of the kernel's bound since the last step.
+    drops: u8,
+    /// The monotonic time of the second drop, when the decay began.
+    decaying_since: Option<u64>,
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+impl Carry {
+    /// The steps still uncovered at monotonic time `now`.
+    pub(crate) fn at(self, now: u64) -> u64 {
+        match self.decaying_since {
+            Some(since) => self.steps.saturating_sub(slewed(now.saturating_sub(since))),
+            None => self.steps,
+        }
+    }
+
+    /// The carry after a reading at monotonic time `now` that saw a step
+    /// of `size`, or none at 0, and the kernel's bound drop or not. A new
+    /// step adds to what's left and starts the count of drops again.
+    pub(crate) fn next(self, size: u64, dropped: bool, now: u64) -> Self {
+        if size > 0 {
+            return Self {
+                steps: self.at(now).saturating_add(size),
+                ..Self::default()
+            };
+        }
+        if !dropped || self.steps == 0 || self.decaying_since.is_some() {
+            return self;
+        }
+        let drops = self.drops.saturating_add(1);
+        Self {
+            drops,
+            decaying_since: (drops >= 2).then_some(now),
+            ..self
+        }
+    }
+}
+
+/// The step a reading saw: the clocks' divergence, beyond `slack`, the
+/// uncertainty of the moments it was measured between, or a jump's size.
+/// A divergence within the slack is noise, and carrying it would grow the
+/// bound with every reading.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn stepped(step: Result<u64, ClockFault>, slack: u64) -> u64 {
+    match step {
+        Ok(widen) => {
+            let divergence = widen.saturating_sub(slack);
+            if divergence > slack { divergence } else { 0 }
+        }
+        Err(ClockFault::Jumped { by }) => by.unsigned_abs(),
+        Err(_) => 0,
     }
 }
 
@@ -246,6 +325,54 @@ mod tests {
 
     fn sample(offset: i64, bound: u64) -> Sample {
         Sample { offset, bound }
+    }
+
+    #[test]
+    fn a_step_holds_until_the_second_drop_then_decays_at_the_slew_rate() {
+        let carry = Carry::default().next(8 * MS, false, 0);
+        assert_eq!((carry.at(1_000 * MS), carry.drops), (8 * MS, 0));
+        // No drop, or a drop with nothing carried, changes nothing.
+        assert_eq!(carry.next(0, false, 10), carry);
+        assert_eq!(Carry::default().next(0, true, 10), Carry::default());
+        // The first drop may be from before the step: it doesn't decay.
+        let once = carry.next(0, true, 10);
+        assert_eq!((once.drops, once.decaying_since), (1, None));
+        assert_eq!(once.at(1_000 * MS), 8 * MS);
+        let twice = once.next(0, true, 20 * MS);
+        assert_eq!(twice.decaying_since, Some(20 * MS));
+        assert_eq!(twice.at(20 * MS), 8 * MS);
+        // 48 ms at 83,333 ppm slews 3,999,984 ns of the 8 ms.
+        assert_eq!(twice.at(68 * MS), 4_000_016);
+        assert_eq!(twice.at(117 * MS), 0);
+        // Drops during the decay don't restart it.
+        assert_eq!(twice.next(0, true, 30 * MS), twice);
+    }
+
+    #[test]
+    fn a_step_during_a_decay_adds_to_what_is_left() {
+        let decaying = Carry {
+            steps: 8 * MS,
+            drops: 2,
+            decaying_since: Some(0),
+        };
+        let carry = decaying.next(2 * MS, false, 48 * MS);
+        assert_eq!(
+            carry,
+            Carry {
+                steps: 4_000_016 + 2 * MS,
+                drops: 0,
+                decaying_since: None,
+            }
+        );
+    }
+
+    #[test]
+    fn a_divergence_within_the_slack_is_noise() {
+        assert_eq!(stepped(Ok(5 + 5), 5), 0);
+        assert_eq!(stepped(Ok(5 + 6), 5), 6);
+        assert_eq!(stepped(Ok(3), 5), 0);
+        assert_eq!(stepped(Err(ClockFault::Jumped { by: -20 }), 5), 20);
+        assert_eq!(stepped(Err(ClockFault::Unsynchronized), 5), 0);
     }
 
     #[test]
