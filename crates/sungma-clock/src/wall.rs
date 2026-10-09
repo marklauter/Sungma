@@ -224,7 +224,7 @@ impl Taken {
 
 /// Where every range meets, or `None` when there are none or two don't
 /// overlap.
-fn meet(ranges: impl IntoIterator<Item = (i128, i128)>) -> Option<(i128, i128)> {
+pub(crate) fn meet(ranges: impl IntoIterator<Item = (i128, i128)>) -> Option<(i128, i128)> {
     let (low, high) = ranges
         .into_iter()
         .reduce(|(low, high), (l, h)| (low.max(l), high.min(h)))?;

@@ -751,19 +751,10 @@ fn from_ntp(stamp: u64, near: u64) -> i128 {
 /// The range every sample allows, or [`ClockError::Disagree`] when two
 /// don't overlap.
 fn intersect(samples: &[Sample]) -> Result<Sample, ClockError> {
-    let range = |sample: &Sample| {
-        let offset = i128::from(sample.offset);
-        let bound = i128::from(sample.bound);
-        (offset - bound, offset + bound)
-    };
-    let (low, high) = samples
-        .iter()
-        .map(range)
-        .reduce(|(low, high), (l, h)| (low.max(l), high.min(h)))
-        .ok_or(ClockError::NoServers)?;
-    if low > high {
-        return Err(ClockError::Disagree);
+    if samples.is_empty() {
+        return Err(ClockError::NoServers);
     }
+    let (low, high) = wall::meet(samples.iter().map(range)).ok_or(ClockError::Disagree)?;
     let middle = (low + high).div_euclid(2);
     Ok(Sample {
         // Both ends came from i64 offsets, so their middle is one too.
