@@ -68,10 +68,12 @@ pub(crate) fn reading(at: u64, bound: u64) -> Result<Reading, ClockFault> {
 /// How much `step`, how far the system clock moved against the monotonic
 /// clock, widens a bound: its size plus `slack`, the uncertainty of the
 /// moments it was measured between. [`ClockFault::Jumped`] when it is past
-/// [`MAX_STEP`] by more than the slack.
-pub(crate) fn step(step: i128, slack: u64) -> Result<u64, ClockFault> {
+/// [`MAX_STEP`] by more than the slack and `excused`, the most the two
+/// clocks may run apart without a step, as when a time service slews the
+/// system clock but not the monotonic one.
+pub(crate) fn step(step: i128, slack: u64, excused: u64) -> Result<u64, ClockFault> {
     let size = step.unsigned_abs();
-    if size > u128::from(MAX_STEP) + u128::from(slack) {
+    if size > u128::from(MAX_STEP) + u128::from(slack) + u128::from(excused) {
         let by = step.clamp(i64::MIN.into(), i64::MAX.into()) as i64;
         return Err(ClockFault::Jumped { by });
     }
@@ -131,7 +133,10 @@ impl Taken {
         let elapsed_nanos = nanos(elapsed);
         let moved = i128::from(now.wall) - i128::from(self.at.wall);
         let slack = self.at.uncertainty.saturating_add(now.uncertainty);
-        let widen = step(moved - elapsed_nanos, slack)?;
+        // Off Linux the monotonic clock isn't slewed with the system clock,
+        // so the two may run apart by the drift allowance either way.
+        let excused = drift(elapsed).saturating_mul(2);
+        let widen = step(moved - elapsed_nanos, slack, excused)?;
         let center = i128::from(self.at.wall) + i128::from(self.sample.offset) + elapsed_nanos;
         let bound = i128::from(self.sample.bound) + i128::from(drift(elapsed)) + i128::from(widen);
         Ok((center - bound, center + bound))
@@ -384,16 +389,22 @@ mod tests {
     #[test]
     fn a_step_past_10_ms_is_a_jump() {
         let max = i128::from(MAX_STEP);
-        assert_eq!(step(max, 0), Ok(MAX_STEP));
-        assert_eq!(step(-max, 0), Ok(MAX_STEP));
-        assert_eq!(step(max + 1, 0), Err(ClockFault::Jumped { by: 10_000_001 }));
+        assert_eq!(step(max, 0, 0), Ok(MAX_STEP));
+        assert_eq!(step(-max, 0, 0), Ok(MAX_STEP));
         assert_eq!(
-            step(-max - 1, 0),
+            step(max + 1, 0, 0),
+            Err(ClockFault::Jumped { by: 10_000_001 })
+        );
+        assert_eq!(
+            step(-max - 1, 0, 0),
             Err(ClockFault::Jumped { by: -10_000_001 })
         );
-        assert_eq!(step(i128::MAX, 0), Err(ClockFault::Jumped { by: i64::MAX }));
         assert_eq!(
-            step(i128::MIN + 1, 0),
+            step(i128::MAX, 0, 0),
+            Err(ClockFault::Jumped { by: i64::MAX })
+        );
+        assert_eq!(
+            step(i128::MIN + 1, 0, 0),
             Err(ClockFault::Jumped { by: i64::MIN })
         );
     }
@@ -401,10 +412,29 @@ mod tests {
     #[test]
     fn uncertain_moments_excuse_a_step_and_widen_the_bound() {
         let max = i128::from(MAX_STEP);
-        assert_eq!(step(max + 3, 3), Ok(MAX_STEP + 6));
-        assert_eq!(step(max + 4, 3), Err(ClockFault::Jumped { by: 10_000_004 }));
-        assert_eq!(step(0, 3), Ok(3));
-        assert_eq!(step(0, u64::MAX), Ok(u64::MAX));
+        assert_eq!(step(max + 3, 3, 0), Ok(MAX_STEP + 6));
+        assert_eq!(
+            step(max + 4, 3, 0),
+            Err(ClockFault::Jumped { by: 10_000_004 })
+        );
+        assert_eq!(step(0, 3, 0), Ok(3));
+        assert_eq!(step(0, u64::MAX, 0), Ok(u64::MAX));
+    }
+
+    #[test]
+    fn a_divergence_within_the_drift_allowance_isnt_a_jump() {
+        let max = i128::from(MAX_STEP);
+        // Excused, but still widening the bound by its whole size.
+        assert_eq!(step(max + 5, 0, 5), Ok(MAX_STEP + 5));
+        assert_eq!(
+            step(max + 6, 0, 5),
+            Err(ClockFault::Jumped { by: 10_000_006 })
+        );
+        assert_eq!(
+            step(max + 9, 3, 5),
+            Err(ClockFault::Jumped { by: 10_000_009 })
+        );
+        assert_eq!(step(max + 8, 3, 5), Ok(MAX_STEP + 11));
     }
 
     #[test]
@@ -441,6 +471,34 @@ mod tests {
         );
         // A moment from before the sample counts no time as elapsed.
         assert_eq!(taken.range(at(1_000, 0, 0)), Ok((1_091, 1_109)));
+    }
+
+    #[test]
+    fn a_system_clock_slewed_against_the_monotonic_one_isnt_a_jump() {
+        let taken = Taken {
+            sample: sample(0, 0),
+            at: Moment {
+                wall: 0,
+                monotonic: 0,
+                uncertainty: 0,
+            },
+        };
+        let after = |wall| Moment {
+            wall,
+            monotonic: 100 * 1_000 * MS,
+            uncertainty: 0,
+        };
+        // A hundred seconds, with the system clock slewed 40 ms ahead of the
+        // monotonic clock: drift allows 50 ms each way, so 100 ms apart.
+        let slewed = 100 * 1_000 * MS + 40 * MS;
+        let drifted = i128::from(drift(Duration::from_secs(100)));
+        let (low, high) = taken.range(after(slewed)).unwrap();
+        assert_eq!(high - low, 2 * (drifted + i128::from(40 * MS)));
+        let past = 100 * 1_000 * MS + 110 * MS + 1;
+        assert!(matches!(
+            taken.range(after(past)),
+            Err(ClockFault::Jumped { .. })
+        ));
     }
 
     #[test]
@@ -624,20 +682,22 @@ mod simulation {
                 // plus the steps since it. Narrower samples only narrow it.
                 let elapsed = node.time.monotonic() - newest.1;
                 let allowed = newest.0 + elapsed * 500 / 1_000_000 + stepped.unsigned_abs();
+                // A step faults only past 10 ms plus twice the drift allowance.
+                let jumps = MAX_STEP + 2 * (elapsed * 500 / 1_000_000);
                 match node.clock.now() {
                     Ok(reading) => {
-                        prop_assert!(stepped.unsigned_abs() <= MAX_STEP);
+                        prop_assert!(stepped.unsigned_abs() <= jumps);
                         let width = reading.revision.0 - reading.settled.0;
                         prop_assert!(width <= 2 * allowed, "{width} > 2 * {allowed}");
                         let (settled, revision) = (reading.settled.0, reading.revision.0);
                         prop_assert!(i128::from(settled) <= now && now <= i128::from(revision));
                     }
                     Err(ClockFault::Jumped { by }) => {
-                        prop_assert!(stepped.unsigned_abs() > MAX_STEP);
+                        prop_assert!(stepped.unsigned_abs() > jumps);
                         prop_assert_eq!(by, stepped);
                     }
                     Err(ClockFault::Unsynchronized) => {
-                        prop_assert!(stepped.unsigned_abs() <= MAX_STEP);
+                        prop_assert!(stepped.unsigned_abs() <= jumps);
                         prop_assert!(allowed > MAX_BOUND, "{allowed} is within a second");
                     }
                     Err(other) => prop_assert!(false, "{other:?}"),

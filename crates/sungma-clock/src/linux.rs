@@ -98,7 +98,9 @@ impl<T: TimeSource> LinuxClock<T> {
             let moved = i128::from(now.wall) - i128::from(then.wall);
             let elapsed = Duration::from_nanos(now.monotonic.saturating_sub(then.monotonic));
             let slack = then.uncertainty.saturating_add(now.uncertainty);
-            let step = wall::step(moved - wall::nanos(elapsed), slack);
+            // On Linux the monotonic clock is slewed with the system clock, so
+            // only a step parts them.
+            let step = wall::step(moved - wall::nanos(elapsed), slack, 0);
             let size = match step {
                 Ok(widen) => widen.saturating_sub(slack),
                 Err(ClockFault::Jumped { by }) => by.unsigned_abs(),
