@@ -115,7 +115,8 @@ pub(crate) fn ke_request() -> Vec<u8> {
     [
         record(CRITICAL + NEXT_PROTOCOL, &NTPV4.to_be_bytes()),
         record(AEAD, &AES_SIV.to_be_bytes()),
-        record(CRITICAL + END, &[]),
+        // The end record is type 0, so its type is the critical bit alone.
+        record(CRITICAL, &[]),
     ]
     .concat()
 }
@@ -155,8 +156,11 @@ pub(crate) fn ke_response(stream: &mut impl Read) -> Result<Negotiated, ClockErr
             NEXT_PROTOCOL => protocol = pairs().eq([NTPV4]),
             AEAD => aead = pairs().eq([AES_SIV]),
             ERROR => return Err(nts("the key exchange server refused")),
-            NEW_COOKIE if negotiated.cookies.len() < COOKIES => negotiated.cookies.push(body),
-            NEW_COOKIE => {}
+            NEW_COOKIE => {
+                if negotiated.cookies.len() < COOKIES {
+                    negotiated.cookies.push(body);
+                }
+            }
             SERVER => {
                 let host = String::from_utf8(body).map_err(|_| nts("a server name isn't text"))?;
                 negotiated.server = Some(host);
@@ -191,13 +195,13 @@ pub(crate) fn exported(
 /// A TLS stream that gives up at a deadline, however the bytes trickle.
 struct Deadline {
     stream: StreamOwned<ClientConnection, TcpStream>,
-    until: Instant,
+    started: Instant,
 }
 
 impl Deadline {
     /// Sets the socket's timeouts to the time left, or fails once none is.
     fn remaining(&self) -> io::Result<()> {
-        let left = self.until.saturating_duration_since(Instant::now());
+        let left = KE_DEADLINE.saturating_sub(self.started.elapsed());
         if left.is_zero() {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
@@ -235,7 +239,7 @@ pub(crate) fn exchange(
     resolver: &dyn Resolve,
     tls: &Arc<ClientConfig>,
 ) -> Result<Association, ClockError> {
-    let until = Instant::now() + KE_DEADLINE;
+    let started = Instant::now();
     let address = resolver.resolve(&format!("{host}:{KE_PORT}"))?;
     let tcp = TcpStream::connect_timeout(&address, KE_DEADLINE)?;
     let name = ServerName::try_from(host.to_owned()).map_err(|_| nts("a host name isn't valid"))?;
@@ -243,7 +247,7 @@ pub(crate) fn exchange(
         .map_err(|failed| ClockError::Nts(failed.to_string()))?;
     let mut stream = Deadline {
         stream: StreamOwned::new(connection, tcp),
-        until,
+        started,
     };
     stream.write_all(&ke_request())?;
     stream.flush()?;
