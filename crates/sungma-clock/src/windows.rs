@@ -4,7 +4,7 @@
 
 use std::{future::Future, process::Command};
 
-use sungma::clock::{Clock, Interval, Revision};
+use sungma::clock::{Clock, Reading};
 
 use crate::{
     ClockError, w32tm,
@@ -42,11 +42,11 @@ fn query() -> Option<Sample> {
 }
 
 impl Clock for WindowsClock {
-    fn now(&self) -> Interval {
+    fn now(&self) -> Reading {
         self.0.now()
     }
 
-    fn wait_past(&self, revision: Revision) -> impl Future<Output = ()> + Send {
-        wall::wait_past(self, revision)
+    fn wait(&self, stamped: Reading) -> impl Future<Output = ()> + Send {
+        wall::wait(self, stamped)
     }
 }

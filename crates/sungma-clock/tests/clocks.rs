@@ -7,7 +7,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use sungma::clock::{Clock, Interval, Revision};
+use sungma::clock::{Clock, Reading, Revision};
 use sungma_clock::{ClockError, DevClock, ManualClock, NtpClock, SystemClock};
 use tokio::time::timeout;
 
@@ -18,10 +18,10 @@ fn wall() -> u64 {
     u64::try_from(since.as_nanos()).unwrap()
 }
 
-fn at(earliest: u64, latest: u64) -> Interval {
-    Interval {
-        earliest: Revision(earliest),
-        latest: Revision(latest),
+fn at(settled: u64, revision: u64) -> Reading {
+    Reading {
+        settled: Revision(settled),
+        revision: Revision(revision),
     }
 }
 
@@ -63,8 +63,11 @@ fn reads_ahead(clock: &impl Clock, ahead: u64) {
     let before = wall() + ahead * SECOND;
     let now = clock.now();
     let after = wall() + ahead * SECOND;
-    assert!(now.earliest.0 <= after && before <= now.latest.0, "{now:?}");
-    let width = now.latest.0 - now.earliest.0;
+    assert!(
+        now.settled.0 <= after && before <= now.revision.0,
+        "{now:?}"
+    );
+    let width = now.revision.0 - now.settled.0;
     assert!((20_000_000..100_000_000).contains(&width), "{width}");
 }
 
@@ -80,17 +83,17 @@ fn a_dev_clock_counts_one_past_the_last_reading() {
 #[tokio::test]
 async fn a_dev_clock_wait_moves_the_counter_past_the_revision() {
     let clock = DevClock::default();
-    clock.wait_past(Revision(9)).await;
+    clock.wait(at(9, 9)).await;
     assert_eq!(clock.now(), at(10, 10));
-    clock.wait_past(Revision(3)).await;
+    clock.wait(at(3, 3)).await;
     assert_eq!(clock.now(), at(11, 11));
 }
 
 #[tokio::test]
-async fn a_manual_clock_holds_a_wait_until_earliest_passes() {
+async fn a_manual_clock_holds_a_wait_until_settled_passes() {
     let clock = ManualClock::new(at(5, 9));
     assert_eq!(clock.now(), at(5, 9));
-    let wait = clock.wait_past(Revision(9));
+    let wait = clock.wait(at(5, 9));
     tokio::pin!(wait);
     assert!(timeout(Duration::from_millis(20), &mut wait).await.is_err());
     clock.set(at(9, 13));
@@ -152,11 +155,11 @@ fn a_resync_takes_the_new_sample_and_a_failed_one_keeps_the_old() {
 }
 
 #[tokio::test]
-async fn an_ntp_clock_waits_until_earliest_passes() {
+async fn an_ntp_clock_waits_until_settled_passes() {
     let clock = NtpClock::sync(&[server("127.0.0.1:0", vec![0])]).unwrap();
-    let stamp = clock.now().latest;
-    clock.wait_past(stamp).await;
-    assert!(clock.now().earliest > stamp);
+    let stamped = clock.now();
+    clock.wait(stamped).await;
+    assert!(clock.now().settled > stamped.revision);
 }
 
 #[tokio::test]
@@ -167,11 +170,11 @@ async fn the_system_clock_reads_true_time_and_waits_it_out() {
     let before = wall();
     let now = clock.now();
     assert!(
-        now.earliest.0 <= wall() && before <= now.latest.0,
+        now.settled.0 <= wall() && before <= now.revision.0,
         "{now:?}"
     );
-    clock.wait_past(now.latest).await;
-    assert!(clock.now().earliest > now.latest);
+    clock.wait(now).await;
+    assert!(clock.now().settled > now.revision);
 }
 
 #[test]
@@ -190,7 +193,7 @@ fn a_system_clock_refresh_keeps_it_reading() {
     let before = wall();
     let now = clock.now();
     assert!(
-        now.earliest.0 <= wall() && before <= now.latest.0,
+        now.settled.0 <= wall() && before <= now.revision.0,
         "{now:?}"
     );
 }

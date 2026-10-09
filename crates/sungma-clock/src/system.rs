@@ -2,7 +2,7 @@
 
 use std::{future::Future, net::ToSocketAddrs};
 
-use sungma::clock::{Clock, Interval, Revision};
+use sungma::clock::{Clock, Reading};
 
 #[cfg(target_os = "linux")]
 use crate::LinuxClock;
@@ -11,7 +11,7 @@ use crate::WindowsClock;
 use crate::{ClockError, NtpClock, wall};
 
 /// The platform's clock when it reports a bound, else NTP. An enum rather
-/// than a `Box<dyn Clock>`: [`Clock::wait_past`] returns `impl Future`, so
+/// than a `Box<dyn Clock>`: [`Clock::wait`] returns `impl Future`, so
 /// the trait can't be a trait object, and each variant exists only on the
 /// platforms that have it.
 #[derive(Debug)]
@@ -52,7 +52,7 @@ impl SystemClock {
 }
 
 impl Clock for SystemClock {
-    fn now(&self) -> Interval {
+    fn now(&self) -> Reading {
         match self {
             #[cfg(target_os = "linux")]
             Self::Linux(clock) => clock.now(),
@@ -62,7 +62,7 @@ impl Clock for SystemClock {
         }
     }
 
-    fn wait_past(&self, revision: Revision) -> impl Future<Output = ()> + Send {
-        wall::wait_past(self, revision)
+    fn wait(&self, stamped: Reading) -> impl Future<Output = ()> + Send {
+        wall::wait(self, stamped)
     }
 }

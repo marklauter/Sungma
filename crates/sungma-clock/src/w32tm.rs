@@ -41,7 +41,7 @@ Root Dispersion: 7.9431591s
 ReferenceId: 0x14650039 (source IP:  20.101.57.9)
 Last Successful Sync Time: 10/8/2026 9:12:44 AM
 Source: time.windows.com,0x9
-Poll Interval: 10 (1024s)
+Poll Reading: 10 (1024s)
 ";
 
     #[test]

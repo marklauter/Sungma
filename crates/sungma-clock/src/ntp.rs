@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use sungma::clock::{Clock, Interval, Revision};
+use sungma::clock::{Clock, Reading};
 
 use crate::{
     ClockError,
@@ -59,12 +59,12 @@ impl NtpClock {
 }
 
 impl Clock for NtpClock {
-    fn now(&self) -> Interval {
+    fn now(&self) -> Reading {
         self.sampled.now()
     }
 
-    fn wait_past(&self, revision: Revision) -> impl Future<Output = ()> + Send {
-        wall::wait_past(self, revision)
+    fn wait(&self, stamped: Reading) -> impl Future<Output = ()> + Send {
+        wall::wait(self, stamped)
     }
 }
 

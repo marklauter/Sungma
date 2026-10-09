@@ -1,7 +1,7 @@
 ---
 title: The clock
 type: specification
-summary: "A clock reports an interval that contains true time; a write is stamped with its latest reading and acknowledged once its earliest has passed the stamp."
+summary: "A clock reading brackets true time between a settled time and a revision; a write is stamped with the revision and acknowledged once the clock's settled time has passed it."
 status: evolving
 cites:
   - "[[revision]]"
@@ -12,23 +12,23 @@ cites:
 
 # The clock
 
-A clock reads the [[revision-clock]]. It never knows true time, only an interval that contains it, and a [[revision]] is a reading of it. [[one-timeline]] orders facts and theories on these revisions.
+A clock reads the [[revision-clock]]. It never knows true time, only a reading that brackets it, and a [[revision]] is taken from that reading. [[one-timeline]] orders facts and theories on these revisions.
 
 ## The port
 
 `Clock` in `sungma::clock` has two methods:
 
-- `now()` returns an `Interval { earliest, latest }` that contains true time.
-- `wait_past(r)` resolves once `now().earliest` is past `r`.
+- `now()` returns a `Reading { settled, revision }`. True time is certainly past `settled` and not yet past `revision`.
+- `wait(stamped)` takes the reading a write was stamped with, and resolves once the clock's `settled` time is past `stamped.revision`. The caller hands back the reading whole, so it can't compare the wrong fields.
 
 A write follows commit-wait:
 
-1. Take the stamp `s = now().latest` while holding the write's locks.
-2. Write at revision `s`.
-3. Wait until `earliest` is past `s`.
-4. Acknowledge, returning the [[revision-token]] for `s`.
+1. Take `stamped = now()` while holding the write's locks.
+2. Write at `stamped.revision`.
+3. `wait(stamped)`.
+4. Acknowledge, returning the [[revision-token]] for `stamped.revision`.
 
-`latest` is at or after true time, so a stamp is never in the past. After the wait, true time is past `s`. A write that starts after the acknowledgement therefore stamps a later revision, on any node. A read at revision `t` waits until no write at or before `t` is still in flight, so a [[snapshot]] never shows a later write without an earlier one.
+True time is not yet past the stamp, so a stamp is never in the past. After the wait, true time is past the stamp. A write that starts after the acknowledgement therefore stamps a later revision, on any node. A read at revision `t` waits until no write at or before `t` is still in flight, so a [[snapshot]] never shows a later write without an earlier one.
 
 The writer ports call the clock inside a commit, and the domain never does. Clocks that read time report nanoseconds since the Unix epoch.
 
@@ -55,11 +55,11 @@ The clock keeps a window of recent samples. A sample's bound grows by the maximu
 
 ## Clocks
 
-- `SystemClock` is the production clock. At startup it takes the platform's clock when the platform reports a bound, and otherwise an `NtpClock`. It is an enum, not a trait object, because `wait_past` returns `impl Future`.
+- `SystemClock` is the production clock. At startup it takes the platform's clock when the platform reports a bound, and otherwise an `NtpClock`. It is an enum, not a trait object, because `wait` returns `impl Future`.
 - `LinuxClock` reads the kernel's `maxerror` through `adjtimex`. chrony keeps it current, and the kernel grows it by 500 ppm between updates.
 - `WindowsClock` reads the Windows Time service's root delay and dispersion from `w32tm /query /status`, in English only. The service is often stopped, and its bound is often seconds wide, so Windows usually falls back to NTP.
 - `NtpClock` asks servers such as `time.windows.com:123` directly. Servers that smear leap seconds, such as `time.google.com`, disagree with the rest near a leap second and shouldn't be mixed with them.
-- `DevClock` is a counter with `earliest` equal to `latest`, for a single node. Its waits never sleep.
+- `DevClock` is a counter with `settled` equal to `revision`, for a single node. Its waits never sleep.
 - `ManualClock`, behind the `test-util` feature, is set by hand. A test can hold a write in its commit-wait and then release it.
 
 ## References
@@ -68,4 +68,4 @@ The clock keeps a window of recent samples. A sample's bound grows by the maximu
 - David L. Mills, Jim Martin, Jack Burbank and William Kasch. *Network Time Protocol Version 4: Protocol and Algorithms Specification.* RFC 5905, IETF, 2010. The four timestamps, root distance, and the clock filter's window of samples.
 - James C. Corbett et al. "Spanner: Google's Globally-Distributed Database." *OSDI*, 2012. TrueTime's interval, and commit-wait.
 - chrony, <https://chrony-project.org>. An NTP implementation that measures the clock's drift rate and keeps the kernel's error bound current.
-- AWS ClockBound, <https://github.com/aws/clock-bound>. A daemon that publishes a clock's bound as earliest and latest.
+- AWS ClockBound, <https://github.com/aws/clock-bound>. A daemon that publishes a clock's bound as an earliest and a latest time, the same shape as a reading.

@@ -5,7 +5,7 @@
 use std::future::Future;
 
 use libc::{c_int, c_long};
-use sungma::clock::{Clock, Interval, Revision};
+use sungma::clock::{Clock, Reading};
 
 use crate::wall;
 
@@ -49,13 +49,13 @@ fn bound(state: c_int, maxerror: c_long) -> u64 {
 }
 
 impl Clock for LinuxClock {
-    fn now(&self) -> Interval {
+    fn now(&self) -> Reading {
         let (state, _, maxerror) = read();
-        wall::interval(wall::wall_nanos(), bound(state, maxerror))
+        wall::reading(wall::wall_nanos(), bound(state, maxerror))
     }
 
-    fn wait_past(&self, revision: Revision) -> impl Future<Output = ()> + Send {
-        wall::wait_past(self, revision)
+    fn wait(&self, stamped: Reading) -> impl Future<Output = ()> + Send {
+        wall::wait(self, stamped)
     }
 }
 
@@ -91,8 +91,8 @@ mod tests {
             let before = wall::wall_nanos();
             let now = clock.now();
             let after = wall::wall_nanos();
-            assert!(now.earliest.0 <= after && before <= now.latest.0);
-            assert!((1..=2 * 16_000_000_000).contains(&(now.latest.0 - now.earliest.0)));
+            assert!(now.settled.0 <= after && before <= now.revision.0);
+            assert!((1..=2 * 16_000_000_000).contains(&(now.revision.0 - now.settled.0)));
         }
     }
 }

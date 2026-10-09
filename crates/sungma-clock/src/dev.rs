@@ -5,10 +5,10 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use sungma::clock::{Clock, Interval, Revision};
+use sungma::clock::{Clock, Reading, Revision};
 
 /// A clock with no uncertainty: each reading is one past the last, with
-/// `earliest` equal to `latest`, so a wait never sleeps. Revisions count
+/// `settled` equal to `revision`, so a wait never sleeps. Revisions count
 /// readings rather than nanoseconds. A node that restarts starts the
 /// counter after its store's latest revision, so it never issues one twice.
 #[derive(Debug, Default)]
@@ -26,16 +26,16 @@ impl DevClock {
 }
 
 impl Clock for DevClock {
-    fn now(&self) -> Interval {
+    fn now(&self) -> Reading {
         let next = Revision(self.last.fetch_add(1, Ordering::SeqCst) + 1);
-        Interval {
-            earliest: next,
-            latest: next,
+        Reading {
+            settled: next,
+            revision: next,
         }
     }
 
-    fn wait_past(&self, revision: Revision) -> impl Future<Output = ()> + Send {
-        self.last.fetch_max(revision.0, Ordering::SeqCst);
+    fn wait(&self, stamped: Reading) -> impl Future<Output = ()> + Send {
+        self.last.fetch_max(stamped.revision.0, Ordering::SeqCst);
         future::ready(())
     }
 }
