@@ -89,13 +89,17 @@ A server that answers Kiss-o'-Death is asked less often, as it requests. A kiss 
 
 ### The window
 
-The clock keeps a window of the last eight samples. A sample's bound grows by the maximum drift, 500 ppm, from the moment it was taken, so an old sample stays valid but loosens. The clock intersects the window, so one exchange with a slow round trip doesn't widen the bound. A sample that doesn't overlap the window is a `Drifted` fault.
+The clock keeps a window of the last eight samples. A sample's bound grows by the drift allowance from the moment it was taken, so an old sample stays valid but loosens. The clock intersects the window, so one exchange with a slow round trip doesn't widen the bound. A sample that doesn't overlap the window is a `Drifted` fault.
+
+The allowance is measured from the window. Each sample gives true time less the monotonic clock, `e = wall + offset − monotonic`, so any two samples bound the monotonic clock's rate against true time to `((eⱼ − eᵢ) ± (bᵢ + bⱼ + uᵢ + uⱼ)) / (monotonicⱼ − monotonicᵢ)`, where `b` is a sample's bound and `u` its moment's uncertainty, rounded outward. The rate lies where every pair's range meets. The allowance is the larger end of that range plus half, plus 20 ppm, capped at 500 ppm. The system clock's own rate doesn't enter, so a time service slewing it doesn't skew the measure.
+
+The measure assumes the rate holds steady across the window, about eight minutes. The margin and floor cover the slow change that temperature brings, and a sudden change shows as a `Drifted` sample, which restarts the window. The measured allowance holds only over the window's baseline, from its oldest sample to its newest. Past the baseline, as in a sync outage, the bound grows at 500 ppm. With fewer than two samples, or pairs whose ranges don't meet, the allowance is 500 ppm. The jump check excuses the system clock's slew at 500 ppm whatever the allowance, since that rate is the system clock's, not the monotonic clock's.
 
 `now()` returns true time where the window's samples meet. It never touches the network. The system clock itself is never set.
 
 ### Resync
 
-`resync()` takes a new sample into the window. When the servers can't be reached, the window stays as it was and its bounds keep growing. A refresher calls it every 64 seconds, NTP's shortest standard poll, and passes each result to a report callback; a server held by Kiss-o'-Death sits out on its own schedule. At that rate drift adds at most 32 ms between syncs, 64 s at 500 ppm.
+`resync()` takes a new sample into the window. When the servers can't be reached, the window stays as it was and its bounds keep growing. A refresher calls it every 64 seconds, NTP's shortest standard poll, and passes each result to a report callback; a server held by Kiss-o'-Death sits out on its own schedule. At that rate drift adds at most 32 ms between syncs at 500 ppm, and a few milliseconds at a measured allowance.
 
 ### NTS
 
@@ -121,14 +125,14 @@ The kernel's bound doesn't cover a step it wasn't told of, so each reading compa
 
 ## Status
 
-`status()` on `NtpClock`, `LinuxClock` and `SystemClock` gives a `ClockStatus` for metrics: the reading's width, the current fault if any, counts of each fault kind since start, the time since the newest sample, the failed syncs, and the last sync's report. It doesn't take a reading, so it never counts a fault or moves `LinuxClock`'s jump check. Exporting it, and alerting on it, belong to the API's operations layer. The refresher's report callback carries each refresh's result.
+`status()` on `NtpClock`, `LinuxClock` and `SystemClock` gives a `ClockStatus` for metrics: the reading's width, the current fault if any, counts of each fault kind since start, the time since the newest sample, the failed syncs, the last sync's report, and for `NtpClock` the measured drift range, the allowance and its baseline. It doesn't take a reading, so it never counts a fault or moves `LinuxClock`'s jump check. Exporting it, and alerting on it, belong to the API's operations layer. The refresher's report callback carries each refresh's result.
 
 ## Deployment
 
 On ECS on Fargate, `SystemClock` takes `NtpClock` unless the task's kernel reports a synchronized clock.
 
 - A task reaches at least three servers from independent operators: outbound UDP 123 for queries and TCP 4460 for NTS key exchange, through a NAT gateway or a public IP.
-- Internet servers give bounds of tens of milliseconds, and the bound grows by up to 32 ms between syncs, so commit-wait adds tens of milliseconds to each write.
+- Internet servers give bounds of tens of milliseconds, and the bound grows by up to 32 ms between syncs until the window has measured its drift, so commit-wait adds tens of milliseconds to each write.
 - Amazon Time Sync at `169.254.169.123` smears leap seconds, so it isn't mixed with the servers above.
 
 ## Required tests
@@ -139,7 +143,7 @@ A clock whose reading misses true time reverses revisions without an error. A ch
 2. **Commit-wait.** `wait` resolves only once `settled` is past the stamp, takes another sleep when the bound grows during one, returns at once when the stamp is already past, and ends with a fault the clock reports.
 3. **Real-time order.** Across simulated nodes whose clocks err anywhere within their bounds, a write that starts after another is acknowledged gets a later revision.
 4. **Steps and pauses.** A step within the allowance widens the reading, a larger one faults, a suspend on Linux still reads true time, and a thread descheduled between clock reads widens the reading rather than faulting.
-5. **Drift and the window.** A sample's bound grows by 500 ppm of the time since it was taken. The window reads where its samples meet, holds eight, and restarts on a sample that disagrees. A failed resync keeps the window.
+5. **Drift and the window.** A sample's bound grows by the allowance over the time since it was taken, measured from the window within its baseline and 500 ppm past it, or 500 ppm when the window can't measure. A rate that wanders within the floor keeps every reading true; a sudden change gives `Drifted`. The window reads where its samples meet, holds eight, and restarts on a sample that disagrees. A failed resync keeps the window.
 6. **Faults.** Each fault is reported where [Faults](#faults) says, and `observe` faults on a revision past the clock's.
 7. **NTP arithmetic.** Timestamps convert between NTP and Unix time to the nanosecond in both eras, and offset, round trip and root distance follow [NTP](#ntp).
 8. **NTP replies.** Each refusal: wrong length, not a server's reply, an unsynchronized server, and a reply to another request. A server's clock that runs backwards gives no negative round trip.
@@ -190,12 +194,18 @@ The cases each class covers, at minimum.
 
 #### Drift and the window
 
-1. A sample's bound after 2 s has grown by 1 ms.
+1. An unmeasured sample's bound after 2 s has grown by 1 ms.
 2. `drift(Duration::MAX)` saturates at `u64::MAX`.
 3. Two samples of ±10 ms, 5 ms apart, read as their 15 ms overlap.
 4. Eight wide samples after a narrow one push the narrow one out of the window.
 5. A sample 1 s from the window faults `Drifted`, and the clock then reads from it alone.
 6. After a failed resync, the reading's width is the window's bounds plus drift since each sample, not since the failure.
+7. Three samples 100 s apart at 10 ppm with 1 ms bounds measure 0 to 20 ppm, an allowance of 50 ppm.
+8. A system clock slewed against the monotonic clock, its offset cancelling the slew, measures the monotonic clock's rate.
+9. One sample, samples too close to beat 500 ppm, pairs that don't meet, and samples at one monotonic time each give 500 ppm.
+10. Eight samples 64 s apart give a 448 s baseline; 1,000 s after the newest, its bound grows by the allowance over 448 s and 500 ppm over 552 s.
+11. A property test wanders each node's rate by up to 10 ppm per window, with outages of up to five polls, and every reading contains true time.
+12. A rate that jumps 300 ppm within the baseline misses true time, and the next resync gives `Drifted` and returns the allowance to 500 ppm.
 
 #### Faults
 
