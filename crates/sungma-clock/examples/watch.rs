@@ -1,4 +1,5 @@
-//! Reads the clock every 10 seconds and logs each reading to stdout.
+//! Reads the clock every 5 seconds and logs each reading, and the
+//! clock's status, to stdout.
 //!
 //! `cargo run -p sungma-clock --example watch [-- host ...]`
 //!
@@ -10,7 +11,7 @@
 use std::{env, error::Error, sync::Arc, time::Duration};
 
 use sungma::clock::{Clock, Reading};
-use sungma_clock::{Servers, SystemClock, refresher};
+use sungma_clock::{ClockStatus, Servers, SystemClock, refresher};
 
 /// Public NTS servers from independent operators, none of which smears
 /// leap seconds.
@@ -40,14 +41,55 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!("refresh failed: {failed}");
         }
     });
-    let mut ticks = tokio::time::interval(Duration::from_secs(10));
+    let mut ticks = tokio::time::interval(Duration::from_secs(5));
     loop {
         ticks.tick().await;
         match clock.now() {
             Ok(reading) => println!("{}", line(reading)),
             Err(fault) => println!("fault: {fault}"),
         }
+        println!("  {}", status(&clock.status()));
     }
+}
+
+/// `sample 12.3 s ago · faults 0 · failed syncs 0`, then whatever the
+/// last sync found that wasn't routine.
+fn status(status: &ClockStatus) -> String {
+    let faults = &status.faults;
+    let mut parts = Vec::new();
+    if let Some(since) = status.since_sample {
+        parts.push(format!("sample {:.1} s ago", since.as_secs_f64()));
+    }
+    parts.push(format!(
+        "faults {} (jumped {}, drifted {}, behind {}, unsynchronized {})",
+        faults.jumped + faults.drifted + faults.behind + faults.unsynchronized,
+        faults.jumped,
+        faults.drifted,
+        faults.behind,
+        faults.unsynchronized
+    ));
+    parts.push(format!("failed syncs {}", status.failed_syncs));
+    if let Some(sync) = &status.last_sync {
+        let mut listed = |name: &str, servers: &[String]| {
+            if !servers.is_empty() {
+                parts.push(format!("{name} {}", servers.join(", ")));
+            }
+        };
+        listed("falsetickers", &sync.falsetickers);
+        listed("unanswered", &sync.unanswered);
+        listed("denied", &sync.denied);
+        listed("overridden", &sync.overridden);
+        let kissed: Vec<String> = sync
+            .kissed
+            .iter()
+            .map(|(server, code)| format!("{server} {}", String::from_utf8_lossy(code)))
+            .collect();
+        listed("kissed", &kissed);
+        if let Some(leap) = sync.leap {
+            parts.push(format!("leap second {leap:?}"));
+        }
+    }
+    parts.join(" · ")
 }
 
 /// `2026-10-08T14:03:27.512345678Z ±11.204 ms  settled … revision …`
