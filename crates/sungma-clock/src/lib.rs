@@ -53,4 +53,6 @@ pub enum ClockError {
     Kiss([u8; 4]),
     #[error(transparent)]
     Fault(#[from] sungma::clock::ClockFault),
+    #[error("a refresh panicked: {0}")]
+    Panicked(String),
 }
