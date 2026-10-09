@@ -78,14 +78,15 @@ impl<T: TimeSource> LinuxClock<T> {
     }
 
     fn reading(&self) -> Result<Reading, ClockFault> {
+        // The kernel and both clocks are read under the lock, so readings
+        // are stored in the order they were taken. Out of order, a reading
+        // from before the kernel's once-a-second growth of its bound would
+        // follow one from after it, and read as chrony updating the bound.
+        let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
         let (state, status, maxerror) = read();
         let kernel = bound(state, maxerror);
         let now = self.time.moment();
-        // Two threads may store `last` out of order, leaving the older
-        // reading behind. That's harmless: every stored reading is
-        // consistent, and its steps are carried either way.
         let (step, carried) = {
-            let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
             let then = last.moment;
             let moved = i128::from(now.wall) - i128::from(then.wall);
             let elapsed = Duration::from_nanos(now.monotonic.saturating_sub(then.monotonic));
@@ -104,6 +105,7 @@ impl<T: TimeSource> LinuxClock<T> {
             };
             (step.map(|_| slack), carry.at(now.monotonic))
         };
+        drop(last);
         let slack = step?;
         let widen = carried.saturating_add(slack);
         wall::reading(now.wall, assess(state, status, maxerror, widen)?)
