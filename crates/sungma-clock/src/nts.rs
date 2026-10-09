@@ -113,9 +113,9 @@ fn record(kind: u16, body: &[u8]) -> Vec<u8> {
 /// The client's request: NTPv4, AES-SIV, end.
 pub(crate) fn ke_request() -> Vec<u8> {
     [
-        record(CRITICAL | NEXT_PROTOCOL, &NTPV4.to_be_bytes()),
+        record(CRITICAL + NEXT_PROTOCOL, &NTPV4.to_be_bytes()),
         record(AEAD, &AES_SIV.to_be_bytes()),
-        record(CRITICAL | END, &[]),
+        record(CRITICAL + END, &[]),
     ]
     .concat()
 }
@@ -288,18 +288,18 @@ pub(crate) fn field(kind: u16, body: &[u8]) -> Vec<u8> {
 /// one is malformed.
 pub(crate) fn fields(bytes: &[u8]) -> Option<Vec<(usize, u16, &[u8])>> {
     let mut fields = Vec::new();
-    let mut at = 0;
-    while at < bytes.len() {
-        let header = bytes.get(at..at + 4)?;
+    let mut rest = bytes;
+    while let Some(header) = rest.first_chunk::<4>() {
         let kind = u16::from_be_bytes([header[0], header[1]]);
         let length = usize::from(u16::from_be_bytes([header[2], header[3]]));
         if length < 4 || length % 4 != 0 {
             return None;
         }
-        fields.push((at, kind, bytes.get(at + 4..at + length)?));
-        at += length;
+        let (field, after) = rest.split_at_checked(length)?;
+        fields.push((bytes.len() - rest.len(), kind, &field[4..]));
+        rest = after;
     }
-    Some(fields)
+    rest.is_empty().then_some(fields)
 }
 
 /// The authenticator field over everything before it: the nonce, and the
@@ -382,9 +382,11 @@ impl Association {
         let (header, extensions) = reply.split_at_checked(48)?;
         let found = fields(extensions)?;
         let (at, _, body) = *found.iter().find(|(_, kind, _)| *kind == AUTHENTICATOR)?;
+        // Only fields before the authenticator are authenticated.
         let echoed = found
             .iter()
-            .any(|&(before, kind, body)| before < at && kind == UNIQUE_ID && body == unique);
+            .take_while(|&&(_, kind, _)| kind != AUTHENTICATOR)
+            .any(|&(_, kind, body)| kind == UNIQUE_ID && body == unique);
         if !echoed {
             return None;
         }
@@ -441,7 +443,7 @@ mod tests {
     fn a_response_gives_cookies_and_the_server_to_ask() {
         let mut records = agreed();
         records.extend([
-            record(WARNING, &[0, 1]),
+            record(CRITICAL + WARNING, &[0, 1]),
             record(99, b"ignored"),
             record(NEW_COOKIE, b"one"),
             record(NEW_COOKIE, b"two"),
@@ -554,6 +556,14 @@ mod tests {
         assert!(open(&to_client, &sealed[4..], b"ad").is_none());
         let failed = exported(|_, _, _| Err(rustls::Error::HandshakeNotComplete), 0);
         assert!(matches!(failed, Err(ClockError::Nts(_))));
+    }
+
+    #[test]
+    fn an_association_shows_its_cookies_and_server_but_not_its_keys() {
+        assert_eq!(
+            format!("{:?}", association()),
+            r#"Association { cookies: 2, server: "ntp.test:123", .. }"#
+        );
     }
 
     #[test]
