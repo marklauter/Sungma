@@ -15,6 +15,7 @@ mod linux;
 #[cfg(feature = "test-util")]
 mod manual;
 mod ntp;
+mod refresher;
 mod servers;
 mod system;
 mod time;
@@ -30,6 +31,7 @@ pub use manual::ManualClock;
 #[cfg(fuzzing)]
 pub use ntp::fuzz_answer;
 pub use ntp::{Leap, NtpClock, SyncReport};
+pub use refresher::{POLL, Refresh, refresher};
 pub use servers::{Resolve, Servers};
 pub use system::SystemClock;
 #[cfg(feature = "test-util")]

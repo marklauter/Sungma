@@ -13,7 +13,8 @@ use std::{
 
 use sungma::clock::{Clock, ClockFault, Reading, Revision};
 use sungma_clock::{
-    ClockError, DevClock, Leap, ManualClock, ManualTime, NtpClock, Servers, SystemClock, TimeSource,
+    ClockError, DevClock, Leap, ManualClock, ManualTime, NtpClock, Refresh, Servers, SystemClock,
+    TimeSource,
 };
 use tokio::time::timeout;
 
@@ -534,4 +535,21 @@ fn a_leap_second_a_server_announces_is_noted() {
         let clock = NtpClock::sync(Servers::new([server])).unwrap();
         assert_eq!(clock.last_sync().leap, leap);
     }
+}
+
+#[test]
+fn a_refresh_takes_a_sample_from_the_servers() {
+    let ntp = NtpClock::sync(Servers::new([server("127.0.0.1:0", vec![0, 50])])).unwrap();
+    assert!(matches!(
+        Refresh::refresh(&ntp),
+        Err(ClockError::Fault(ClockFault::Drifted))
+    ));
+    reads_ahead(&ntp, 50);
+    let ntp = NtpClock::sync(Servers::new([server("127.0.0.1:0", vec![0, 50])])).unwrap();
+    let system = SystemClock::Ntp(ntp);
+    assert!(matches!(
+        Refresh::refresh(&system),
+        Err(ClockError::Fault(ClockFault::Drifted))
+    ));
+    reads_ahead(&system, 50);
 }

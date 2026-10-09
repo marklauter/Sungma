@@ -14,7 +14,7 @@ test-util = ["tokio/sync"]
 [dependencies]
 sungma.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["rt", "time"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true
@@ -22,4 +22,4 @@ libc.workspace = true
 [dev-dependencies]
 proptest.workspace = true
 sungma-clock = { path = ".", features = ["test-util"] }
-tokio = { workspace = true, features = ["macros", "rt", "time"] }
+tokio = { workspace = true, features = ["macros", "rt", "test-util", "time"] }
