@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use proptest::prelude::*;
 use serde_json::{Value, json};
 use sungma::{
+    graph::Subject,
     memory::{MemoryDictionary, MemoryFactStore},
-    model::Subject,
     name::{MAX_IDENTITY_BYTES, MAX_NAME_BYTES, MAX_RESOURCE_BYTES, ResourceName, SubjectsetName},
     resolve,
     store::{FactStore, Pool},

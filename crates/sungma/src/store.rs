@@ -20,7 +20,9 @@ use std::{future::Future, ops::Range, sync::Arc};
 use thiserror::Error;
 
 use crate::{
-    model::{Fact, RelationId, Revision, Subject, Subjectset, TheoryId},
+    clock::Revision,
+    graph::{Fact, Subject, Subjectset},
+    id::{RelationId, TheoryId},
     rewrite::Rewrite,
 };
 

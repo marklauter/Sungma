@@ -6,8 +6,10 @@
 #![allow(dead_code)]
 
 use sungma::{
+    clock::Revision,
+    graph::{Subject, Subjectset},
+    id::{RelationId, TheoryId},
     memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore},
-    model::{RelationId, Revision, Subject, Subjectset, TheoryId},
     resolve,
     rewrite::Rewrite,
     store::{FactStore, Pool},

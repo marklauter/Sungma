@@ -32,8 +32,8 @@ use thiserror::Error;
 
 pub use sungma::name::{MAX_NAME_BYTES, MAX_QUOTE_BYTES};
 use sungma::{
+    id::{RelationId, TheoryId},
     memory::{MemoryDictionary, MemoryTheoryStore},
-    model::{RelationId, TheoryId},
     name::{NameError, RelationName, TheoryName, quote},
     rewrite::Rewrite,
     store::Pool,

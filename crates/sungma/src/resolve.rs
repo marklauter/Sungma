@@ -3,7 +3,8 @@
 //! touching the fact store.
 
 use crate::{
-    model::{IdentityId, RelationId, Resource, ResourceId, Subjectset, TheoryId},
+    graph::{Resource, Subjectset},
+    id::{IdentityId, RelationId, ResourceId, TheoryId},
     name::{ResourceName, SubjectsetName},
     store::{Dictionary, Pool, StoreError},
 };

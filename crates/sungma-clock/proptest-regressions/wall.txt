@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a5cb87be3c8211123dbd7e072abd4bd7596b8deb008ce6ee1deb3706579313b0 # shrinks to nodes = [(0, 1000, 0.0, 0.0), (91066715, 40938400, -0.9156259476020421, 0.023350690140131105)], history = [Some(0), None, Some(1), None, None, None, Some(4), Some(0), None, None]
+cc db57b04804d5de47826fd9c0c52fdc30fb6daa24bce1196a7d4bdd94d9eee875 # shrinks to offset = 0, bound = 1000, error = 0.0, drift = -0.30160033590162855, events = [Pass(179242), Resync(-0.2378617564668341, 48028315), Pass(533389), Step(3040276), Resync(0.016771344995051903, 75895012), Pass(508070), Resync(0.005194458451535205, 94472633), Resync(-0.9330371791227348, 46360181), Step(9933648), Resync(-0.9022899370732459, 79974313), Resync(-0.5494517021323985, 96891400), Pass(156742), Step(9438653), Resync(-0.34818969616633644, 26959570), Resync(-0.979869473897943, 93887630), Pass(176976), Resync(-0.2961349544377025, 10883377), Step(-7779499), Step(4609591), Pass(596810), Step(-10835129), Pass(160325), Resync(-0.9407535902201694, 65520856), Step(6965916), Resync(0.0033842069098209723, 92535683), Step(8579889)]

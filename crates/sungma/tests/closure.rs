@@ -10,8 +10,10 @@ use std::{
 use common::{World, declare, head, identity, subjectset, world};
 use proptest::{prelude::*, sample::subsequence, test_runner::TestCaseError};
 use sungma::{
+    clock::Revision,
     closure::{Closure, ClosureError, Expansion, MAX_DEPTH},
-    model::{RelationId, Revision, Subject, Subjectset, TheoryId},
+    graph::{Subject, Subjectset},
+    id::{RelationId, TheoryId},
     rewrite::Rewrite::{self, Computed, Exclusion, Intersection, This, Union},
     store::{Dictionary, FactStore, Pool, StoreError, TheoryStore},
     theory::TheoryError,

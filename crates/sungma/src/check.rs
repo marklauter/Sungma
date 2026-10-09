@@ -14,9 +14,10 @@ use std::{
 use thiserror::Error;
 
 use crate::{
+    clock::Revision,
     closure::Closure,
     decision::Decision,
-    model::{Revision, Subject},
+    graph::Subject,
     name::SubjectsetName,
     resolve,
     store::{Dictionary, FactStore, StoreError, TheoryStore},

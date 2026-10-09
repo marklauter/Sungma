@@ -5,8 +5,8 @@ mod common;
 use std::time::{Duration, Instant};
 
 use sungma::{
+    id::RelationId,
     memory::{MemoryDictionary, MemoryTheoryStore},
-    model::RelationId,
     rewrite::Rewrite::{self, Computed, Exclusion, This, Union},
     theory::{MAX_CYCLE_NAMES, MAX_REWRITE_DEPTH, Problem, Theory, TheoryError},
 };

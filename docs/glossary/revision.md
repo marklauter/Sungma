@@ -9,4 +9,4 @@ A position on the revision clock.
 
 ## Rationale
 
-A revision is internal. Callers hold a mark.
+A revision is internal. Callers hold a revision token.

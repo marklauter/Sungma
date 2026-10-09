@@ -1,6 +1,6 @@
 //! The rewrite tree a relation evaluates.
 
-use crate::model::RelationId;
+use crate::id::RelationId;
 
 /// A relation's rewrite.
 ///

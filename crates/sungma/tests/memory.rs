@@ -5,10 +5,10 @@ use std::collections::HashSet;
 
 use proptest::{collection::vec, prelude::*, test_runner::TestCaseError};
 use sungma::{
+    clock::Revision,
+    graph::{Fact, Resource, Subject, Subjectset},
+    id::{IdentityId, RelationId, ResourceId, TheoryId},
     memory::MemoryFactStore,
-    model::{
-        Fact, IdentityId, RelationId, Resource, ResourceId, Revision, Subject, Subjectset, TheoryId,
-    },
     store::{
         FactStore,
         FactWrite::{self, *},

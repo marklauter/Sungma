@@ -41,8 +41,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use sungma::{
     check::{CheckRequest, CheckService, MemoryAuditLog, RequestContext, SubjectName, Verdict},
+    clock::Revision,
     memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore},
-    model::Revision,
     name::{NameError, SubjectsetName},
 };
 use sungma_lang::{

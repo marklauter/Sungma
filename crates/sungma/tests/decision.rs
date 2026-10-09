@@ -8,9 +8,10 @@ use std::time::SystemTime;
 use common::{World, declare, head, identity, subjectset, world};
 use sungma::{
     check::{CheckRequest, CheckService, MemoryAuditLog, RequestContext, SubjectName, Verdict},
+    clock::Revision,
     closure::Closure,
     decision::{Decision, Outcome, SEMANTICS, Semantics},
-    model::{Fact, Revision, Subject},
+    graph::{Fact, Subject},
     replay::{Replay, replay},
     resolve,
     rewrite::Rewrite::This,

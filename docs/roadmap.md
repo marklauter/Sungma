@@ -23,3 +23,8 @@
 21. Snapshot dumps for offline processing.
 22. Metrics, tracing and latency objectives.
 23. Client SDKs.
+
+## Deferred
+
+- ClockBound clock: AWS ClockBound's microsecond bounds, as a `SystemClock` variant. Needs a host to run the daemon on, so it waits for an EC2-backed deployment; Fargate has none.
+- Clock soak test: a long run comparing the clock's readings against servers it doesn't sync from, counting readings that miss them. Deferred until there's a reason to gather the evidence.
