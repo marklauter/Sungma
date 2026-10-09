@@ -62,8 +62,38 @@ enum Exchange {
     Honest,
     /// Trickles its response a byte every 50 ms.
     Slow,
+    /// Trickles every TLS byte, the handshake's included, one every 20 ms,
+    /// so no TLS record is ever whole for long.
+    Trickle,
     /// Streams more than 64 KiB of cookies.
     Flood,
+}
+
+/// A socket that writes one byte at a time, `delay` apart, when it has a
+/// delay.
+struct Trickling {
+    socket: std::net::TcpStream,
+    delay: Option<Duration>,
+}
+
+impl Read for Trickling {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.socket.read(buffer)
+    }
+}
+
+impl Write for Trickling {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        let Some(delay) = self.delay else {
+            return self.socket.write(buffer);
+        };
+        thread::sleep(delay);
+        self.socket.write(&buffer[..buffer.len().min(1)])
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.socket.flush()
+    }
 }
 
 /// An NTS server: a key exchange listener and an NTP socket.
@@ -191,7 +221,14 @@ fn serve_exchanging(
     thread::spawn(move || {
         for tcp in listener.incoming() {
             let connection = ServerConnection::new(config.clone()).unwrap();
-            let mut stream = StreamOwned::new(connection, tcp.unwrap());
+            let delay = (exchange == Exchange::Trickle).then_some(Duration::from_millis(20));
+            let mut stream = StreamOwned::new(
+                connection,
+                Trickling {
+                    socket: tcp.unwrap(),
+                    delay,
+                },
+            );
             // The client's records end with the critical end record.
             // A client that refuses the certificate never sends them.
             let mut request = Vec::new();
@@ -461,6 +498,19 @@ fn four_exchanging(exchange: Exchange) -> (Vec<NtsServer>, Vec<u8>) {
 #[test]
 fn a_key_exchange_that_trickles_gives_up_at_its_deadline() {
     let (nts, certificate) = four_exchanging(Exchange::Slow);
+    let started = Instant::now();
+    let clock = NtpClock::sync(servers(&all(&nts), &certificate)).unwrap();
+    let took = started.elapsed();
+    assert!(
+        took >= Duration::from_secs(5) && took < Duration::from_secs(7),
+        "{took:?}"
+    );
+    assert_eq!(clock.last_sync().unanswered, vec!["d.test".to_owned()]);
+}
+
+#[test]
+fn a_key_exchange_that_trickles_its_tls_bytes_gives_up_at_its_deadline() {
+    let (nts, certificate) = four_exchanging(Exchange::Trickle);
     let started = Instant::now();
     let clock = NtpClock::sync(servers(&all(&nts), &certificate)).unwrap();
     let took = started.elapsed();

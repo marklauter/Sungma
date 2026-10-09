@@ -192,9 +192,11 @@ pub(crate) fn exported(
     Ok(Aes128SivAead::new(&Key::<Aes128SivAead>::from(key)))
 }
 
-/// A TLS stream that gives up at a deadline, however the bytes trickle.
+/// A socket that gives up at a deadline, however the bytes trickle. TLS
+/// reads and writes it as often as a record needs, and every one of those
+/// gets only the time left.
 struct Deadline {
-    stream: StreamOwned<ClientConnection, TcpStream>,
+    socket: TcpStream,
     started: Instant,
 }
 
@@ -208,27 +210,27 @@ impl Deadline {
                 "the key exchange took too long",
             ));
         }
-        self.stream.sock.set_read_timeout(Some(left))?;
-        self.stream.sock.set_write_timeout(Some(left))
+        self.socket.set_read_timeout(Some(left))?;
+        self.socket.set_write_timeout(Some(left))
     }
 }
 
 impl Read for Deadline {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         self.remaining()?;
-        self.stream.read(buffer)
+        self.socket.read(buffer)
     }
 }
 
 impl Write for Deadline {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         self.remaining()?;
-        self.stream.write(buffer)
+        self.socket.write(buffer)
     }
 
     fn flush(&mut self) -> io::Result<()> {
         self.remaining()?;
-        self.stream.flush()
+        self.socket.flush()
     }
 }
 
@@ -241,18 +243,14 @@ pub(crate) fn exchange(
 ) -> Result<Association, ClockError> {
     let started = Instant::now();
     let address = resolver.resolve(&format!("{host}:{KE_PORT}"))?;
-    let tcp = TcpStream::connect_timeout(&address, KE_DEADLINE)?;
+    let socket = TcpStream::connect_timeout(&address, KE_DEADLINE)?;
     let name = ServerName::try_from(host.to_owned()).map_err(|_| nts("a host name isn't valid"))?;
     let connection = ClientConnection::new(tls.clone(), name)
         .map_err(|failed| ClockError::Nts(failed.to_string()))?;
-    let mut stream = Deadline {
-        stream: StreamOwned::new(connection, tcp),
-        started,
-    };
+    let mut stream = StreamOwned::new(connection, Deadline { socket, started });
     stream.write_all(&ke_request())?;
     stream.flush()?;
     let negotiated = ke_response(&mut stream)?;
-    let stream = stream.stream;
     let export = |direction| {
         exported(
             |key, label, context| {
