@@ -618,6 +618,6 @@ fn fewer_than_three_answers_fail_the_sync_and_are_reported() {
     assert!(after.revision.0 - after.settled.0 >= before.revision.0 - before.settled.0);
     assert_eq!(
         ClockError::TooFewAnswers { answered: 2 }.to_string(),
-        "only 2 NTP servers answered; a sync needs 3"
+        "2 of the NTP servers answered; a sync needs 3"
     );
 }

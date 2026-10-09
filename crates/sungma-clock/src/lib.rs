@@ -49,7 +49,7 @@ pub enum ClockError {
     Reply(&'static str),
     #[error("NTP servers disagree: no range holds a majority")]
     Disagree,
-    #[error("only {answered} NTP servers answered; a sync needs 3")]
+    #[error("{answered} of the NTP servers answered; a sync needs 3")]
     TooFewAnswers { answered: usize },
     #[error("the NTP server sent Kiss-o'-Death {}", String::from_utf8_lossy(.0))]
     Kiss([u8; 4]),
