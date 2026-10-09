@@ -23,12 +23,30 @@ const PHASE_LIMIT_MICROS: u64 = 16_000_000;
 
 /// The system clock, give or take the kernel's `maxerror`. Each reading
 /// also compares the system clock with the monotonic clock since the last
-/// one, to catch a step the kernel's bound doesn't cover.
+/// one, to catch a step the kernel's bound doesn't cover. A step stays in
+/// the bound of every later reading, until the kernel's bound drops, which
+/// shows chrony has measured the clock again.
 #[derive(Debug)]
 pub struct LinuxClock<T = OsTime> {
     time: T,
-    last: Mutex<Moment>,
+    last: Mutex<Last>,
     faults: Faults,
+}
+
+/// What the last reading saw: its moment, the kernel's bound, and the
+/// steps the kernel's bound doesn't yet cover.
+#[derive(Clone, Copy, Debug)]
+struct Last {
+    moment: Moment,
+    kernel: u64,
+    stepped: u64,
+}
+
+/// The steps carried into a reading: none once the kernel's bound has
+/// dropped from `before` to `now`, since chrony has measured the clock
+/// again; else all of `stepped`.
+fn carried(stepped: u64, before: u64, now: u64) -> u64 {
+    if now < before { 0 } else { stepped }
 }
 
 impl LinuxClock {
@@ -44,7 +62,11 @@ impl<T: TimeSource> LinuxClock<T> {
     pub fn detect_with(time: T) -> Option<Self> {
         let (state, status, maxerror) = read();
         assess(state, status, maxerror, 0).ok()?;
-        let last = Mutex::new(time.moment());
+        let last = Mutex::new(Last {
+            moment: time.moment(),
+            kernel: bound(state, maxerror),
+            stepped: 0,
+        });
         Some(Self {
             time,
             last,
@@ -56,26 +78,43 @@ impl<T: TimeSource> LinuxClock<T> {
     /// disturbing jump detection.
     pub fn status(&self) -> ClockStatus {
         let (state, status, maxerror) = read();
-        let reading = assess(state, status, maxerror, 0)
+        let last = *self.last.lock().unwrap_or_else(PoisonError::into_inner);
+        let stepped = carried(last.stepped, last.kernel, bound(state, maxerror));
+        let reading = assess(state, status, maxerror, stepped)
             .and_then(|bound| wall::reading(self.time.wall(), bound));
         ClockStatus::of(reading, self.faults.counts())
     }
 
     fn reading(&self) -> Result<Reading, ClockFault> {
         let (state, status, maxerror) = read();
+        let kernel = bound(state, maxerror);
         let now = self.time.moment();
-        // Two threads may swap `last` out of order, leaving the older
-        // moment behind. That's harmless: every stored moment is a
-        // consistent pair, and the next reading compares against one.
-        let then = std::mem::replace(
-            &mut *self.last.lock().unwrap_or_else(PoisonError::into_inner),
-            now,
-        );
-        let moved = i128::from(now.wall) - i128::from(then.wall);
-        let elapsed = Duration::from_nanos(now.monotonic.saturating_sub(then.monotonic));
-        let slack = then.uncertainty.saturating_add(now.uncertainty);
-        let step = wall::step(moved - wall::nanos(elapsed), slack)?;
-        wall::reading(now.wall, assess(state, status, maxerror, step)?)
+        // Two threads may store `last` out of order, leaving the older
+        // reading behind. That's harmless: every stored reading is
+        // consistent, and its steps are carried either way.
+        let (step, stepped) = {
+            let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
+            let then = last.moment;
+            let moved = i128::from(now.wall) - i128::from(then.wall);
+            let elapsed = Duration::from_nanos(now.monotonic.saturating_sub(then.monotonic));
+            let slack = then.uncertainty.saturating_add(now.uncertainty);
+            let step = wall::step(moved - wall::nanos(elapsed), slack);
+            let size = match step {
+                Ok(widen) => widen.saturating_sub(slack),
+                Err(ClockFault::Jumped { by }) => by.unsigned_abs(),
+                Err(_) => 0,
+            };
+            let stepped = carried(last.stepped, last.kernel, kernel).saturating_add(size);
+            *last = Last {
+                moment: now,
+                kernel,
+                stepped,
+            };
+            (step.map(|_| slack), stepped)
+        };
+        let slack = step?;
+        let widen = stepped.saturating_add(slack);
+        wall::reading(now.wall, assess(state, status, maxerror, widen)?)
     }
 }
 
@@ -159,6 +198,37 @@ mod tests {
             assess(libc::TIME_OK, libc::STA_UNSYNC, 1_500, 0),
             Err(ClockFault::Unsynchronized)
         );
+    }
+
+    #[test]
+    fn steps_are_carried_until_the_kernels_bound_drops() {
+        assert_eq!(carried(5, 10, 10), 5);
+        assert_eq!(carried(5, 10, 11), 5);
+        assert_eq!(carried(5, 10, 9), 0);
+    }
+
+    #[test]
+    fn every_reading_after_a_step_contains_true_time() {
+        let start = wall::wall_nanos();
+        let time = std::sync::Arc::new(crate::ManualTime::new(start));
+        if let Some(clock) = LinuxClock::detect_with(time.clone()) {
+            // The system clock jumps 8 ms ahead; true time doesn't.
+            time.step(8_000_000);
+            for _ in 0..3 {
+                time.advance(Duration::from_millis(1));
+                let truth = time.wall() - 8_000_000;
+                let now = clock.now().unwrap();
+                assert!(now.settled.0 <= truth && truth <= now.revision.0, "{now:?}");
+            }
+            // A jump past 10 ms faults once, and stays in the bound after.
+            time.step(20_000_000);
+            assert_eq!(clock.now(), Err(ClockFault::Jumped { by: 20_000_000 }));
+            let truth = time.wall() - 28_000_000;
+            let now = clock.now().unwrap();
+            assert!(now.settled.0 <= truth && truth <= now.revision.0, "{now:?}");
+            let status = clock.status();
+            assert!(status.width.is_some_and(|width| width >= 56_000_000));
+        }
     }
 
     #[test]
