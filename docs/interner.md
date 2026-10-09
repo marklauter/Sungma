@@ -2,6 +2,15 @@
 
 How `LeasingInterner` mints an id for a name. Each node runs its own interner over the shared `NameStore`.
 
+## Which names are interned
+
+Theory and relation names only, in `Pool::Theories` and `Pool::Relations`. Resource ids and identities stay strings in facts.
+
+- Theory and relation names are few and bounded, and change only with a theory version, so every node can cache the whole dictionary.
+- Resource ids and identities are unbounded and grow with the fact store. Interning them would make the dictionary a second large store: replicated to every node, read on every check, written in revision order with the facts so a name resolves at least as fresh as the zookie, and garbage-collected as facts go. A `u32` id would also cap them at about four billion.
+
+## Minting an id
+
 ```mermaid
 sequenceDiagram
     participant C as Caller
