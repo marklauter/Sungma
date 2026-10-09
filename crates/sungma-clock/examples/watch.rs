@@ -74,9 +74,10 @@ fn status(status: &ClockStatus) -> String {
         let allowance = ppm(drift.allowance as i64);
         parts.push(match drift.measured {
             Some((low, high)) => format!(
-                "drift {:.1}..{:.1} ppm (allowance {allowance:.1} ppm)",
+                "drift {:.1}..{:.1} ppm over {:.0} s (allowance {allowance:.1} ppm)",
                 ppm(low),
-                ppm(high)
+                ppm(high),
+                drift.baseline as f64 / 1e9
             ),
             None => format!("drift unmeasured (allowance {allowance:.0} ppm)"),
         });

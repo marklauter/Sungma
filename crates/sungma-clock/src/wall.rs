@@ -90,12 +90,38 @@ pub struct Drift {
     /// measured rate's edge farthest from zero, half again, plus 20 ppm,
     /// and never more than 500 ppm, which it falls back to.
     pub allowance: u64,
+    /// The monotonic time the measurement spans, in nanoseconds, from the
+    /// window's oldest sample to its newest: 0 when unmeasured. The rate is
+    /// evidence only over that long, so a sample older than it grows at
+    /// 500 ppm for the rest.
+    pub baseline: u64,
 }
 
 impl Drift {
+    /// Nothing measured: 500 ppm from the start.
+    pub(crate) const UNMEASURED: Self = Self {
+        measured: None,
+        allowance: MAX_DRIFT_PPB,
+        baseline: 0,
+    };
+
+    /// How far a sample `elapsed` old may have drifted: at the allowance
+    /// for as long as the measurement spans, and at 500 ppm after that.
+    pub(crate) fn grown(&self, elapsed: Duration) -> u64 {
+        let baseline = Duration::from_nanos(self.baseline);
+        let measured = drift_at(elapsed.min(baseline), self.allowance);
+        let beyond = drift_at(elapsed.saturating_sub(baseline), MAX_DRIFT_PPB);
+        measured.saturating_add(beyond)
+    }
+
     /// The drift of a window of `samples`, in the order they were taken.
     fn of(samples: &VecDeque<Taken>) -> Self {
-        let measured = measure(samples);
+        let Some(measured) = measure(samples) else {
+            return Self::UNMEASURED;
+        };
+        let measured = Some(measured);
+        let span = |taken: Option<&Taken>| taken.map_or(0, |taken| taken.at.monotonic);
+        let baseline = span(samples.back()).saturating_sub(span(samples.front()));
         let allowance = measured.map_or(MAX_DRIFT_PPB, |(low, high)| {
             let worst = low.unsigned_abs().max(high.unsigned_abs());
             let worst = u64::try_from(worst).unwrap_or(u64::MAX);
@@ -105,6 +131,7 @@ impl Drift {
         Self {
             measured: measured.map(|(low, high)| (clamp_i64(low), clamp_i64(high))),
             allowance,
+            baseline,
         }
     }
 }
@@ -286,8 +313,8 @@ impl Taken {
     }
 
     /// True time as this sample bounds it, its low and high ends, at
-    /// moment `now`, its bound growing at `allowance` parts per billion.
-    fn range(&self, now: Moment, allowance: u64) -> Result<(i128, i128), ClockFault> {
+    /// moment `now`, its bound growing as `drifting` allows.
+    fn range(&self, now: Moment, drifting: Drift) -> Result<(i128, i128), ClockFault> {
         let elapsed = Duration::from_nanos(now.monotonic.saturating_sub(self.at.monotonic));
         let elapsed_nanos = nanos(elapsed);
         let moved = i128::from(now.wall) - i128::from(self.at.wall);
@@ -297,7 +324,7 @@ impl Taken {
         let excused = drift(elapsed).saturating_mul(2);
         let widen = step(moved - elapsed_nanos, slack, excused)?;
         let center = i128::from(self.at.wall) + i128::from(self.sample.offset) + elapsed_nanos;
-        let drifted = drift_at(elapsed, allowance);
+        let drifted = drifting.grown(elapsed);
         let bound = i128::from(self.sample.bound) + i128::from(drifted) + i128::from(widen);
         Ok((center - bound, center + bound))
     }
@@ -385,16 +412,16 @@ impl<T: TimeSource> Sampled<T> {
     pub(crate) fn add(&self, sample: Sample) -> Result<(), ClockFault> {
         let fresh = Taken::read(sample, &self.time);
         let mut window = self.window.lock().unwrap_or_else(PoisonError::into_inner);
-        let allowance = window.drift.allowance;
+        let drift = window.drift;
         let ranges: Vec<_> = window
             .samples
             .iter()
-            .map(|taken| taken.range(fresh.at, allowance))
+            .map(|taken| taken.range(fresh.at, drift))
             .collect();
         let mut kept = ranges.iter().map(Result::is_ok);
         window.samples.retain(|_| kept.next().unwrap_or(false));
         let earlier = ranges.into_iter().filter_map(Result::ok);
-        let ours = fresh.range(fresh.at, allowance)?;
+        let ours = fresh.range(fresh.at, drift)?;
         let agrees = window.samples.is_empty() || meet(earlier.chain([ours])).is_some();
         let mut samples = std::mem::take(&mut window.samples);
         if !agrees {
@@ -417,16 +444,16 @@ impl<T: TimeSource> Sampled<T> {
     pub(crate) fn now(&self) -> Result<Reading, ClockFault> {
         let now = self.time.moment();
         let window = self.window.lock().unwrap_or_else(PoisonError::into_inner);
-        let allowance = window.drift.allowance;
+        let drift = window.drift;
         let newest = window
             .samples
             .back()
             .expect("a window always holds a sample");
-        newest.range(now, allowance)?;
+        newest.range(now, drift)?;
         let ranges = window
             .samples
             .iter()
-            .filter_map(|taken| taken.range(now, allowance).ok());
+            .filter_map(|taken| taken.range(now, drift).ok());
         let (low, high) = meet(ranges).ok_or(ClockFault::Drifted)?;
         spanning(low, high)
     }
@@ -629,10 +656,7 @@ mod tests {
     #[test]
     fn a_window_that_cant_measure_falls_back_to_500_ppm() {
         let one: VecDeque<_> = [taken(0, 0, 0, MS)].into();
-        let unmeasured = Drift {
-            measured: None,
-            allowance: MAX_DRIFT_PPB,
-        };
+        let unmeasured = Drift::UNMEASURED;
         assert_eq!(Drift::of(&one), unmeasured);
         // Samples a moment apart can't beat 500 ppm.
         let close: VecDeque<_> = [taken(0, 0, 0, MS), taken(0, MS, 0, MS)].into();
@@ -649,6 +673,39 @@ mod tests {
         // Samples taken at the same moment measure nothing.
         let same: VecDeque<_> = [taken(0, 5, 0, MS), taken(0, 5, 0, MS)].into();
         assert_eq!(Drift::of(&same), unmeasured);
+    }
+
+    #[test]
+    fn a_measured_rate_is_applied_only_over_the_span_it_measured() {
+        // Eight samples 64 s apart, true time gaining 10 ppm on the
+        // monotonic clock, each within 0.1 ms: measured over 448 s.
+        let second = 1_000_000_000;
+        let samples: VecDeque<_> = (0..8)
+            .map(|n| {
+                let at = n * 64 * second;
+                taken(at, at, (n * 640_000) as i64, MS / 10)
+            })
+            .collect();
+        let drift = Drift::of(&samples);
+        assert_eq!(drift.baseline, 448 * second);
+        assert!(drift.allowance < 100_000, "{drift:?}");
+        // A thousand seconds after the newest: the measured allowance for
+        // 448 s, then 500 ppm for the other 552 s.
+        let newest = samples.back().unwrap();
+        let later = Moment {
+            wall: newest.at.wall + 1_000 * second,
+            monotonic: newest.at.monotonic + 1_000 * second,
+            uncertainty: 0,
+        };
+        let (low, high) = newest.range(later, drift).unwrap();
+        let grown = drift_at(Duration::from_secs(448), drift.allowance)
+            + drift_at(Duration::from_secs(552), MAX_DRIFT_PPB);
+        assert_eq!(high - low, 2 * i128::from(MS / 10 + grown));
+        assert_eq!(
+            drift.grown(Duration::from_secs(100)),
+            drift_at(Duration::from_secs(100), drift.allowance)
+        );
+        assert_eq!(Drift::UNMEASURED.grown(Duration::from_secs(2)), 1_000_000);
     }
 
     #[test]
@@ -779,22 +836,22 @@ mod tests {
         // 10 µs on both clocks: drift adds 5 ns, and the two moments' 2 ns
         // and 3 ns of uncertainty add 5 more.
         assert_eq!(
-            taken.range(at(11_000, 10_500, 3), MAX_DRIFT_PPB),
+            taken.range(at(11_000, 10_500, 3), Drift::UNMEASURED),
             Ok((11_083, 11_117))
         );
         // The system clock stepped 1 ms ahead: true time still follows the
         // monotonic clock, and the step widens the bound.
         assert_eq!(
-            taken.range(at(1_011_000, 10_500, 3), MAX_DRIFT_PPB),
+            taken.range(at(1_011_000, 10_500, 3), Drift::UNMEASURED),
             Ok((11_083 - 1_000_000, 11_117 + 1_000_000))
         );
         assert_eq!(
-            taken.range(at(1_000 + 11 * MS, 500, 0), MAX_DRIFT_PPB),
+            taken.range(at(1_000 + 11 * MS, 500, 0), Drift::UNMEASURED),
             Err(ClockFault::Jumped { by: 11_000_000 })
         );
         // A moment from before the sample counts no time as elapsed.
         assert_eq!(
-            taken.range(at(1_000, 0, 0), MAX_DRIFT_PPB),
+            taken.range(at(1_000, 0, 0), Drift::UNMEASURED),
             Ok((1_091, 1_109))
         );
     }
@@ -818,11 +875,11 @@ mod tests {
         // monotonic clock: drift allows 50 ms each way, so 100 ms apart.
         let slewed = 100 * 1_000 * MS + 40 * MS;
         let drifted = i128::from(drift(Duration::from_secs(100)));
-        let (low, high) = taken.range(after(slewed), MAX_DRIFT_PPB).unwrap();
+        let (low, high) = taken.range(after(slewed), Drift::UNMEASURED).unwrap();
         assert_eq!(high - low, 2 * (drifted + i128::from(40 * MS)));
         let past = 100 * 1_000 * MS + 110 * MS + 1;
         assert!(matches!(
-            taken.range(after(past), MAX_DRIFT_PPB),
+            taken.range(after(past), Drift::UNMEASURED),
             Err(ClockFault::Jumped { .. })
         ));
     }
@@ -1007,7 +1064,8 @@ mod simulation {
                 // The newest sample's bound now: drift since it at 500 ppm,
                 // plus the steps since it. Narrower samples only narrow it.
                 let elapsed = node.time.monotonic() - newest.1;
-                let allowed = newest.0 + (elapsed * 500).div_ceil(1_000_000) + stepped.unsigned_abs();
+                // Each drift term rounds up, and a measured allowance adds a second.
+                let allowed = newest.0 + (elapsed * 500).div_ceil(1_000_000) + 1 + stepped.unsigned_abs();
                 // A step faults only past 10 ms plus twice the drift allowance.
                 let jumps = MAX_STEP + 2 * (elapsed * 500 / 1_000_000);
                 match node.clock.now() {
@@ -1087,6 +1145,109 @@ mod simulation {
                 }
             }
         }
+    }
+
+    /// A node whose monotonic clock runs at `rate` parts per billion
+    /// against true time, which a test may change as it goes.
+    struct Wandering {
+        time: Arc<ManualTime>,
+        clock: Sampled<Arc<ManualTime>>,
+        rate: i64,
+        /// True time, in nanoseconds since the Unix epoch.
+        now: i128,
+    }
+
+    impl Wandering {
+        fn new(rate: i64) -> Self {
+            let now = START;
+            let time = Arc::new(ManualTime::new(u64::try_from(now).unwrap()));
+            let clock = Sampled::new(
+                Sample {
+                    offset: 0,
+                    bound: MS as u64,
+                },
+                time.clone(),
+            );
+            Self {
+                time,
+                clock,
+                rate,
+                now,
+            }
+        }
+
+        /// True time passes `by` nanoseconds; the monotonic and system
+        /// clocks count it at the node's rate.
+        fn pass(&mut self, by: u64) {
+            let counted = i128::from(by) + i128::from(by) * i128::from(self.rate) / 1_000_000_000;
+            self.time
+                .advance(Duration::from_nanos(u64::try_from(counted).unwrap()));
+            self.now += i128::from(by);
+        }
+
+        /// An honest sample, off by `error` (from -1 to 1) of its 1 ms bound.
+        fn resync(&self, error: f64) -> Result<(), ClockFault> {
+            let offset = i64::try_from(self.now - i128::from(self.time.wall())).unwrap();
+            self.clock.add(sample(offset, MS as u64, error))
+        }
+
+        /// Whether the reading now contains true time, or the fault.
+        fn contains_truth(&self) -> Result<bool, ClockFault> {
+            let reading = self.clock.now()?;
+            let (settled, revision) = (
+                i128::from(reading.settled.0),
+                i128::from(reading.revision.0),
+            );
+            Ok(settled <= self.now && self.now <= revision)
+        }
+    }
+
+    proptest! {
+        #![proptest_config(config())]
+
+        /// The measured allowance holds while the rate wanders by up to
+        /// half the floor over a window: through steady syncs, readings
+        /// between them, and outages past the measurement's span.
+        #[test]
+        fn a_reading_contains_true_time_while_the_rate_wanders(
+            rate in -400_000i64..400_000,
+            steps in vec((-1.0..1.0f64, -1.0..1.0f64, 0u32..6), 10..40),
+        ) {
+            let mut node = Wandering::new(rate);
+            // 64 s a step, so a window is eight steps: wander by at most
+            // 10 ppm over eight, 1.25 ppm a step.
+            let poll = 64 * 1_000_000_000u64;
+            for (wander, error, outage) in steps {
+                node.rate += (wander * 1_250.0) as i64;
+                for _ in 0..=outage {
+                    node.pass(poll / 2);
+                    prop_assert!(node.contains_truth().unwrap_or(true));
+                    node.pass(poll / 2);
+                    prop_assert!(node.contains_truth().unwrap_or(true));
+                }
+                prop_assert_eq!(node.resync(error), Ok(()));
+                prop_assert_eq!(node.contains_truth(), Ok(true));
+            }
+        }
+    }
+
+    /// A rate that changes well past the floor is caught: a reading misses
+    /// true time between syncs, and the next sample doesn't overlap the
+    /// window, so the window starts over at 500 ppm.
+    #[test]
+    fn a_rate_that_changes_past_the_floor_is_caught() {
+        let mut node = Wandering::new(0);
+        let poll = 64 * 1_000_000_000u64;
+        for _ in 0..8 {
+            node.pass(poll);
+            node.resync(0.0).unwrap();
+        }
+        assert!(node.clock.drift().allowance < MAX_DRIFT_PPB);
+        node.rate = 300_000;
+        node.pass(300 * 1_000_000_000);
+        assert_eq!(node.contains_truth(), Ok(false));
+        assert_eq!(node.resync(0.0), Err(ClockFault::Drifted));
+        assert_eq!(node.clock.drift(), Drift::UNMEASURED);
     }
 
     /// The same order fails for a node whose sample claims less error than
