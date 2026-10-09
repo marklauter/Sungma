@@ -15,6 +15,7 @@ mod linux;
 #[cfg(feature = "test-util")]
 mod manual;
 mod ntp;
+mod nts;
 mod refresher;
 mod servers;
 mod system;
@@ -57,4 +58,6 @@ pub enum ClockError {
     Fault(#[from] sungma::clock::ClockFault),
     #[error("a refresh panicked: {0}")]
     Panicked(String),
+    #[error("NTS: {0}")]
+    Nts(String),
 }

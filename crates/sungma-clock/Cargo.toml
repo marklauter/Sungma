@@ -12,14 +12,19 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
 test-util = ["tokio/sync"]
 
 [dependencies]
+aes-siv.workspace = true
+getrandom.workspace = true
+rustls.workspace = true
 sungma.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "time"] }
+webpki-roots.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+rcgen.workspace = true
 sungma-clock = { path = ".", features = ["test-util"] }
 tokio = { workspace = true, features = ["macros", "rt", "test-util", "time"] }

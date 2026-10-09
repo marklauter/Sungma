@@ -8,10 +8,14 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
+aes-siv = "0.8.0"
 axum = "0.8.9"
+getrandom = "0.4.3"
 http-body-util = "0.1.5"
 libc = "0.2.190"
 proptest = "1.11.0"
+rcgen = "0.14.10"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sungma = { version = "0.1.0", path = "crates/sungma" }
@@ -20,3 +24,4 @@ sungma-lang = { version = "0.1.0", path = "crates/sungma-lang" }
 thiserror = "2.0.21"
 tokio = "1.53.2"
 tower = "0.5.3"
+webpki-roots = "1.0.9"

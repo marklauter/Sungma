@@ -19,7 +19,8 @@ use std::{
 use sungma::clock::{Clock, ClockFault, Reading};
 
 use crate::{
-    ClockError, OsTime, Servers, TimeSource,
+    ClockError, OsTime, Resolve, Servers, TimeSource,
+    nts::{self, Association},
     wall::{self, Sample, Sampled},
 };
 
@@ -42,6 +43,13 @@ const MIN_POLL: u64 = 64_000_000_000;
 /// requests can send them; a short hold stops one mattering soon after the
 /// attack does.
 const MAX_HOLD: u64 = 1_024_000_000_000;
+
+/// The longest an authenticated `RATE`, sent over NTS, stretches a
+/// server's poll, NTP's maximum, 2^17 s.
+const MAX_POLL: u64 = 131_072_000_000_000;
+
+/// The largest reply read: room for an NTS reply's cookies.
+const REPLY: usize = 2048;
 
 /// A leap second a server announces for the end of the day.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -77,6 +85,9 @@ struct Schedule {
     /// `DENY` or `RSTR`: the server asked not to be asked again. It is
     /// held for [`MAX_HOLD`], and the flag clears when it answers.
     denied: bool,
+    /// The `DENY` or `RSTR` came authenticated over NTS, so it is honored
+    /// as written: the server is never asked again.
+    permanent: bool,
 }
 
 impl Default for Schedule {
@@ -85,6 +96,7 @@ impl Default for Schedule {
             poll: MIN_POLL,
             held_until: 0,
             denied: false,
+            permanent: false,
         }
     }
 }
@@ -99,16 +111,24 @@ impl Schedule {
         }
     }
 
-    /// Takes in a Kiss-o'-Death sent at monotonic time `now`.
-    fn kissed(&mut self, code: [u8; 4], now: u64) {
+    /// Takes in a Kiss-o'-Death sent at monotonic time `now`. One that NTS
+    /// `authenticated` is honored as written; any other holds the server
+    /// for at most [`MAX_HOLD`], since an attacker could have sent it.
+    fn kissed(&mut self, code: [u8; 4], now: u64, authenticated: bool) {
         match &code {
             b"RATE" => {
-                self.poll = self.poll.saturating_mul(2).min(MAX_HOLD);
+                let longest = if authenticated { MAX_POLL } else { MAX_HOLD };
+                self.poll = self.poll.saturating_mul(2).min(longest);
                 self.asked(now);
             }
             b"DENY" | b"RSTR" => {
                 self.denied = true;
-                self.held_until = now.saturating_add(MAX_HOLD);
+                self.permanent = authenticated;
+                self.held_until = if authenticated {
+                    u64::MAX
+                } else {
+                    now.saturating_add(MAX_HOLD)
+                };
             }
             _ => {}
         }
@@ -125,7 +145,7 @@ impl Schedule {
 #[derive(Debug)]
 pub struct NtpClock<T = OsTime> {
     servers: Servers,
-    schedules: Mutex<Vec<Schedule>>,
+    peers: Mutex<Vec<Peer>>,
     last: Mutex<SyncReport>,
     sampled: Sampled<T>,
 }
@@ -141,12 +161,12 @@ impl NtpClock {
 impl<T: TimeSource> NtpClock<T> {
     /// [`NtpClock::sync`], on the clocks `time` reads.
     pub fn sync_with(servers: Servers, time: T) -> Result<Self, ClockError> {
-        let mut schedules = vec![Schedule::default(); servers.names.len()];
-        let (sample, report) = sync(&servers, &mut schedules, &time);
+        let mut peers: Vec<Peer> = servers.names.iter().map(|_| Peer::default()).collect();
+        let (sample, report) = sync(&servers, &mut peers, &time);
         let sample = sample?;
         Ok(Self {
             servers,
-            schedules: Mutex::new(schedules),
+            peers: Mutex::new(peers),
             last: Mutex::new(report),
             sampled: Sampled::new(sample, time),
         })
@@ -157,11 +177,8 @@ impl<T: TimeSource> NtpClock<T> {
     /// [`ClockFault::Drifted`] when the sample disagrees with the window,
     /// which the clock then replaces with the sample alone.
     pub fn resync(&self) -> Result<(), ClockError> {
-        let mut schedules = self
-            .schedules
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let (sample, report) = sync(&self.servers, &mut schedules, self.sampled.time());
+        let mut peers = self.peers.lock().unwrap_or_else(PoisonError::into_inner);
+        let (sample, report) = sync(&self.servers, &mut peers, self.sampled.time());
         *self.last.lock().unwrap_or_else(PoisonError::into_inner) = report;
         Ok(self.sampled.add(sample?)?)
     }
@@ -185,60 +202,103 @@ impl<T: TimeSource> Clock for NtpClock<T> {
     }
 }
 
+/// A server's schedule, and its NTS association once it has one.
+#[derive(Debug, Default)]
+struct Peer {
+    schedule: Schedule,
+    association: Option<Association>,
+}
+
+/// A server's reply, and whether NTS authenticated it.
+#[derive(Debug)]
+struct Reply {
+    result: Result<Answer, ClockError>,
+    authenticated: bool,
+}
+
+impl Reply {
+    fn unauthenticated(result: Result<Answer, ClockError>) -> Self {
+        Self {
+            result,
+            authenticated: false,
+        }
+    }
+}
+
 /// Asks every server that may be asked, at once, and keeps the majority's
 /// range. The report says what the sync found, even when it fails.
 fn sync(
     servers: &Servers,
-    schedules: &mut [Schedule],
+    peers: &mut [Peer],
     time: &impl TimeSource,
 ) -> (Result<Sample, ClockError>, SyncReport) {
     let now = time.monotonic();
     let mut report = SyncReport::default();
     let mut asked: Vec<usize> = (0..servers.names.len())
-        .filter(|&at| schedules[at].askable(now))
+        .filter(|&at| peers[at].schedule.askable(now))
         .collect();
     // Too few left to sync: ask the held servers whose holds end soonest,
     // as many as quorum needs. That is still no more than NTP's 64 s poll.
+    // A server that denied us over NTS stays denied.
     let needed = MIN_ANSWERS.saturating_sub(asked.len());
     let mut held: Vec<usize> = (0..servers.names.len())
-        .filter(|at| !asked.contains(at))
+        .filter(|at| !asked.contains(at) && !peers[*at].schedule.permanent)
         .collect();
-    held.sort_by_key(|&at| (schedules[at].held_until, at));
+    held.sort_by_key(|&at| (peers[at].schedule.held_until, at));
     for at in held.into_iter().take(needed) {
         report.overridden.push(servers.names[at].clone());
         asked.push(at);
     }
     for &at in &asked {
-        schedules[at].asked(now);
+        peers[at].schedule.asked(now);
     }
-    let sample = agree(
-        servers,
-        schedules,
-        &asked,
-        query_all(servers, &asked, time),
-        now,
-        &mut report,
-    );
-    for (name, schedule) in servers.names.iter().zip(schedules.iter()) {
-        if schedule.denied {
+    let associations = asked
+        .iter()
+        .map(|&at| peers[at].association.take())
+        .collect();
+    let mut replies = Vec::new();
+    for (&at, (reply, association)) in
+        asked
+            .iter()
+            .zip(query_all(servers, &asked, associations, time))
+    {
+        peers[at].association = association;
+        replies.push(reply);
+    }
+    let sample = agree(servers, peers, &asked, replies, now, &mut report);
+    for (name, peer) in servers.names.iter().zip(peers.iter()) {
+        if peer.schedule.denied {
             report.denied.push(name.clone());
         }
     }
     (sample, report)
 }
 
-/// Queries the servers at `asked`, each on its own thread.
+/// Queries the servers at `asked`, each on its own thread, giving back each
+/// NTS server's association.
 fn query_all(
     servers: &Servers,
     asked: &[usize],
+    associations: Vec<Option<Association>>,
     time: &impl TimeSource,
-) -> Vec<Result<Answer, ClockError>> {
+) -> Vec<(Reply, Option<Association>)> {
     thread::scope(|scope| {
         let queries: Vec<_> = asked
             .iter()
-            .map(|&at| {
+            .zip(associations)
+            .map(|(&at, association)| {
                 let name = &servers.names[at];
-                scope.spawn(move || query(servers.resolver.resolve(name)?, time))
+                scope.spawn(move || {
+                    if servers.nts[at] {
+                        query_nts(name, association, servers, time)
+                    } else {
+                        let resolved = servers.resolver.resolve(name);
+                        let result = resolved
+                            .map_err(ClockError::from)
+                            .and_then(|address| query(address, time));
+                        (Reply::unauthenticated(result), None)
+                    }
+                })
             })
             .collect();
         queries
@@ -251,9 +311,9 @@ fn query_all(
 /// Sorts the replies into the report, and keeps the majority's range.
 fn agree(
     servers: &Servers,
-    schedules: &mut [Schedule],
+    peers: &mut [Peer],
     asked: &[usize],
-    replies: Vec<Result<Answer, ClockError>>,
+    replies: Vec<Reply>,
     now: u64,
     report: &mut SyncReport,
 ) -> Result<Sample, ClockError> {
@@ -261,13 +321,13 @@ fn agree(
     let mut error = ClockError::NoServers;
     for (&at, reply) in asked.iter().zip(replies) {
         let name = servers.names[at].clone();
-        match reply {
+        match reply.result {
             Ok(answer) => {
-                schedules[at].denied = false;
+                peers[at].schedule.denied = false;
                 answers.push((name, answer));
             }
             Err(ClockError::Kiss(code)) => {
-                schedules[at].kissed(code, now);
+                peers[at].schedule.kissed(code, now, reply.authenticated);
                 report.kissed.push((name, code));
                 error = ClockError::Kiss(code);
             }
@@ -332,7 +392,8 @@ struct Answer {
     leap: Option<Leap>,
 }
 
-fn query(server: SocketAddr, time: &impl TimeSource) -> Result<Answer, ClockError> {
+/// A UDP socket connected to `server`, with the reply timeout.
+fn connected(server: SocketAddr) -> Result<UdpSocket, ClockError> {
     let local: SocketAddr = match server {
         SocketAddr::V4(_) => (Ipv4Addr::UNSPECIFIED, 0).into(),
         SocketAddr::V6(_) => (Ipv6Addr::UNSPECIFIED, 0).into(),
@@ -340,12 +401,85 @@ fn query(server: SocketAddr, time: &impl TimeSource) -> Result<Answer, ClockErro
     let socket = UdpSocket::bind(local)?;
     socket.connect(server)?;
     socket.set_read_timeout(Some(TIMEOUT))?;
+    Ok(socket)
+}
+
+fn query(server: SocketAddr, time: &impl TimeSource) -> Result<Answer, ClockError> {
+    let socket = connected(server)?;
     let sent = time.wall();
     socket.send(&request(sent))?;
     let mut reply = [0; PACKET];
     let length = socket.recv(&mut reply)?;
     let received = time.wall();
     answer(&reply[..length], sent, received)
+}
+
+/// Asks an NTS server, running a key exchange first when its association
+/// has no cookie left, and gives the association back.
+fn query_nts(
+    host: &str,
+    association: Option<Association>,
+    servers: &Servers,
+    time: &impl TimeSource,
+) -> (Reply, Option<Association>) {
+    let tls = servers
+        .tls
+        .as_ref()
+        .expect("NTS servers bring TLS settings");
+    let association = match association.filter(|association| !association.cookies.is_empty()) {
+        Some(association) => association,
+        None => match nts::exchange(host, servers.resolver.as_ref(), tls) {
+            Ok(association) => association,
+            Err(failed) => return (Reply::unauthenticated(Err(failed)), None),
+        },
+    };
+    let mut association = association;
+    let reply = ask_nts(&mut association, servers.resolver.as_ref(), time)
+        .unwrap_or_else(|failed| Reply::unauthenticated(Err(failed)));
+    (reply, Some(association))
+}
+
+/// One NTS exchange. A NAK, the server saying it no longer knows our
+/// cookies, empties the association, so the next sync exchanges keys again.
+fn ask_nts(
+    association: &mut Association,
+    resolver: &dyn Resolve,
+    time: &impl TimeSource,
+) -> Result<Reply, ClockError> {
+    let socket = connected(resolver.resolve(&association.server)?)?;
+    let sent = time.wall();
+    let unique = nts::random();
+    let packet = association
+        .request(request(sent), unique)
+        .ok_or_else(|| ClockError::Nts("no cookie is left".to_owned()))?;
+    socket.send(&packet)?;
+    let mut reply = [0; REPLY];
+    let length = socket.recv(&mut reply)?;
+    let received = time.wall();
+    let reply = &reply[..length];
+    if let Some(header) = association.verify(reply, &unique) {
+        return Ok(Reply {
+            result: answer(header, sent, received),
+            authenticated: true,
+        });
+    }
+    if nak(reply, sent) {
+        association.cookies.clear();
+        return Err(ClockError::Nts(
+            "the server no longer knows our cookies".to_owned(),
+        ));
+    }
+    Err(ClockError::Nts("a reply isn't authenticated".to_owned()))
+}
+
+/// Whether `reply` is an NTS NAK to the request sent at `sent`: a
+/// Kiss-o'-Death `NTSN`, which comes unauthenticated.
+fn nak(reply: &[u8], sent: u64) -> bool {
+    reply.len() >= PACKET
+        && reply[0] & 0b111 == 4
+        && reply[1] == 0
+        && &reply[12..16] == b"NTSN"
+        && reply[24..32] == to_ntp(sent).to_be_bytes()
 }
 
 /// A client request, version 4, with `sent` as its transmit time, which the
@@ -700,12 +834,12 @@ mod tests {
     fn a_rate_kiss_doubles_the_poll_and_holds_the_server() {
         let mut schedule = Schedule::default();
         assert!(schedule.askable(0));
-        schedule.kissed(*b"RATE", 1_000);
+        schedule.kissed(*b"RATE", 1_000, false);
         assert_eq!(schedule.poll, 2 * MIN_POLL);
         assert!(!schedule.askable(1_000 + 2 * MIN_POLL - 1));
         assert!(schedule.askable(1_000 + 2 * MIN_POLL));
         for _ in 0..20 {
-            schedule.kissed(*b"RATE", 0);
+            schedule.kissed(*b"RATE", 0, false);
         }
         // An unauthenticated RATE never holds a server longer than 1024 s.
         assert_eq!(schedule.poll, MAX_HOLD);
@@ -717,7 +851,7 @@ mod tests {
         let mut schedule = Schedule::default();
         schedule.asked(1_000);
         assert!(schedule.askable(1_000));
-        schedule.kissed(*b"RATE", 0);
+        schedule.kissed(*b"RATE", 0, false);
         schedule.asked(1_000);
         assert!(!schedule.askable(1_000 + 2 * MIN_POLL - 1));
         assert!(schedule.askable(1_000 + 2 * MIN_POLL));
@@ -727,13 +861,13 @@ mod tests {
     fn a_deny_or_rstr_kiss_stops_the_server_and_others_change_nothing() {
         for code in [*b"DENY", *b"RSTR"] {
             let mut schedule = Schedule::default();
-            schedule.kissed(code, 1_000);
+            schedule.kissed(code, 1_000, false);
             assert!(schedule.denied);
             assert!(!schedule.askable(1_000 + MAX_HOLD - 1));
             assert!(schedule.askable(1_000 + MAX_HOLD));
         }
         let mut schedule = Schedule::default();
-        schedule.kissed(*b"INIT", 5);
+        schedule.kissed(*b"INIT", 5, false);
         assert!(schedule.askable(0));
         assert_eq!(schedule.poll, MIN_POLL);
     }
