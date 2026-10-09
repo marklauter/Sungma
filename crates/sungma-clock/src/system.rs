@@ -13,9 +13,13 @@ use crate::{ClockError, NtpClock, Servers, wall};
 /// so the trait can't be a trait object, and the Linux variant exists only
 /// on Linux.
 #[derive(Debug)]
-// One per process, made once and never moved on a hot path, so the NTP
-// variant's size costs nothing worth a box.
-#[allow(clippy::large_enum_variant)]
+#[cfg_attr(
+    target_os = "linux",
+    expect(
+        clippy::large_enum_variant,
+        reason = "one per process, made once and never moved on a hot path"
+    )
+)]
 pub enum SystemClock {
     #[cfg(target_os = "linux")]
     Linux(LinuxClock),
