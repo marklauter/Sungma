@@ -5,13 +5,16 @@
 use std::{
     future::Future,
     sync::{Mutex, PoisonError},
-    time::Instant,
+    time::Duration,
 };
 
 use libc::{c_int, c_long};
 use sungma::clock::{Clock, ClockFault, Reading};
 
-use crate::wall::{self, MAX_BOUND};
+use crate::{
+    OsTime, TimeSource,
+    wall::{self, MAX_BOUND},
+};
 
 /// The kernel caps `maxerror` at 16 s, NTP's phase limit. A clock that
 /// can't be read is taken to be that far off.
@@ -21,18 +24,26 @@ const PHASE_LIMIT_MICROS: u64 = 16_000_000;
 /// also compares the system clock with the monotonic clock since the last
 /// one, to catch a step the kernel's bound doesn't cover.
 #[derive(Debug)]
-pub struct LinuxClock {
-    last: Mutex<(u64, Instant)>,
+pub struct LinuxClock<T = OsTime> {
+    time: T,
+    last: Mutex<(u64, u64)>,
 }
 
 impl LinuxClock {
     /// `None` when the kernel's clock isn't synchronized, or its bound is
     /// wider than a write should wait.
     pub fn detect() -> Option<Self> {
+        Self::detect_with(OsTime)
+    }
+}
+
+impl<T: TimeSource> LinuxClock<T> {
+    /// [`LinuxClock::detect`], comparing the clocks `time` reads.
+    pub fn detect_with(time: T) -> Option<Self> {
         let (state, status, maxerror) = read();
-        assess(state, status, maxerror, 0).ok().map(|_| Self {
-            last: Mutex::new((wall::wall_nanos(), Instant::now())),
-        })
+        assess(state, status, maxerror, 0).ok()?;
+        let last = Mutex::new((time.wall(), time.monotonic()));
+        Some(Self { time, last })
     }
 }
 
@@ -69,16 +80,17 @@ fn assess(state: c_int, status: c_int, maxerror: c_long, step: u64) -> Result<u6
     Ok(bound)
 }
 
-impl Clock for LinuxClock {
+impl<T: TimeSource> Clock for LinuxClock<T> {
     fn now(&self) -> Result<Reading, ClockFault> {
         let (state, status, maxerror) = read();
-        let (wall, at) = (wall::wall_nanos(), Instant::now());
+        let (wall, monotonic) = (self.time.wall(), self.time.monotonic());
         let (then, since) = std::mem::replace(
             &mut *self.last.lock().unwrap_or_else(PoisonError::into_inner),
-            (wall, at),
+            (wall, monotonic),
         );
         let moved = i128::from(wall) - i128::from(then);
-        let step = wall::step(moved - wall::nanos(at.duration_since(since)))?;
+        let elapsed = Duration::from_nanos(monotonic.saturating_sub(since));
+        let step = wall::step(moved - wall::nanos(elapsed))?;
         wall::reading(wall, assess(state, status, maxerror, step)?)
     }
 
@@ -126,6 +138,19 @@ mod tests {
         let (state, status, maxerror) = read();
         let trusted = assess(state, status, maxerror, 0).is_ok();
         assert_eq!(LinuxClock::detect().is_some(), trusted);
+    }
+
+    #[test]
+    fn a_step_of_the_system_clock_faults_a_detected_clock() {
+        let time = std::sync::Arc::new(crate::ManualTime::new(wall::wall_nanos()));
+        if let Some(clock) = LinuxClock::detect_with(time.clone()) {
+            time.advance(Duration::from_millis(1));
+            assert!(clock.now().is_ok());
+            time.step(20_000_000);
+            assert_eq!(clock.now(), Err(ClockFault::Jumped { by: 20_000_000 }));
+            time.advance(Duration::from_millis(1));
+            assert!(clock.now().is_ok());
+        }
     }
 
     #[test]

@@ -3,12 +3,13 @@
 
 use std::{
     net::{SocketAddr, UdpSocket},
+    sync::Arc,
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use sungma::clock::{Clock, ClockFault, Reading, Revision};
-use sungma_clock::{ClockError, DevClock, ManualClock, NtpClock, SystemClock};
+use sungma_clock::{ClockError, DevClock, ManualClock, ManualTime, NtpClock, SystemClock};
 use tokio::time::timeout;
 
 const SECOND: u64 = 1_000_000_000;
@@ -242,4 +243,22 @@ fn a_system_clock_refresh_keeps_it_reading() {
         now.settled.0 <= wall() && before <= now.revision.0,
         "{now:?}"
     );
+}
+
+#[test]
+fn an_ntp_clock_reads_its_time_source() {
+    let start = wall();
+    let time = Arc::new(ManualTime::new(start));
+    let clock = NtpClock::sync_with(&[server("127.0.0.1:0", vec![3])], time.clone()).unwrap();
+    let reading = |clock: &NtpClock<Arc<ManualTime>>| {
+        let now = clock.now().unwrap();
+        (now.settled.0 + now.revision.0) / 2
+    };
+    // NTP's fixed-point timestamps cost up to a nanosecond.
+    assert!(reading(&clock).abs_diff(start + 3 * SECOND) <= 1);
+    time.advance(Duration::from_secs(1));
+    assert!(reading(&clock).abs_diff(start + 4 * SECOND) <= 1);
+    // A step of the system clock alone leaves true time where it was.
+    time.step(5_000_000);
+    assert!(reading(&clock).abs_diff(start + 4 * SECOND) <= 1);
 }

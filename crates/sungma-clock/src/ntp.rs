@@ -16,7 +16,7 @@ use std::{
 use sungma::clock::{Clock, ClockFault, Reading};
 
 use crate::{
-    ClockError,
+    ClockError, OsTime, TimeSource,
     wall::{self, Sample, Sampled},
 };
 
@@ -30,20 +30,28 @@ const TIMEOUT: Duration = Duration::from_secs(1);
 /// bound. Syncing blocks on the network, so an async caller runs it on a
 /// blocking thread.
 #[derive(Debug)]
-pub struct NtpClock {
+pub struct NtpClock<T = OsTime> {
     servers: Vec<SocketAddr>,
-    sampled: Sampled,
+    sampled: Sampled<T>,
 }
 
 impl NtpClock {
-    /// Resolves `servers` and takes a first sample. A server that doesn't
-    /// answer is skipped, and every one that does must agree.
+    /// Resolves `servers` and takes a first sample, on the operating
+    /// system's clocks. A server that doesn't answer is skipped, and every
+    /// one that does must agree.
     pub fn sync<A: ToSocketAddrs>(servers: &[A]) -> Result<Self, ClockError> {
+        Self::sync_with(servers, OsTime)
+    }
+}
+
+impl<T: TimeSource> NtpClock<T> {
+    /// [`NtpClock::sync`], on the clocks `time` reads.
+    pub fn sync_with<A: ToSocketAddrs>(servers: &[A], time: T) -> Result<Self, ClockError> {
         let mut addresses = Vec::new();
         for server in servers {
             addresses.extend(server.to_socket_addrs()?);
         }
-        let sampled = Sampled::new(sample(&addresses)?);
+        let sampled = Sampled::new(sample(&addresses, &time)?, time);
         Ok(Self {
             servers: addresses,
             sampled,
@@ -55,11 +63,13 @@ impl NtpClock {
     /// [`ClockFault::Drifted`] when the sample disagrees with the window,
     /// which the clock then replaces with the sample alone.
     pub fn resync(&self) -> Result<(), ClockError> {
-        Ok(self.sampled.add(sample(&self.servers)?)?)
+        Ok(self
+            .sampled
+            .add(sample(&self.servers, self.sampled.time())?)?)
     }
 }
 
-impl Clock for NtpClock {
+impl<T: TimeSource> Clock for NtpClock<T> {
     fn now(&self) -> Result<Reading, ClockFault> {
         self.sampled.now()
     }
@@ -69,11 +79,11 @@ impl Clock for NtpClock {
     }
 }
 
-fn sample(servers: &[SocketAddr]) -> Result<Sample, ClockError> {
+fn sample(servers: &[SocketAddr], time: &impl TimeSource) -> Result<Sample, ClockError> {
     let mut samples = Vec::new();
     let mut error = ClockError::NoServers;
     for &server in servers {
-        match query(server) {
+        match query(server, time) {
             Ok(sample) => samples.push(sample),
             Err(failed) => error = failed,
         }
@@ -84,7 +94,7 @@ fn sample(servers: &[SocketAddr]) -> Result<Sample, ClockError> {
     intersect(&samples)
 }
 
-fn query(server: SocketAddr) -> Result<Sample, ClockError> {
+fn query(server: SocketAddr, time: &impl TimeSource) -> Result<Sample, ClockError> {
     let local: SocketAddr = match server {
         SocketAddr::V4(_) => (Ipv4Addr::UNSPECIFIED, 0).into(),
         SocketAddr::V6(_) => (Ipv6Addr::UNSPECIFIED, 0).into(),
@@ -92,11 +102,11 @@ fn query(server: SocketAddr) -> Result<Sample, ClockError> {
     let socket = UdpSocket::bind(local)?;
     socket.connect(server)?;
     socket.set_read_timeout(Some(TIMEOUT))?;
-    let sent = wall::wall_nanos();
+    let sent = time.wall();
     socket.send(&request(sent))?;
     let mut reply = [0; PACKET];
     let length = socket.recv(&mut reply)?;
-    let received = wall::wall_nanos();
+    let received = time.wall();
     answer(&reply[..length], sent, received)
 }
 

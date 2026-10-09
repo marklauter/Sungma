@@ -10,10 +10,12 @@
 use std::{
     collections::VecDeque,
     sync::{Mutex, PoisonError},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use sungma::clock::{Clock, ClockFault, Reading, Revision};
+
+use crate::TimeSource;
 
 /// The most a disciplined clock is assumed to drift, in parts per million:
 /// the rate the Linux kernel grows its own error bound by.
@@ -104,16 +106,21 @@ pub(crate) struct Sample {
 struct Taken {
     sample: Sample,
     wall: u64,
-    at: Instant,
+    monotonic: u64,
 }
 
 impl Taken {
-    fn now(sample: Sample) -> Self {
+    fn read(sample: Sample, time: &impl TimeSource) -> Self {
         Self {
             sample,
-            wall: wall_nanos(),
-            at: Instant::now(),
+            wall: time.wall(),
+            monotonic: time.monotonic(),
         }
+    }
+
+    /// The monotonic time since this sample, at monotonic time `now`.
+    fn since(&self, now: u64) -> Duration {
+        Duration::from_nanos(now.saturating_sub(self.monotonic))
     }
 
     /// True time as this sample bounds it, its low and high ends, when the
@@ -148,14 +155,26 @@ fn spanning(low: i128, high: i128) -> Result<Reading, ClockFault> {
     })
 }
 
-/// The last few samples. A reading is where all of them meet, so one
-/// sample with a slow round trip doesn't widen the bound.
+/// The last few samples, read against a time source. A reading is where
+/// all of them meet, so one sample with a slow round trip doesn't widen
+/// the bound.
 #[derive(Debug)]
-pub(crate) struct Sampled(Mutex<VecDeque<Taken>>);
+pub(crate) struct Sampled<T> {
+    time: T,
+    window: Mutex<VecDeque<Taken>>,
+}
 
-impl Sampled {
-    pub(crate) fn new(sample: Sample) -> Self {
-        Self(Mutex::new(VecDeque::from([Taken::now(sample)])))
+impl<T: TimeSource> Sampled<T> {
+    pub(crate) fn new(sample: Sample, time: T) -> Self {
+        let first = Taken::read(sample, &time);
+        Self {
+            time,
+            window: Mutex::new(VecDeque::from([first])),
+        }
+    }
+
+    pub(crate) fn time(&self) -> &T {
+        &self.time
     }
 
     /// Adds a fresh sample. Samples from before a jump leave the window.
@@ -163,11 +182,11 @@ impl Sampled {
     /// which then leave the window too, so the clock reads from the fresh
     /// sample alone.
     pub(crate) fn add(&self, sample: Sample) -> Result<(), ClockFault> {
-        let fresh = Taken::now(sample);
-        let mut window = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let fresh = Taken::read(sample, &self.time);
+        let mut window = self.window.lock().unwrap_or_else(PoisonError::into_inner);
         let ranges: Vec<_> = window
             .iter()
-            .map(|taken| taken.range(fresh.wall, fresh.at.duration_since(taken.at)))
+            .map(|taken| taken.range(fresh.wall, taken.since(fresh.monotonic)))
             .collect();
         let mut kept = ranges.iter().map(Result::is_ok);
         window.retain(|_| kept.next().unwrap_or(false));
@@ -191,13 +210,13 @@ impl Sampled {
     /// Where the window's samples meet. [`ClockFault::Jumped`] when the
     /// system clock jumped since the newest sample.
     pub(crate) fn now(&self) -> Result<Reading, ClockFault> {
-        let (wall, at) = (wall_nanos(), Instant::now());
-        let window = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let (wall, monotonic) = (self.time.wall(), self.time.monotonic());
+        let window = self.window.lock().unwrap_or_else(PoisonError::into_inner);
         let newest = window.back().expect("a window always holds a sample");
-        newest.range(wall, at.duration_since(newest.at))?;
+        newest.range(wall, newest.since(monotonic))?;
         let ranges = window
             .iter()
-            .filter_map(|taken| taken.range(wall, at.duration_since(taken.at)).ok());
+            .filter_map(|taken| taken.range(wall, taken.since(monotonic)).ok());
         let (low, high) = meet(ranges).ok_or(ClockFault::Drifted)?;
         spanning(low, high)
     }
@@ -206,6 +225,7 @@ impl Sampled {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::OsTime;
 
     const MS: u64 = 1_000_000;
 
@@ -297,7 +317,7 @@ mod tests {
         let taken = Taken {
             sample: sample(100, 7),
             wall: 1_000,
-            at: Instant::now(),
+            monotonic: 0,
         };
         // 10 µs on both clocks: drift adds 5 ns.
         assert_eq!(
@@ -326,7 +346,7 @@ mod tests {
 
     #[test]
     fn a_window_reads_where_its_samples_meet() {
-        let sampled = Sampled::new(sample(0, 10 * MS));
+        let sampled = Sampled::new(sample(0, 10 * MS), OsTime);
         assert!((20 * MS..21 * MS).contains(&width(sampled.now().unwrap())));
         sampled.add(sample(5 * MS as i64, 10 * MS)).unwrap();
         // [-10, 10] and [-5, 15] meet in [-5, 10].
@@ -337,7 +357,7 @@ mod tests {
 
     #[test]
     fn a_sample_that_disagrees_resets_the_window() {
-        let sampled = Sampled::new(sample(0, MS));
+        let sampled = Sampled::new(sample(0, MS), OsTime);
         assert_eq!(
             sampled.add(sample(1_000 * MS as i64, MS)),
             Err(ClockFault::Drifted)
@@ -350,7 +370,7 @@ mod tests {
 
     #[test]
     fn a_window_holds_the_last_eight_samples() {
-        let sampled = Sampled::new(sample(0, MS));
+        let sampled = Sampled::new(sample(0, MS), OsTime);
         for _ in 0..7 {
             sampled.add(sample(0, 100 * MS)).unwrap();
         }
@@ -361,7 +381,7 @@ mod tests {
 
     #[test]
     fn a_window_too_wide_is_unsynchronized() {
-        let sampled = Sampled::new(sample(0, 2 * MAX_BOUND));
+        let sampled = Sampled::new(sample(0, 2 * MAX_BOUND), OsTime);
         assert_eq!(sampled.now(), Err(ClockFault::Unsynchronized));
     }
 }

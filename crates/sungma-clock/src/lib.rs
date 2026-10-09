@@ -16,6 +16,7 @@ mod linux;
 mod manual;
 mod ntp;
 mod system;
+mod time;
 mod wall;
 
 use std::io;
@@ -27,6 +28,9 @@ pub use linux::LinuxClock;
 pub use manual::ManualClock;
 pub use ntp::NtpClock;
 pub use system::SystemClock;
+#[cfg(feature = "test-util")]
+pub use time::ManualTime;
+pub use time::{OsTime, TimeSource};
 
 /// Why a clock couldn't take a sample.
 #[derive(Debug, thiserror::Error)]
