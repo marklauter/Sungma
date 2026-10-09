@@ -307,7 +307,10 @@ fn sync(
         peers[at].association = association;
         replies.push(reply);
     }
-    let sample = agree(servers, peers, &asked, replies, now, &mut report);
+    // The samples were measured when their replies came, the slowest up to
+    // a key exchange's deadline ago: each ages to now.
+    let stamped = time.monotonic();
+    let sample = agree(servers, peers, &asked, replies, now, stamped, &mut report);
     for (name, peer) in servers.names.iter().zip(peers.iter()) {
         if peer.schedule.denied {
             report.denied.push(name.clone());
@@ -354,6 +357,7 @@ fn agree(
     asked: &[usize],
     replies: Vec<Reply>,
     now: u64,
+    stamped: u64,
     report: &mut SyncReport,
 ) -> Result<Sample, ClockError> {
     let mut answers = Vec::new();
@@ -392,7 +396,7 @@ fn agree(
     let mut samples = Vec::new();
     for (at, (name, answer)) in answers.into_iter().enumerate() {
         if agreeing.contains(&at) {
-            samples.push(answer.sample);
+            samples.push(answer.aged(stamped));
             report.leap = report.leap.or(answer.leap);
         } else {
             report.falsetickers.push(name);
@@ -429,6 +433,25 @@ fn majority(ranges: &[(i128, i128)]) -> Option<Vec<usize>> {
 struct Answer {
     sample: Sample,
     leap: Option<Leap>,
+    /// The monotonic time the reply came, when the sample was measured.
+    at: u64,
+}
+
+impl Answer {
+    /// The answer, as measured at monotonic time `at`.
+    fn at(self, at: u64) -> Self {
+        Self { at, ..self }
+    }
+
+    /// The sample, its bound widened by the drift from when it was
+    /// measured to `stamped`, the monotonic time the sync takes it.
+    fn aged(self, stamped: u64) -> Sample {
+        let since = Duration::from_nanos(stamped.saturating_sub(self.at));
+        Sample {
+            bound: self.sample.bound.saturating_add(wall::drift(since)),
+            ..self.sample
+        }
+    }
 }
 
 /// A UDP socket connected to `server`, reading until `deadline`.
@@ -520,7 +543,8 @@ fn query(
         request(sent.get()).to_vec()
     };
     ask(&addresses, deadline, packet, |reply| {
-        Some(answer(reply, sent.get(), time.wall()))
+        let measured = answer(reply, sent.get(), time.wall());
+        Some(measured.map(|answer| answer.at(time.monotonic())))
     })
 }
 
@@ -568,7 +592,8 @@ fn ask_nts(
         |reply| {
             if let Some(header) = association.verify(reply, &unique) {
                 return Some(Ok(Reply {
-                    result: answer(header, sent, time.wall()),
+                    result: answer(header, sent, time.wall())
+                        .map(|answer| answer.at(time.monotonic())),
                     authenticated: true,
                 }));
             }
@@ -653,7 +678,11 @@ fn answer(reply: &[u8], sent: u64, received: u64) -> Result<Answer, ClockError> 
         offset: i64::try_from(offset).map_err(|_| ClockError::Reply("offset out of range"))?,
         bound: u64::try_from(bound).unwrap_or(u64::MAX),
     };
-    Ok(Answer { sample, leap })
+    Ok(Answer {
+        sample,
+        leap,
+        at: 0,
+    })
 }
 
 /// Runs the reply parser on arbitrary bytes, for the fuzzer. The first 16
@@ -952,6 +981,29 @@ mod tests {
         // Two points shared by three of four: the earlier wins.
         let ranges = [(0, 10), (5, 20), (5, 20), (15, 30)];
         assert_eq!(majority(&ranges), Some(vec![0, 1, 2]));
+    }
+
+    #[test]
+    fn an_answer_ages_by_the_drift_since_it_was_measured() {
+        let answer = Answer {
+            sample: Sample {
+                offset: -3,
+                bound: 7,
+            },
+            leap: None,
+            at: 0,
+        }
+        .at(1_000_000_000);
+        // Two seconds at 500 ppm: 1 ms.
+        assert_eq!(
+            answer.aged(3_000_000_000),
+            Sample {
+                offset: -3,
+                bound: 7 + 1_000_000,
+            }
+        );
+        assert_eq!(answer.aged(1_000_000_000).bound, 7);
+        assert_eq!(answer.aged(0).bound, 7);
     }
 
     #[test]
