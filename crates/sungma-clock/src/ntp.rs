@@ -37,8 +37,11 @@ const MIN_ANSWERS: usize = 3;
 /// 64 s, which a Kiss-o'-Death `RATE` doubles.
 const MIN_POLL: u64 = 64_000_000_000;
 
-/// The longest a `RATE` stretches a server's poll, NTP's maximum, 2^17 s.
-const MAX_POLL: u64 = 131_072_000_000_000;
+/// The longest a Kiss-o'-Death holds a server off, 1024 s, chrony's default
+/// maxpoll. Kisses aren't authenticated, so an attacker who sees our
+/// requests can send them; a short hold stops one mattering soon after the
+/// attack does.
+const MAX_HOLD: u64 = 1_024_000_000_000;
 
 /// A leap second a server announces for the end of the day.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -56,8 +59,11 @@ pub struct SyncReport {
     pub unanswered: Vec<String>,
     /// Servers that sent Kiss-o'-Death this sync, with its code.
     pub kissed: Vec<(String, [u8; 4])>,
-    /// Servers that asked, by `DENY` or `RSTR`, never to be asked again.
+    /// Servers held off by a `DENY` or `RSTR`, until they answer again.
     pub denied: Vec<String>,
+    /// Servers asked although a Kiss-o'-Death held them, because honoring
+    /// every hold would leave too few to sync.
+    pub overridden: Vec<String>,
     /// A leap second announced by a server in the majority.
     pub leap: Option<Leap>,
 }
@@ -68,7 +74,8 @@ struct Schedule {
     poll: u64,
     /// The monotonic time before which the server isn't asked.
     held_until: u64,
-    /// `DENY` or `RSTR`: the server asked not to be asked again.
+    /// `DENY` or `RSTR`: the server asked not to be asked again. It is
+    /// held for [`MAX_HOLD`], and the flag clears when it answers.
     denied: bool,
 }
 
@@ -96,16 +103,19 @@ impl Schedule {
     fn kissed(&mut self, code: [u8; 4], now: u64) {
         match &code {
             b"RATE" => {
-                self.poll = self.poll.saturating_mul(2).min(MAX_POLL);
+                self.poll = self.poll.saturating_mul(2).min(MAX_HOLD);
                 self.asked(now);
             }
-            b"DENY" | b"RSTR" => self.denied = true,
+            b"DENY" | b"RSTR" => {
+                self.denied = true;
+                self.held_until = now.saturating_add(MAX_HOLD);
+            }
             _ => {}
         }
     }
 
     fn askable(&self, now: u64) -> bool {
-        !self.denied && now >= self.held_until
+        now >= self.held_until
     }
 }
 
@@ -184,14 +194,20 @@ fn sync(
 ) -> (Result<Sample, ClockError>, SyncReport) {
     let now = time.monotonic();
     let mut report = SyncReport::default();
-    for (name, schedule) in servers.names.iter().zip(schedules.iter()) {
-        if schedule.denied {
-            report.denied.push(name.clone());
-        }
-    }
-    let asked: Vec<usize> = (0..servers.names.len())
+    let mut asked: Vec<usize> = (0..servers.names.len())
         .filter(|&at| schedules[at].askable(now))
         .collect();
+    // Too few left to sync: ask the held servers whose holds end soonest,
+    // as many as quorum needs. That is still no more than NTP's 64 s poll.
+    let needed = MIN_ANSWERS.saturating_sub(asked.len());
+    let mut held: Vec<usize> = (0..servers.names.len())
+        .filter(|at| !asked.contains(at))
+        .collect();
+    held.sort_by_key(|&at| (schedules[at].held_until, at));
+    for at in held.into_iter().take(needed) {
+        report.overridden.push(servers.names[at].clone());
+        asked.push(at);
+    }
     for &at in &asked {
         schedules[at].asked(now);
     }
@@ -203,6 +219,11 @@ fn sync(
         now,
         &mut report,
     );
+    for (name, schedule) in servers.names.iter().zip(schedules.iter()) {
+        if schedule.denied {
+            report.denied.push(name.clone());
+        }
+    }
     (sample, report)
 }
 
@@ -241,12 +262,12 @@ fn agree(
     for (&at, reply) in asked.iter().zip(replies) {
         let name = servers.names[at].clone();
         match reply {
-            Ok(answer) => answers.push((name, answer)),
+            Ok(answer) => {
+                schedules[at].denied = false;
+                answers.push((name, answer));
+            }
             Err(ClockError::Kiss(code)) => {
                 schedules[at].kissed(code, now);
-                if schedules[at].denied {
-                    report.denied.push(name.clone());
-                }
                 report.kissed.push((name, code));
                 error = ClockError::Kiss(code);
             }
@@ -686,7 +707,9 @@ mod tests {
         for _ in 0..20 {
             schedule.kissed(*b"RATE", 0);
         }
-        assert_eq!(schedule.poll, MAX_POLL);
+        // An unauthenticated RATE never holds a server longer than 1024 s.
+        assert_eq!(schedule.poll, MAX_HOLD);
+        assert!(schedule.askable(MAX_HOLD));
     }
 
     #[test]
@@ -704,8 +727,10 @@ mod tests {
     fn a_deny_or_rstr_kiss_stops_the_server_and_others_change_nothing() {
         for code in [*b"DENY", *b"RSTR"] {
             let mut schedule = Schedule::default();
-            schedule.kissed(code, 0);
-            assert!(!schedule.askable(u64::MAX));
+            schedule.kissed(code, 1_000);
+            assert!(schedule.denied);
+            assert!(!schedule.askable(1_000 + MAX_HOLD - 1));
+            assert!(schedule.askable(1_000 + MAX_HOLD));
         }
         let mut schedule = Schedule::default();
         schedule.kissed(*b"INIT", 5);

@@ -500,24 +500,80 @@ fn a_rate_kiss_holds_the_server_off_for_twice_the_poll() {
 }
 
 #[test]
-fn a_deny_kiss_stops_the_server_for_good() {
+fn a_deny_kiss_holds_the_server_for_1024_seconds() {
     let time = Arc::new(ManualTime::new(wall()));
-    let (denier, denied) = counting(vec![Answer::Kiss(b"DENY")]);
-    let honest = counting_trio(vec![Answer::Ahead(0); 2]);
+    let (denier, denied) = counting(vec![Answer::Kiss(b"DENY"), Answer::Ahead(0)]);
+    let honest = counting_trio(vec![Answer::Ahead(0); 3]);
     let servers = [vec![denier], honest].concat();
     let clock = NtpClock::sync_with(Servers::new(servers), time.clone()).unwrap();
     assert_eq!(clock.last_sync().denied, vec![denier.to_string()]);
-    time.advance(Duration::from_secs(86_400));
+    time.advance(Duration::from_secs(1_023));
     clock.resync().unwrap();
     assert_eq!(asked(&denied), 1);
-    // A denied server is listed on every sync, though it isn't asked.
+    // A denied server is listed on every sync while it is held.
     assert_eq!(clock.last_sync().denied, vec![denier.to_string()]);
     assert!(clock.last_sync().kissed.is_empty());
+    assert!(clock.last_sync().overridden.is_empty());
+    // Kisses aren't authenticated, so the hold ends, and an answer clears it.
+    time.advance(Duration::from_secs(1));
+    clock.resync().unwrap();
+    assert_eq!(asked(&denied), 2);
+    assert!(clock.last_sync().denied.is_empty());
     let (alone, _) = counting(vec![Answer::Kiss(b"DENY")]);
     assert!(matches!(
         NtpClock::sync(Servers::new([alone])),
         Err(ClockError::Kiss(code)) if &code == b"DENY"
     ));
+}
+
+#[test]
+fn kisses_that_would_break_quorum_are_overridden() {
+    let time = Arc::new(ManualTime::new(wall()));
+    let servers = counting_trio(vec![
+        Answer::Ahead(0),
+        Answer::Kiss(b"DENY"),
+        Answer::Ahead(0),
+    ]);
+    let clock = NtpClock::sync_with(Servers::new(servers.clone()), time.clone()).unwrap();
+    assert!(matches!(clock.resync(), Err(ClockError::Kiss(code)) if &code == b"DENY"));
+    // All three are held, so honoring them would leave none: all are asked.
+    clock.resync().unwrap();
+    let names: Vec<_> = servers.iter().map(SocketAddr::to_string).collect();
+    assert_eq!(clock.last_sync().overridden, names);
+    assert!(clock.last_sync().denied.is_empty());
+}
+
+#[test]
+fn only_as_many_kisses_as_quorum_needs_are_overridden_soonest_first() {
+    let time = Arc::new(ManualTime::new(wall()));
+    let (first, _) = counting(vec![Answer::Kiss(b"RATE"), Answer::Ahead(0)]);
+    let (second, asked_second) = counting(vec![Answer::Ahead(0), Answer::Kiss(b"RATE")]);
+    let honest = (0..2).map(|_| counting(vec![Answer::Ahead(0); 3]).0);
+    let servers: Vec<_> = [first, second].into_iter().chain(honest).collect();
+    let clock = NtpClock::sync_with(Servers::new(servers), time.clone()).unwrap();
+    time.advance(Duration::from_secs(1));
+    // The second server kisses too, leaving two answers.
+    assert!(matches!(
+        clock.resync(),
+        Err(ClockError::TooFewAnswers { answered: 2 })
+    ));
+    // Two are askable, so one held server is asked: the one whose hold
+    // ends first.
+    clock.resync().unwrap();
+    assert_eq!(clock.last_sync().overridden, vec![first.to_string()]);
+    assert_eq!(asked(&asked_second), 2);
+}
+
+#[test]
+fn a_kiss_that_leaves_quorum_is_honored() {
+    let time = Arc::new(ManualTime::new(wall()));
+    let (kisser, kissed) = counting(vec![Answer::Kiss(b"RATE")]);
+    let honest = counting_trio(vec![Answer::Ahead(0); 2]);
+    let servers = [vec![kisser], honest].concat();
+    let clock = NtpClock::sync_with(Servers::new(servers), time.clone()).unwrap();
+    clock.resync().unwrap();
+    assert_eq!(asked(&kissed), 1);
+    assert!(clock.last_sync().overridden.is_empty());
 }
 
 #[test]
