@@ -19,7 +19,7 @@ use aes_siv::{
 };
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned, pki_types::ServerName};
 
-use crate::{ClockError, Resolve, servers::resolve_by};
+use crate::{ClockError, Resolve, ntp::share, servers::resolve_by};
 
 /// The key exchange's port.
 pub(crate) const KE_PORT: u16 = 4460;
@@ -235,15 +235,16 @@ impl Write for Deadline {
 }
 
 /// Connects to each of `addresses` in turn until one accepts, by
-/// `deadline`.
+/// `deadline`. Each gets an equal share of the time left, the last all of
+/// it, so an address that drops packets can't starve a working one.
 fn connect(addresses: &[SocketAddr], deadline: Instant) -> Result<TcpStream, ClockError> {
     let mut failed = ClockError::NoServers;
-    for address in addresses {
+    for (at, address) in addresses.iter().enumerate() {
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
             break;
         }
-        match TcpStream::connect_timeout(address, left) {
+        match TcpStream::connect_timeout(address, share(left, addresses.len() - at)) {
             Ok(socket) => return Ok(socket),
             Err(error) => failed = error.into(),
         }

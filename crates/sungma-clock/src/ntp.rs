@@ -479,10 +479,10 @@ fn left(deadline: Instant) -> io::Result<Duration> {
 }
 
 /// Sends `packet` to each of `addresses` in turn, until one answers in a
-/// way `accept` takes, all by `deadline`. An address that refuses, as an
-/// unreachable one does, gives way to the next; one that keeps silent uses
-/// up the time. Packets `accept` passes over, such as a late reply to an
-/// earlier request, are skipped.
+/// way `accept` takes, all by `deadline`. Each address gets an equal share
+/// of the time left, the last all of it, so a silent address can't starve
+/// a working one; one that refuses gives way at once. Packets `accept`
+/// passes over, such as a late reply to an earlier request, are skipped.
 fn ask<R>(
     addresses: &[SocketAddr],
     deadline: Instant,
@@ -490,8 +490,9 @@ fn ask<R>(
     mut accept: impl FnMut(&[u8]) -> Option<Result<R, ClockError>>,
 ) -> Result<R, ClockError> {
     let mut failed = ClockError::NoServers;
-    'addresses: for &address in addresses {
-        let socket = match connected(address, deadline) {
+    'addresses: for (at, &address) in addresses.iter().enumerate() {
+        let until = Instant::now() + share(left(deadline)?, addresses.len() - at);
+        let socket = match connected(address, until) {
             Ok(socket) => socket,
             Err(error) => {
                 failed = error;
@@ -503,7 +504,14 @@ fn ask<R>(
             continue;
         }
         loop {
-            socket.set_read_timeout(Some(left(deadline)?))?;
+            let wait = match left(until) {
+                Ok(wait) => wait,
+                Err(error) => {
+                    failed = error.into();
+                    continue 'addresses;
+                }
+            };
+            socket.set_read_timeout(Some(wait))?;
             let mut reply = [0; REPLY];
             match socket.recv(&mut reply) {
                 Ok(length) => {
@@ -511,7 +519,7 @@ fn ask<R>(
                         return result;
                     }
                 }
-                Err(error) if refused(&error) => {
+                Err(error) if refused(&error) || silent(&error) => {
                     failed = error.into();
                     continue 'addresses;
                 }
@@ -520,6 +528,19 @@ fn ask<R>(
         }
     }
     Err(failed)
+}
+
+/// An equal share of `left` for each of `addresses` still to try.
+pub(crate) fn share(left: Duration, addresses: usize) -> Duration {
+    left / u32::try_from(addresses.max(1)).unwrap_or(u32::MAX)
+}
+
+/// Whether a socket error says the address kept silent until the timeout.
+fn silent(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+    )
 }
 
 /// Whether a socket error says nothing listens at the address.
@@ -981,6 +1002,14 @@ mod tests {
         // Two points shared by three of four: the earlier wins.
         let ranges = [(0, 10), (5, 20), (5, 20), (15, 30)];
         assert_eq!(majority(&ranges), Some(vec![0, 1, 2]));
+    }
+
+    #[test]
+    fn each_address_gets_an_equal_share_of_the_time_left() {
+        let second = Duration::from_secs(1);
+        assert_eq!(share(second, 4), Duration::from_millis(250));
+        assert_eq!(share(second, 1), second);
+        assert_eq!(share(second, 0), second);
     }
 
     #[test]

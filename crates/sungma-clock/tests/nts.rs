@@ -594,3 +594,26 @@ fn a_failed_key_exchange_leaves_the_server_unanswered() {
 fn certificate_of_another_authority() -> Vec<u8> {
     certificate().cert.der().to_vec()
 }
+
+#[test]
+fn an_address_that_drops_packets_gives_the_next_its_share_of_the_deadline() {
+    let (nts, certificate) = four(&[]);
+    let blackhole: SocketAddr = "192.0.2.1:4460".parse().unwrap();
+    let addresses: HashMap<String, SocketAddr> = nts
+        .iter()
+        .map(|server| (format!("{}:4460", server.host), server.ke))
+        .collect();
+    let hosts: Vec<_> = nts.iter().map(|server| server.host).collect();
+    let servers = Servers::nts(hosts)
+        .trusting_only(&certificate)
+        .unwrap()
+        .resolving_with(move |name: &str| match addresses.get(name) {
+            Some(address) => Ok(vec![blackhole, *address]),
+            None => name
+                .parse()
+                .map(|address| vec![address])
+                .map_err(|failed| io::Error::new(io::ErrorKind::InvalidInput, failed)),
+        });
+    let clock = NtpClock::sync(servers).unwrap();
+    assert!(clock.last_sync().unanswered.is_empty());
+}

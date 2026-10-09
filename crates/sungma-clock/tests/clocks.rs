@@ -768,3 +768,19 @@ fn a_slow_resolver_leaves_its_server_unanswered_in_time() {
     );
     assert!(started.elapsed() < Duration::from_millis(1_500));
 }
+
+#[test]
+fn a_silent_address_gives_the_next_its_share_of_the_time() {
+    let good = counting_trio(vec![Answer::Ahead(0)]);
+    let (_quiet, silent_address) = silent();
+    let names = ["a.test:123", "b.test:123", "c.test:123"];
+    let servers = Servers::new(names).resolving_with(move |name: &str| {
+        let at = usize::from(name.as_bytes()[0] - b'a');
+        Ok(vec![silent_address, good[at]])
+    });
+    let started = Instant::now();
+    let clock = NtpClock::sync(servers).unwrap();
+    assert!(clock.last_sync().unanswered.is_empty());
+    // Half the second waiting on the silent address, then the good one.
+    assert!(started.elapsed() < Duration::from_millis(900));
+}
