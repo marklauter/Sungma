@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use sungma::clock::{ClockFault, Reading, Revision};
+use sungma::clock::{ClockFault, Reading};
 
 use crate::SyncReport;
 
@@ -85,20 +85,10 @@ impl Faults {
     }
 }
 
-/// [`ClockFault::Behind`] when another node stamped `seen` past the
-/// clock's `revision`, as [`sungma::clock::Clock::observe`] decides it.
-pub(crate) fn behind(now: Reading, seen: Revision) -> Result<(), ClockFault> {
-    if seen > now.revision {
-        return Err(ClockFault::Behind {
-            seen,
-            revision: now.revision,
-        });
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
+    use sungma::clock::Revision;
+
     use super::*;
 
     fn reading(settled: u64, revision: u64) -> Reading {
@@ -142,18 +132,6 @@ mod tests {
         assert_eq!(
             (status.width, status.fault),
             (None, Some(ClockFault::Drifted))
-        );
-    }
-
-    #[test]
-    fn a_revision_past_the_clocks_is_behind() {
-        assert_eq!(behind(reading(5, 9), Revision(9)), Ok(()));
-        assert_eq!(
-            behind(reading(5, 9), Revision(10)),
-            Err(ClockFault::Behind {
-                seen: Revision(10),
-                revision: Revision(9),
-            })
         );
     }
 }

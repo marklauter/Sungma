@@ -13,7 +13,7 @@ use sungma::clock::{Clock, ClockFault, Reading, Revision};
 
 use crate::{
     ClockStatus, Moment, OsTime, TimeSource,
-    status::{self, Faults},
+    status::Faults,
     wall::{self, Carry, MAX_BOUND},
 };
 
@@ -156,7 +156,7 @@ impl<T: TimeSource> Clock for LinuxClock<T> {
 
     fn observe(&self, seen: Revision) -> Result<(), ClockFault> {
         let now = self.now()?;
-        self.faults.record(status::behind(now, seen))
+        self.faults.record(sungma::clock::behind(now, seen))
     }
 }
 

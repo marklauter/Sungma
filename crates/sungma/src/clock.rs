@@ -60,13 +60,39 @@ pub trait Clock {
     /// token carries. A revision past this clock's `revision` is one true
     /// time can't have reached yet, so one of the two clocks is wrong.
     fn observe(&self, seen: Revision) -> Result<(), ClockFault> {
-        let now = self.now()?;
-        if seen > now.revision {
-            return Err(ClockFault::Behind {
-                seen,
-                revision: now.revision,
-            });
-        }
-        Ok(())
+        behind(self.now()?, seen)
+    }
+}
+
+/// [`ClockFault::Behind`] when another node stamped `seen` past the
+/// `revision` of the reading `now`, the check [`Clock::observe`] makes.
+pub fn behind(now: Reading, seen: Revision) -> Result<(), ClockFault> {
+    if seen > now.revision {
+        return Err(ClockFault::Behind {
+            seen,
+            revision: now.revision,
+        });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_revision_past_the_readings_is_behind() {
+        let now = Reading {
+            settled: Revision(5),
+            revision: Revision(9),
+        };
+        assert_eq!(behind(now, Revision(9)), Ok(()));
+        assert_eq!(
+            behind(now, Revision(10)),
+            Err(ClockFault::Behind {
+                seen: Revision(10),
+                revision: Revision(9),
+            })
+        );
     }
 }

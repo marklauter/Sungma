@@ -28,7 +28,7 @@ use crate::{
     ClockError, ClockStatus, OsTime, Resolve, Servers, TimeSource,
     nts::{self, Association},
     servers::resolve_by,
-    status::{self, Faults},
+    status::Faults,
     wall::{self, Sample, Sampled},
 };
 
@@ -240,7 +240,7 @@ impl<T: TimeSource> Clock for NtpClock<T> {
 
     fn observe(&self, seen: Revision) -> Result<(), ClockFault> {
         let now = self.now()?;
-        self.faults.record(status::behind(now, seen))
+        self.faults.record(sungma::clock::behind(now, seen))
     }
 }
 
