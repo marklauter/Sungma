@@ -8,10 +8,10 @@ use sungma::clock::{Clock, ClockFault, Reading};
 use crate::LinuxClock;
 use crate::{ClockError, NtpClock, wall};
 
-/// The platform's clock when it reports a bound, else NTP. An enum rather
-/// than a `Box<dyn Clock>`: [`Clock::wait`] returns `impl Future`, so
-/// the trait can't be a trait object, and each variant exists only on the
-/// platforms that have it.
+/// The Linux kernel's clock when it reports a bound, else NTP. An enum
+/// rather than a `Box<dyn Clock>`: [`Clock::wait`] returns `impl Future`,
+/// so the trait can't be a trait object, and the Linux variant exists only
+/// on Linux.
 #[derive(Debug)]
 pub enum SystemClock {
     #[cfg(target_os = "linux")]
