@@ -3,34 +3,66 @@
 use std::{
     fmt, io,
     net::{SocketAddr, ToSocketAddrs},
-    sync::Arc,
+    sync::{Arc, mpsc},
+    thread,
+    time::Instant,
 };
 
 use rustls::{ClientConfig, RootCertStore, pki_types::CertificateDer};
 
 use crate::{ClockError, nts};
 
-/// Turns a server's name into the address to ask. A clock resolves each
-/// name again on every sync, so a pool's addresses can change.
+/// Turns a server's name into the addresses to try, in order. A clock
+/// resolves each name again on every sync, so a pool's addresses can
+/// change.
 pub trait Resolve: Send + Sync {
-    fn resolve(&self, server: &str) -> io::Result<SocketAddr>;
+    fn resolve(&self, server: &str) -> io::Result<Vec<SocketAddr>>;
 }
 
-impl<F: Fn(&str) -> io::Result<SocketAddr> + Send + Sync> Resolve for F {
-    fn resolve(&self, server: &str) -> io::Result<SocketAddr> {
+impl<F: Fn(&str) -> io::Result<Vec<SocketAddr>> + Send + Sync> Resolve for F {
+    fn resolve(&self, server: &str) -> io::Result<Vec<SocketAddr>> {
         self(server)
     }
 }
 
-/// The system's resolver: the first address `host:port` resolves to.
+/// The system's resolver: every address `host:port` resolves to.
 #[derive(Clone, Copy, Debug)]
 struct Dns;
 
 impl Resolve for Dns {
-    fn resolve(&self, server: &str) -> io::Result<SocketAddr> {
-        server.to_socket_addrs()?.next().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, format!("{server} has no address"))
-        })
+    fn resolve(&self, server: &str) -> io::Result<Vec<SocketAddr>> {
+        let addresses: Vec<_> = server.to_socket_addrs()?.collect();
+        if addresses.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{server} has no address"),
+            ));
+        }
+        Ok(addresses)
+    }
+}
+
+/// Resolves `server` through `resolver`, giving up at `deadline`. A system
+/// lookup can't be interrupted, so it runs on a thread of its own, which
+/// finishes alone if the deadline passes first.
+pub(crate) fn resolve_by(
+    resolver: &Arc<dyn Resolve>,
+    server: &str,
+    deadline: Instant,
+) -> Result<Vec<SocketAddr>, ClockError> {
+    let (send, receive) = mpsc::channel();
+    let (resolver, name) = (resolver.clone(), server.to_owned());
+    thread::spawn(move || {
+        // The receiver is gone once the deadline has passed.
+        let _ = send.send(resolver.resolve(&name));
+    });
+    let left = deadline.saturating_duration_since(Instant::now());
+    match receive.recv_timeout(left) {
+        Ok(resolved) => Ok(resolved?),
+        Err(_) => Err(ClockError::Io(io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!("resolving {server} took too long"),
+        ))),
     }
 }
 
@@ -114,17 +146,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_name_resolves_to_its_first_address() {
-        let address = Dns.resolve("127.0.0.1:123").unwrap();
-        assert_eq!(address, "127.0.0.1:123".parse().unwrap());
+    fn a_name_resolves_to_its_addresses() {
+        let addresses = Dns.resolve("127.0.0.1:123").unwrap();
+        assert_eq!(addresses, ["127.0.0.1:123".parse().unwrap()]);
         assert!(Dns.resolve("no port").is_err());
+    }
+
+    #[test]
+    fn a_slow_resolver_is_given_up_at_the_deadline() {
+        use std::time::Duration;
+
+        let slow: Arc<dyn Resolve> = Arc::new(|_: &str| {
+            thread::sleep(Duration::from_secs(2));
+            Ok(vec![])
+        });
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(100);
+        let given_up = resolve_by(&slow, "slow.test:123", deadline);
+        assert!(
+            matches!(given_up, Err(ClockError::Io(failed)) if failed.kind() == io::ErrorKind::TimedOut)
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+        let fine: Arc<dyn Resolve> = Arc::new(Dns);
+        let later = Instant::now() + Duration::from_secs(5);
+        assert_eq!(resolve_by(&fine, "127.0.0.1:9", later).unwrap().len(), 1);
+        assert!(matches!(
+            resolve_by(&fine, "no port", later),
+            Err(ClockError::Io(_))
+        ));
     }
 
     #[test]
     fn a_resolver_can_be_injected() {
         let elsewhere: SocketAddr = "10.0.0.1:123".parse().unwrap();
-        let servers = Servers::new(["a.test:123"]).resolving_with(move |_: &str| Ok(elsewhere));
-        assert_eq!(servers.resolver.resolve("a.test:123").unwrap(), elsewhere);
+        let servers =
+            Servers::new(["a.test:123"]).resolving_with(move |_: &str| Ok(vec![elsewhere]));
+        assert_eq!(servers.resolver.resolve("a.test:123").unwrap(), [elsewhere]);
         assert_eq!(
             format!("{servers:?}"),
             r#"Servers { names: ["a.test:123"], nts: [false], .. }"#

@@ -8,7 +8,7 @@
 
 use std::{
     io::{self, Read, Write},
-    net::TcpStream,
+    net::{SocketAddr, TcpStream},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -19,7 +19,7 @@ use aes_siv::{
 };
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned, pki_types::ServerName};
 
-use crate::{ClockError, Resolve};
+use crate::{ClockError, Resolve, servers::resolve_by};
 
 /// The key exchange's port.
 pub(crate) const KE_PORT: u16 = 4460;
@@ -234,16 +234,34 @@ impl Write for Deadline {
     }
 }
 
+/// Connects to each of `addresses` in turn until one accepts, by
+/// `deadline`.
+fn connect(addresses: &[SocketAddr], deadline: Instant) -> Result<TcpStream, ClockError> {
+    let mut failed = ClockError::NoServers;
+    for address in addresses {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        match TcpStream::connect_timeout(address, left) {
+            Ok(socket) => return Ok(socket),
+            Err(error) => failed = error.into(),
+        }
+    }
+    Err(failed)
+}
+
 /// Runs a key exchange with `host`, on port 4460, giving up after
-/// [`KE_DEADLINE`].
+/// [`KE_DEADLINE`], resolving and connecting included.
 pub(crate) fn exchange(
     host: &str,
-    resolver: &dyn Resolve,
+    resolver: &Arc<dyn Resolve>,
     tls: &Arc<ClientConfig>,
 ) -> Result<Association, ClockError> {
     let started = Instant::now();
-    let address = resolver.resolve(&format!("{host}:{KE_PORT}"))?;
-    let socket = TcpStream::connect_timeout(&address, KE_DEADLINE)?;
+    let deadline = started + KE_DEADLINE;
+    let addresses = resolve_by(resolver, &format!("{host}:{KE_PORT}"), deadline)?;
+    let socket = connect(&addresses, deadline)?;
     let name = ServerName::try_from(host.to_owned()).map_err(|_| nts("a host name isn't valid"))?;
     let connection = ClientConnection::new(tls.clone(), name)
         .map_err(|failed| ClockError::Nts(failed.to_string()))?;

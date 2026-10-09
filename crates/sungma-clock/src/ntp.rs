@@ -9,7 +9,9 @@
 //! agree.
 
 use std::{
+    cell::Cell,
     future::Future,
+    io,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
     sync::{
         Arc, Mutex, PoisonError,
@@ -25,6 +27,7 @@ use sungma::clock::{Clock, ClockFault, Reading, Revision};
 use crate::{
     ClockError, ClockStatus, OsTime, Resolve, Servers, TimeSource,
     nts::{self, Association},
+    servers::resolve_by,
     status::{self, Faults},
     wall::{self, Sample, Sampled},
 };
@@ -331,10 +334,7 @@ fn query_all(
                     if let Some(tls) = &servers.tls[at] {
                         query_nts(name, tls, association, servers, time)
                     } else {
-                        let resolved = servers.resolver.resolve(name);
-                        let result = resolved
-                            .map_err(ClockError::from)
-                            .and_then(|address| query(address, time));
+                        let result = query(name, &servers.resolver, time);
                         (Reply::unauthenticated(result), None)
                     }
                 })
@@ -431,26 +431,97 @@ struct Answer {
     leap: Option<Leap>,
 }
 
-/// A UDP socket connected to `server`, with the reply timeout.
-fn connected(server: SocketAddr) -> Result<UdpSocket, ClockError> {
+/// A UDP socket connected to `server`, reading until `deadline`.
+fn connected(server: SocketAddr, deadline: Instant) -> Result<UdpSocket, ClockError> {
     let local: SocketAddr = match server {
         SocketAddr::V4(_) => (Ipv4Addr::UNSPECIFIED, 0).into(),
         SocketAddr::V6(_) => (Ipv6Addr::UNSPECIFIED, 0).into(),
     };
     let socket = UdpSocket::bind(local)?;
     socket.connect(server)?;
-    socket.set_read_timeout(Some(TIMEOUT))?;
+    socket.set_read_timeout(Some(left(deadline)?))?;
     Ok(socket)
 }
 
-fn query(server: SocketAddr, time: &impl TimeSource) -> Result<Answer, ClockError> {
-    let socket = connected(server)?;
-    let sent = time.wall();
-    socket.send(&request(sent))?;
-    let mut reply = [0; PACKET];
-    let length = socket.recv(&mut reply)?;
-    let received = time.wall();
-    answer(&reply[..length], sent, received)
+/// The time left until `deadline`, or a timeout once none is.
+fn left(deadline: Instant) -> io::Result<Duration> {
+    let left = deadline.saturating_duration_since(Instant::now());
+    if left.is_zero() {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "no reply came in time",
+        ));
+    }
+    Ok(left)
+}
+
+/// Sends `packet` to each of `addresses` in turn, until one answers in a
+/// way `accept` takes, all by `deadline`. An address that refuses, as an
+/// unreachable one does, gives way to the next; one that keeps silent uses
+/// up the time. Packets `accept` passes over, such as a late reply to an
+/// earlier request, are skipped.
+fn ask<R>(
+    addresses: &[SocketAddr],
+    deadline: Instant,
+    mut packet: impl FnMut() -> Vec<u8>,
+    mut accept: impl FnMut(&[u8]) -> Option<Result<R, ClockError>>,
+) -> Result<R, ClockError> {
+    let mut failed = ClockError::NoServers;
+    'addresses: for &address in addresses {
+        let socket = match connected(address, deadline) {
+            Ok(socket) => socket,
+            Err(error) => {
+                failed = error;
+                continue;
+            }
+        };
+        if let Err(error) = socket.send(&packet()) {
+            failed = error.into();
+            continue;
+        }
+        loop {
+            socket.set_read_timeout(Some(left(deadline)?))?;
+            let mut reply = [0; REPLY];
+            match socket.recv(&mut reply) {
+                Ok(length) => {
+                    if let Some(result) = accept(&reply[..length]) {
+                        return result;
+                    }
+                }
+                Err(error) if refused(&error) => {
+                    failed = error.into();
+                    continue 'addresses;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+    Err(failed)
+}
+
+/// Whether a socket error says nothing listens at the address.
+fn refused(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionRefused | io::ErrorKind::ConnectionReset
+    )
+}
+
+fn query(
+    server: &str,
+    resolver: &Arc<dyn Resolve>,
+    time: &impl TimeSource,
+) -> Result<Answer, ClockError> {
+    let deadline = Instant::now() + TIMEOUT;
+    let addresses = resolve_by(resolver, server, deadline)?;
+    let sent = Cell::new(0);
+    let packet = || {
+        sent.set(time.wall());
+        request(sent.get()).to_vec()
+    };
+    ask(&addresses, deadline, packet, |reply| {
+        Some(answer(reply, sent.get(), time.wall()))
+    })
 }
 
 /// Asks an NTS server, running a key exchange first when its association
@@ -464,13 +535,13 @@ fn query_nts(
 ) -> (Reply, Option<Association>) {
     let association = match association.filter(|association| !association.cookies.is_empty()) {
         Some(association) => association,
-        None => match nts::exchange(host, servers.resolver.as_ref(), tls) {
+        None => match nts::exchange(host, &servers.resolver, tls) {
             Ok(association) => association,
             Err(failed) => return (Reply::unauthenticated(Err(failed)), None),
         },
     };
     let mut association = association;
-    let reply = ask_nts(&mut association, servers.resolver.as_ref(), time)
+    let reply = ask_nts(&mut association, &servers.resolver, time)
         .unwrap_or_else(|failed| Reply::unauthenticated(Err(failed)));
     (reply, Some(association))
 }
@@ -479,42 +550,41 @@ fn query_nts(
 /// cookies, empties the association, so the next sync exchanges keys again.
 fn ask_nts(
     association: &mut Association,
-    resolver: &dyn Resolve,
+    resolver: &Arc<dyn Resolve>,
     time: &impl TimeSource,
 ) -> Result<Reply, ClockError> {
-    let socket = connected(resolver.resolve(&association.server)?)?;
+    let deadline = Instant::now() + TIMEOUT;
+    let addresses = resolve_by(resolver, &association.server, deadline)?;
     let sent = time.wall();
     let unique = nts::random();
     let packet = association
         .request(request(sent), unique)
         .ok_or_else(|| ClockError::Nts("no cookie is left".to_owned()))?;
-    socket.send(&packet)?;
-    // Packets that don't verify, such as a late reply to an earlier
-    // request, are skipped until the timeout.
-    let until = Instant::now() + TIMEOUT;
-    loop {
-        let left = until.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return Err(ClockError::Nts("no authenticated reply came".to_owned()));
-        }
-        socket.set_read_timeout(Some(left))?;
-        let mut reply = [0; REPLY];
-        let length = socket.recv(&mut reply)?;
-        let received = time.wall();
-        let reply = &reply[..length];
-        if let Some(header) = association.verify(reply, &unique) {
-            return Ok(Reply {
-                result: answer(header, sent, received),
-                authenticated: true,
-            });
-        }
-        if nak(reply, sent, &unique) {
-            association.cookies.clear();
-            return Err(ClockError::Nts(
-                "the server no longer knows our cookies".to_owned(),
-            ));
-        }
+    let mut nak_seen = false;
+    let result = ask(
+        &addresses,
+        deadline,
+        || packet.clone(),
+        |reply| {
+            if let Some(header) = association.verify(reply, &unique) {
+                return Some(Ok(Reply {
+                    result: answer(header, sent, time.wall()),
+                    authenticated: true,
+                }));
+            }
+            if nak(reply, sent, &unique) {
+                nak_seen = true;
+                return Some(Err(ClockError::Nts(
+                    "the server no longer knows our cookies".to_owned(),
+                )));
+            }
+            None
+        },
+    );
+    if nak_seen {
+        association.cookies.clear();
     }
+    result
 }
 
 /// Whether `reply` is an NTS NAK to the request sent at `sent` with

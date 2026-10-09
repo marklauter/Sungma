@@ -589,11 +589,11 @@ fn a_name_is_resolved_again_on_every_sync() {
     let resolving = address.clone();
     let servers = Servers::new(["moving.test:123", "b.test:123", "c.test:123"]).resolving_with(
         move |name: &str| {
-            Ok(match name {
+            Ok(vec![match name {
                 "moving.test:123" => *resolving.lock().unwrap(),
                 "b.test:123" => others[0],
                 _ => others[1],
-            })
+            }])
         },
     );
     let clock = NtpClock::sync(servers).unwrap();
@@ -724,4 +724,47 @@ fn a_drift_found_by_a_resync_is_counted() {
     assert_eq!(system.status().fault, None);
     assert!(system.observe(Revision(u64::MAX)).is_err());
     assert_eq!(system.status().faults.behind, 1);
+}
+
+/// An address nothing listens on: a socket bound, then closed.
+fn closed() -> SocketAddr {
+    UdpSocket::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+}
+
+#[test]
+fn an_address_that_refuses_gives_way_to_the_next() {
+    let good = counting_trio(vec![Answer::Ahead(0)]);
+    let refusing = closed();
+    let names = ["a.test:123", "b.test:123", "c.test:123"];
+    let servers = Servers::new(names).resolving_with(move |name: &str| {
+        let at = usize::from(name.as_bytes()[0] - b'a');
+        Ok(vec![refusing, good[at]])
+    });
+    let started = Instant::now();
+    let clock = NtpClock::sync(servers).unwrap();
+    assert!(clock.last_sync().unanswered.is_empty());
+    assert!(started.elapsed() < Duration::from_millis(900));
+}
+
+#[test]
+fn a_slow_resolver_leaves_its_server_unanswered_in_time() {
+    let good = counting_trio(vec![Answer::Ahead(0)]);
+    let names = ["a.test:123", "b.test:123", "c.test:123", "slow.test:123"];
+    let servers = Servers::new(names).resolving_with(move |name: &str| {
+        if name == "slow.test:123" {
+            thread::sleep(Duration::from_secs(3));
+        }
+        let at = usize::from(name.as_bytes()[0] - b'a') % 3;
+        Ok(vec![good[at]])
+    });
+    let started = Instant::now();
+    let clock = NtpClock::sync(servers).unwrap();
+    assert_eq!(
+        clock.last_sync().unanswered,
+        vec!["slow.test:123".to_owned()]
+    );
+    assert!(started.elapsed() < Duration::from_millis(1_500));
 }

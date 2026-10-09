@@ -377,13 +377,19 @@ fn servers(nts: &[&NtsServer], certificate: &[u8]) -> Servers {
         .map(|server| (format!("{}:4460", server.host), server.ke))
         .collect();
     let hosts: Vec<_> = nts.iter().map(|server| server.host).collect();
+    let refusing = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
     Servers::nts(hosts)
         .trusting_only(certificate)
         .unwrap()
         .resolving_with(move |name: &str| match addresses.get(name) {
-            Some(address) => Ok(*address),
+            // A refusing address first: the exchange must move on to the next.
+            Some(address) => Ok(vec![refusing, *address]),
             None => name
                 .parse()
+                .map(|address| vec![address])
                 .map_err(|failed| io::Error::new(io::ErrorKind::InvalidInput, failed)),
         })
 }
