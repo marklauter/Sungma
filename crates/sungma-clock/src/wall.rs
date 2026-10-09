@@ -86,7 +86,7 @@ pub(crate) fn nanos(elapsed: Duration) -> i128 {
 /// How long until a clock whose settled time is `settled`, at or before
 /// `revision`, passes it.
 pub(crate) fn until_past(settled: Revision, revision: Revision) -> Duration {
-    Duration::from_nanos(revision.0.saturating_sub(settled.0) + 1)
+    Duration::from_nanos(revision.0.saturating_sub(settled.0).saturating_add(1))
 }
 
 /// Sleeps until `clock`'s settled time is past `stamped.revision`. A bound
@@ -405,6 +405,7 @@ mod tests {
         let wait = |settled, revision| until_past(Revision(settled), Revision(revision));
         assert_eq!(wait(10, 14), Duration::from_nanos(5));
         assert_eq!(wait(14, 14), Duration::from_nanos(1));
+        assert_eq!(wait(0, u64::MAX), Duration::from_nanos(u64::MAX));
     }
 
     #[test]
@@ -592,6 +593,9 @@ mod simulation {
             let mut now = START;
             let node = Node::new(now, offset, bound, error, drift);
             let mut stepped = 0i64;
+            // The newest sample's bound, and the monotonic time it was
+            // taken at. The reading is no wider than this sample allows.
+            let mut newest = (bound, node.time.monotonic());
             for event in events {
                 match event {
                     Event::Pass(ms) => {
@@ -606,11 +610,18 @@ mod simulation {
                         let fresh = sample(node.offset(now), bound, error);
                         prop_assert_eq!(node.clock.add(fresh), Ok(()));
                         stepped = 0;
+                        newest = (bound, node.time.monotonic());
                     }
                 }
+                // The newest sample's bound now: drift since it at 500 ppm,
+                // plus the steps since it. Narrower samples only narrow it.
+                let elapsed = node.time.monotonic() - newest.1;
+                let allowed = newest.0 + elapsed * 500 / 1_000_000 + stepped.unsigned_abs();
                 match node.clock.now() {
                     Ok(reading) => {
                         prop_assert!(stepped.unsigned_abs() <= MAX_STEP);
+                        let width = reading.revision.0 - reading.settled.0;
+                        prop_assert!(width <= 2 * allowed, "{width} > 2 * {allowed}");
                         let (settled, revision) = (reading.settled.0, reading.revision.0);
                         prop_assert!(i128::from(settled) <= now && now <= i128::from(revision));
                     }
@@ -620,6 +631,7 @@ mod simulation {
                     }
                     Err(ClockFault::Unsynchronized) => {
                         prop_assert!(stepped.unsigned_abs() <= MAX_STEP);
+                        prop_assert!(allowed > MAX_BOUND, "{allowed} is within a second");
                     }
                     Err(other) => prop_assert!(false, "{other:?}"),
                 }
