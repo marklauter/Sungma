@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     match clock.as_ref() {
         #[cfg(target_os = "linux")]
         SystemClock::Linux(_) => println!("clock: the Linux kernel's, synced by chrony"),
-        SystemClock::Ntp(_) => println!("clock: NTS"),
+        SystemClock::Ntp(_) => println!("clock: NTP, authenticated with NTS"),
     }
     let _refreshing = refresher(clock.clone(), |result| {
         if let Err(failed) = result {
