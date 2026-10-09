@@ -2,26 +2,37 @@
 //! `maxerror` current through `adjtimex`, and the kernel grows it by
 //! 500 ppm between their updates.
 
-use std::future::Future;
+use std::{
+    future::Future,
+    sync::{Mutex, PoisonError},
+    time::Instant,
+};
 
 use libc::{c_int, c_long};
-use sungma::clock::{Clock, Reading};
+use sungma::clock::{Clock, ClockFault, Reading};
 
-use crate::wall;
+use crate::wall::{self, MAX_BOUND};
 
 /// The kernel caps `maxerror` at 16 s, NTP's phase limit. A clock that
 /// can't be read is taken to be that far off.
 const PHASE_LIMIT_MICROS: u64 = 16_000_000;
 
-/// The system clock, give or take the kernel's `maxerror`.
+/// The system clock, give or take the kernel's `maxerror`. Each reading
+/// also compares the system clock with the monotonic clock since the last
+/// one, to catch a step the kernel's bound doesn't cover.
 #[derive(Debug)]
-pub struct LinuxClock(());
+pub struct LinuxClock {
+    last: Mutex<(u64, Instant)>,
+}
 
 impl LinuxClock {
-    /// `None` when the kernel's clock isn't synchronized.
+    /// `None` when the kernel's clock isn't synchronized, or its bound is
+    /// wider than a write should wait.
     pub fn detect() -> Option<Self> {
-        let (state, status, _) = read();
-        synchronized(state, status).then_some(Self(()))
+        let (state, status, maxerror) = read();
+        assess(state, status, maxerror, 0).ok().map(|_| Self {
+            last: Mutex::new((wall::wall_nanos(), Instant::now())),
+        })
     }
 }
 
@@ -48,13 +59,30 @@ fn bound(state: c_int, maxerror: c_long) -> u64 {
     micros.saturating_mul(1_000)
 }
 
+/// The bound, widened by `step` nanoseconds the system clock moved against
+/// the monotonic clock, or why the clock can't be trusted.
+fn assess(state: c_int, status: c_int, maxerror: c_long, step: u64) -> Result<u64, ClockFault> {
+    let bound = bound(state, maxerror).saturating_add(step);
+    if !synchronized(state, status) || bound > MAX_BOUND {
+        return Err(ClockFault::Unsynchronized);
+    }
+    Ok(bound)
+}
+
 impl Clock for LinuxClock {
-    fn now(&self) -> Reading {
-        let (state, _, maxerror) = read();
-        wall::reading(wall::wall_nanos(), bound(state, maxerror))
+    fn now(&self) -> Result<Reading, ClockFault> {
+        let (state, status, maxerror) = read();
+        let (wall, at) = (wall::wall_nanos(), Instant::now());
+        let (then, since) = std::mem::replace(
+            &mut *self.last.lock().unwrap_or_else(PoisonError::into_inner),
+            (wall, at),
+        );
+        let moved = i128::from(wall) - i128::from(then);
+        let step = wall::step(moved - wall::nanos(at.duration_since(since)))?;
+        wall::reading(wall, assess(state, status, maxerror, step)?)
     }
 
-    fn wait(&self, stamped: Reading) -> impl Future<Output = ()> + Send {
+    fn wait(&self, stamped: Reading) -> impl Future<Output = Result<(), ClockFault>> + Send {
         wall::wait(self, stamped)
     }
 }
@@ -80,19 +108,34 @@ mod tests {
     }
 
     #[test]
+    fn a_step_widens_the_bound_and_an_unsynchronized_clock_faults() {
+        assert_eq!(assess(libc::TIME_OK, 0, 1_500, 7), Ok(1_500_007));
+        assert_eq!(assess(libc::TIME_OK, 0, 1_000_000, 0), Ok(1_000_000_000));
+        assert_eq!(
+            assess(libc::TIME_OK, 0, 1_000_000, 1),
+            Err(ClockFault::Unsynchronized)
+        );
+        assert_eq!(
+            assess(libc::TIME_OK, libc::STA_UNSYNC, 1_500, 0),
+            Err(ClockFault::Unsynchronized)
+        );
+    }
+
+    #[test]
     fn a_clock_is_detected_when_the_kernel_is_synchronized() {
-        let (state, status, _) = read();
-        assert_eq!(LinuxClock::detect().is_some(), synchronized(state, status));
+        let (state, status, maxerror) = read();
+        let trusted = assess(state, status, maxerror, 0).is_ok();
+        assert_eq!(LinuxClock::detect().is_some(), trusted);
     }
 
     #[test]
     fn a_detected_clock_reads_the_system_clock_within_its_bound() {
         if let Some(clock) = LinuxClock::detect() {
             let before = wall::wall_nanos();
-            let now = clock.now();
+            let now = clock.now().unwrap();
             let after = wall::wall_nanos();
             assert!(now.settled.0 <= after && before <= now.revision.0);
-            assert!((1..=2 * 16_000_000_000).contains(&(now.revision.0 - now.settled.0)));
+            assert!((1..=2 * MAX_BOUND).contains(&(now.revision.0 - now.settled.0)));
         }
     }
 }

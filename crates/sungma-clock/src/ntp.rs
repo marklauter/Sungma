@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use sungma::clock::{Clock, Reading};
+use sungma::clock::{Clock, ClockFault, Reading};
 
 use crate::{
     ClockError,
@@ -50,20 +50,21 @@ impl NtpClock {
         })
     }
 
-    /// Takes a fresh sample. On an error the old sample stays, and its
-    /// bound keeps growing.
+    /// Takes a fresh sample into the window. When the servers can't be
+    /// reached, the window stays as it was and its bounds keep growing.
+    /// [`ClockFault::Drifted`] when the sample disagrees with the window,
+    /// which the clock then replaces with the sample alone.
     pub fn resync(&self) -> Result<(), ClockError> {
-        self.sampled.replace(sample(&self.servers)?);
-        Ok(())
+        Ok(self.sampled.add(sample(&self.servers)?)?)
     }
 }
 
 impl Clock for NtpClock {
-    fn now(&self) -> Reading {
+    fn now(&self) -> Result<Reading, ClockFault> {
         self.sampled.now()
     }
 
-    fn wait(&self, stamped: Reading) -> impl Future<Output = ()> + Send {
+    fn wait(&self, stamped: Reading) -> impl Future<Output = Result<(), ClockFault>> + Send {
         wall::wait(self, stamped)
     }
 }

@@ -6,6 +6,10 @@
 //! [`Clock::wait`] has seen the clock's `settled` time pass the stamp. Any
 //! write that starts after the acknowledgement then gets a later revision,
 //! wherever it runs.
+//!
+//! A clock that finds its bound can't be trusted reports a [`ClockFault`]
+//! instead of a reading. The node refuses to stamp until the clock
+//! recovers, and another node takes the write.
 
 /// Each write produces the next revision, and a read at a revision sees
 /// every fact written at or before it.
@@ -21,12 +25,48 @@ pub struct Reading {
     pub revision: Revision,
 }
 
+/// Why a clock can't give a reading it trusts.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, thiserror::Error)]
+pub enum ClockFault {
+    /// The system clock stepped `by` nanoseconds against the monotonic
+    /// clock, as when a virtual machine is paused or moved.
+    #[error("the system clock jumped by {by} ns")]
+    Jumped { by: i64 },
+    /// A new sample doesn't overlap the earlier ones, so the clock drifted
+    /// faster than its allowance.
+    #[error("the clock drifted faster than its allowance")]
+    Drifted,
+    /// Another node stamped `seen`, which this clock reads as not yet
+    /// arrived.
+    #[error("revision {seen:?} was stamped elsewhere, but this clock reads {revision:?}")]
+    Behind { seen: Revision, revision: Revision },
+    /// The clock isn't synchronized, or its bound grew past the most a
+    /// write should wait.
+    #[error("the clock isn't synchronized")]
+    Unsynchronized,
+}
+
 /// Reads the revision clock. Implementations live in their own crates;
 /// the writer ports call one inside a commit, and the domain never does.
 pub trait Clock {
     /// A reading that brackets true time.
-    fn now(&self) -> Reading;
+    fn now(&self) -> Result<Reading, ClockFault>;
 
-    /// Resolves once the clock's `settled` time is past `stamped.revision`.
-    fn wait(&self, stamped: Reading) -> impl Future<Output = ()> + Send;
+    /// Resolves once the clock's `settled` time is past `stamped.revision`,
+    /// or with the fault that stopped the wait.
+    fn wait(&self, stamped: Reading) -> impl Future<Output = Result<(), ClockFault>> + Send;
+
+    /// Checks a revision another node stamped, such as one a revision
+    /// token carries. A revision past this clock's `revision` is one true
+    /// time can't have reached yet, so one of the two clocks is wrong.
+    fn observe(&self, seen: Revision) -> Result<(), ClockFault> {
+        let now = self.now()?;
+        if seen > now.revision {
+            return Err(ClockFault::Behind {
+                seen,
+                revision: now.revision,
+            });
+        }
+        Ok(())
+    }
 }

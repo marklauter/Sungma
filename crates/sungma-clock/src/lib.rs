@@ -46,4 +46,6 @@ pub enum ClockError {
     Disagree,
     #[error("the Windows Time service reports no bound")]
     Unsynchronized,
+    #[error(transparent)]
+    Fault(#[from] sungma::clock::ClockFault),
 }

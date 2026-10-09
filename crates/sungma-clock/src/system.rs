@@ -2,7 +2,7 @@
 
 use std::{future::Future, net::ToSocketAddrs};
 
-use sungma::clock::{Clock, Reading};
+use sungma::clock::{Clock, ClockFault, Reading};
 
 #[cfg(target_os = "linux")]
 use crate::LinuxClock;
@@ -52,7 +52,7 @@ impl SystemClock {
 }
 
 impl Clock for SystemClock {
-    fn now(&self) -> Reading {
+    fn now(&self) -> Result<Reading, ClockFault> {
         match self {
             #[cfg(target_os = "linux")]
             Self::Linux(clock) => clock.now(),
@@ -62,7 +62,7 @@ impl Clock for SystemClock {
         }
     }
 
-    fn wait(&self, stamped: Reading) -> impl Future<Output = ()> + Send {
+    fn wait(&self, stamped: Reading) -> impl Future<Output = Result<(), ClockFault>> + Send {
         wall::wait(self, stamped)
     }
 }
