@@ -240,14 +240,24 @@ impl Write for Deadline {
 /// `deadline`. Each gets an equal share of the time left, the last all of
 /// it, so an address that drops packets can't starve a working one.
 fn connect(addresses: &[SocketAddr], deadline: Instant) -> Result<TcpStream, ClockError> {
+    first(addresses, deadline, TcpStream::connect_timeout)
+}
+
+/// The first of `addresses` that `attempt` succeeds with, given each its
+/// share of the time left before `deadline`.
+fn first<T>(
+    addresses: &[SocketAddr],
+    deadline: Instant,
+    mut attempt: impl FnMut(&SocketAddr, Duration) -> io::Result<T>,
+) -> Result<T, ClockError> {
     let mut failed = ClockError::NoServers;
     for (at, address) in addresses.iter().enumerate() {
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
             break;
         }
-        match TcpStream::connect_timeout(address, share(left, addresses.len() - at)) {
-            Ok(socket) => return Ok(socket),
+        match attempt(address, share(left, addresses.len() - at)) {
+            Ok(connected) => return Ok(connected),
             Err(error) => failed = error.into(),
         }
     }
@@ -708,6 +718,29 @@ mod tests {
         let sealed = authenticator(&cipher(2), random(), &garbled, &[0, 1, 0, 3]);
         garbled.extend(sealed);
         refused(&garbled, &mut association);
+    }
+
+    #[test]
+    fn the_last_address_gets_all_the_time_left() {
+        let addresses: Vec<SocketAddr> = vec![
+            "192.0.2.1:4460".parse().unwrap(),
+            "192.0.2.2:4460".parse().unwrap(),
+        ];
+        let mut given = Vec::new();
+        let failed = first(
+            &addresses,
+            Instant::now() + Duration::from_secs(10),
+            |_, share| {
+                given.push(share);
+                Err::<(), _>(io::ErrorKind::ConnectionRefused.into())
+            },
+        );
+        assert!(failed.is_err());
+        let secs: Vec<_> = given
+            .iter()
+            .map(|share| share.as_secs_f64().round())
+            .collect();
+        assert_eq!(secs, [5.0, 10.0]);
     }
 
     #[test]

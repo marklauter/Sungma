@@ -19,6 +19,8 @@ exclude_re = [
     'linux\.rs:.*replace read ->',
     # Compiled only by cargo-fuzz, which builds with --cfg fuzzing.
     "fuzz_answer",
+    # Compiled only off Linux, and CI runs mutants on Linux.
+    "replace since_start -> u64",
     # The next read drives any TLS bytes a no-op flush leaves pending, so
     # no test can tell the difference.
     "impl Write for Deadline>::flush",

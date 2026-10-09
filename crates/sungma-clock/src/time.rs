@@ -92,12 +92,15 @@ impl TimeSource for OsTime {
     }
 
     fn monotonic(&self) -> u64 {
-        monotonic()
+        #[cfg(target_os = "linux")]
+        return boottime();
+        #[cfg(not(target_os = "linux"))]
+        return since_start();
     }
 }
 
 #[cfg(target_os = "linux")]
-fn monotonic() -> u64 {
+fn boottime() -> u64 {
     // SAFETY: `timespec` holds only integers, so all zeros is a valid value.
     let mut now: libc::timespec = unsafe { std::mem::zeroed() };
     // SAFETY: `now` is a valid `timespec` for `clock_gettime` to write.
@@ -109,7 +112,7 @@ fn monotonic() -> u64 {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn monotonic() -> u64 {
+fn since_start() -> u64 {
     static START: OnceLock<Instant> = OnceLock::new();
     let since = START.get_or_init(Instant::now).elapsed();
     u64::try_from(since.as_nanos()).unwrap_or(u64::MAX)

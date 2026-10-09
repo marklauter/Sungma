@@ -150,8 +150,8 @@ fn measure(samples: &VecDeque<Taken>) -> Option<(i128, i128)> {
         i128::from(taken.at.wall) + i128::from(taken.sample.offset) - i128::from(taken.at.monotonic)
     };
     let mut pairs = Vec::new();
-    for (at, earlier) in samples.iter().enumerate() {
-        for later in samples.iter().skip(at + 1) {
+    for (at, later) in samples.iter().enumerate() {
+        for earlier in samples.iter().take(at) {
             let span = i128::from(later.at.monotonic) - i128::from(earlier.at.monotonic);
             if span <= 0 {
                 continue;
@@ -622,6 +622,20 @@ mod tests {
                 uncertainty: 0,
             },
         }
+    }
+
+    #[test]
+    fn a_pairs_slop_counts_both_bounds_and_both_uncertainties() {
+        // True time minus monotonic time moves 1,000 ns over 1 s, give or
+        // take 100 + 200 + 30 + 70 ns.
+        let mut earlier = taken(7, 2, 500, 100);
+        let mut later = taken(1_000_000_007, 1_000_000_002, 1_500, 200);
+        earlier.at.uncertainty = 30;
+        later.at.uncertainty = 70;
+        assert_eq!(
+            measure(&VecDeque::from([earlier, later])),
+            Some((600, 1_400))
+        );
     }
 
     #[test]
