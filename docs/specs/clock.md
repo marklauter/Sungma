@@ -12,6 +12,8 @@ cites:
 
 # The clock
 
+> **Todo:** this spec has drifted into a spec and plan hybrid. Split the plan parts out (what "isn't built yet", what's deferred, the podman container), then tighten the spec so it documents the clock as it is, not its history or plan.
+
 A clock reads the [[revision-clock]]. It never knows true time, only a reading that brackets it, and a [[revision]] is taken from that reading. [[one-timeline]] orders facts and theories on these revisions.
 
 ## The port
@@ -50,7 +52,7 @@ A clock reads two clocks from a `TimeSource`: the system clock, which a time ser
 
 `moment()` reads the system clock between two readings of the monotonic clock, and takes the monotonic time as their middle. The gap between the two is the moment's uncertainty. It tries up to three times for a gap of 1 ms or less, and keeps the narrowest. A thread descheduled between the reads widens the reading by that uncertainty instead of reporting a jump.
 
-After a sample, true time is read off the monotonic clock, so a step of the system clock doesn't move it. A step of up to 10 ms, plus the uncertainty of the two moments it was measured between, widens the bound by its size. A larger one is a jump.
+After a sample, true time is read off the monotonic clock, so a step of the system clock doesn't move it. A step of up to 10 ms, plus the uncertainty of the two moments it was measured between, widens the bound by its size. A larger one is a jump. Off Linux, the monotonic clock isn't slewed with the system clock, so a divergence within twice the drift allowance since the sample is excused from the jump check, though it still widens the bound.
 
 ## NTP
 
@@ -77,7 +79,7 @@ Servers that offer NTS include `time.cloudflare.com`, `nts.netnod.se`, `ptbtime1
 
 ### A sync
 
-A sync asks every server at once. The clock keeps the range where the most servers agree, as Marzullo's algorithm does, and a server outside it is a falseticker. A sync needs answers from at least three servers, so the servers can outvote one wrong one; with fewer, it fails with `TooFewAnswers` and the window stays as it was. Of `n` answers, up to `(n − 1) / 2` falsetickers are tolerated; past that, the sync fails. A server that answers Kiss-o'-Death is asked less often, as it requests. A kiss over plain NTP isn't authenticated, so an attacker on the path can forge one: it holds a server for at most 1024 s, `DENY` and `RSTR` included, and a sync with fewer than three servers askable asks held servers anyway, those whose holds end soonest, and reports them as overridden. A kiss over NTS is honored as written. Server names are resolved again on each sync, so a pool's addresses can change. A server whose leap indicator announces a leap second is noted.
+A sync asks every server at once. The clock keeps the range where the most servers agree, as Marzullo's algorithm does, and a server outside it is a falseticker. A sync needs answers from at least three servers, so the servers can outvote one wrong one; with fewer, it fails with `TooFewAnswers` and the window stays as it was. Of `n` answers, up to `(n − 1) / 2` falsetickers are tolerated; past that, the sync fails. A server that answers Kiss-o'-Death is asked less often, as it requests. A kiss over plain NTP isn't authenticated, so an attacker on the path can forge one: it holds a server for at most 1024 s, `DENY` and `RSTR` included, a raised poll halves back toward 64 s with each answer, and a sync with fewer than three servers askable asks held servers anyway, those whose holds end soonest, and reports them as overridden. A kiss over NTS is honored as written. Server names are resolved again on each sync, so a pool's addresses can change. Every address a name resolves to is tried in turn, each with an equal share of the time left, so a dead address doesn't starve a working one. Resolving, connecting, sending and receiving all count against a query's 1 s, and against a key exchange's 5 s. Each answer's bound grows by drift from when its reply arrived to when the sample is stored. A server whose leap indicator announces a leap second is noted.
 
 ### The window
 
@@ -93,14 +95,14 @@ The clock keeps a window of the last eight samples. A sample's bound grows by th
 
 Network Time Security, RFC 8915, authenticates NTP. A TLS 1.3 handshake on TCP port 4460 agrees keys and hands the client cookies. Each query, still over UDP port 123, then carries a cookie and an authentication tag, and a forged or altered reply is dropped. NTS doesn't prevent delay, but a delayed reply has a longer round trip, which the bound already counts. NTS replaces the transport; the offset, bound, sync and window stay as they are.
 
-A key exchange finishes within 5 s in all, and its response is refused past 64 KiB. The client keeps at most eight cookies. A reply that doesn't verify is skipped, and the client waits for one that does until the query times out. A server forgets its cookies with an `NTSN` Kiss-o'-Death, which comes unauthenticated: the client honors it only when it echoes the request's unique identifier, and then repeats the key exchange.
+A key exchange finishes within 5 s in all, a deadline that applies to every socket read and write, and its response is refused past 64 KiB. The client keeps at most eight cookies. A reply that doesn't verify is skipped, and the client waits for one that does until the query times out. A server forgets its cookies with an `NTSN` Kiss-o'-Death, which comes unauthenticated: the client honors it only when it echoes the request's unique identifier, and then repeats the key exchange.
 
-`Servers::nts` names NTS servers, checked against Mozilla's roots, and `Servers::new` names plain NTP servers. A list can mix both, but a production list is all NTS.
+`Servers::nts` names NTS servers, checked against Mozilla's roots or, with `trusting_only`, a private root, and `Servers::new` names plain NTP servers. Each server keeps its own roots, so lists joined with `and` keep theirs. A list can mix both, but a production list is all NTS.
 
 ## Clocks
 
 - `SystemClock` is the production clock. At startup it takes the Linux kernel's clock when the kernel reports a bound, and otherwise an `NtpClock`. It is an enum, not a trait object, because `wait` returns `impl Future`.
-- `LinuxClock` reads the kernel's `maxerror` through `adjtimex`. chrony keeps it current, and the kernel grows it by 500 ppm between updates. An unsynchronized kernel faults, since the kernel stops growing `maxerror` at 16 s. Each reading compares the system clock with the monotonic clock since the last, to catch a step the kernel's bound doesn't cover.
+- `LinuxClock` reads the kernel's `maxerror` through `adjtimex`. chrony keeps it current, and the kernel grows it by 500 ppm between updates. An unsynchronized kernel faults, since the kernel stops growing `maxerror` at 16 s. Each reading compares the system clock with the monotonic clock since the last, to catch a step the kernel's bound doesn't cover, and reads the kernel and both clocks under one lock so readings are stored in order. A step stays in the bound of every later reading. It begins to shrink only at the second drop of the kernel's bound after it, since the first may come from a measurement chrony took before the step, and then shrinks at 83,333 ppm, chrony's fastest slew. A divergence within the moments' uncertainty is noise and isn't carried. After a large step the clock can stay `Unsynchronized` for up to two of chrony's polls.
 - `NtpClock` asks the servers directly, and is the only clock on Windows.
 - `DevClock` is a counter with `settled` equal to `revision`, for a single node. Its waits never sleep.
 - `ManualClock`, behind the `test-util` feature, is set by hand to a reading or a fault. A test can hold a write in its commit-wait and then release it.
@@ -143,6 +145,8 @@ A clock whose reading misses true time reverses revisions without an error. A ch
 15. **Platforms.** A workflow, run weekly and by hand, runs the clocks against real time services: `LinuxClock` under chrony, and NTS from the public servers on Linux and Windows.
 16. **Fuzzing.** A `cargo-fuzz` target, and a property test in CI, assert the NTP reply parser never panics on arbitrary input.
 17. **Mutation testing.** `cargo mutants` leaves no surviving mutant in the clock arithmetic.
+
+A Linux container, run with podman, lets a Windows machine compile and test the Linux code locally: clippy on the Linux target, the tests including `LinuxClock`'s and `CLOCK_BOOTTIME`'s, `cargo mutants` on `linux.rs` and `time.rs`, and the `linux_now` benchmarks. A container shares its kernel with podman's virtual machine, so `adjtimex` reads that machine's clock, which the container can't discipline. The weekly workflow stays the test of `LinuxClock` under chrony. The container isn't built yet.
 
 Classes 3 and 4 drive the clocks through `ManualTime`. Commit-wait in a writer, and a read waiting for writes in flight, are tested with the writer ports.
 
