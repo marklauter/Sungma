@@ -15,7 +15,12 @@ The clock that [[clock]] specifies is built in `sungma` (the port) and `sungma-c
 
 - **A ClockBound clock.** AWS ClockBound publishes a bound of microseconds, which would cut commit-wait from tens of milliseconds. It runs as a daemon on the host, and ECS on Fargate has no host to run it on, so it waits for an EC2 deployment. It would be its own `SystemClock` variant, reading ClockBound's shared memory through `clock-bound-client` 2.0.3 behind an opt-in feature; ClockBound 3.0 was still in beta when this was decided.
 - **A soak test.** A long run comparing readings against a reference clock, such as ClockBound or a PTP hardware clock, counting readings whose range misses it. Neither CI nor Fargate has a reference clock, so it waits for EC2 too.
-- **A measured drift rate.** `NtpClock` assumes the worst case, 500 ppm, so its bound grows up to 32 ms between syncs. Estimating the clock's actual rate from the window, as chrony does, would tighten it, since most clocks drift well under 50 ppm.
+- **A measured drift rate.** `NtpClock` assumes the worst case, 500 ppm, so its bound grows up to 32 ms between syncs; most clocks drift well under 50 ppm. Agreed design, for its own branch after the merge:
+  - Measure the rate from the window rigorously, not by a fit. Samples *i* and *j*, Δt apart, put it within ((oⱼ − oᵢ) ± (bᵢ + bⱼ)) / Δt; intersecting that over every pair gives the range the rate must lie in, if it holds steady. Take the edge farthest from zero.
+  - Allowance = that rate × (1 + a margin, around 25–50%, for a rate that creeps) + a floor of 10–20 ppm (for wander as temperature changes), capped at 500 ppm.
+  - Fall back to 500 ppm whenever the window can't measure: fewer than two samples, a baseline too short to beat 500 ppm, or pairs that don't overlap.
+  - Eight samples 64 s apart with ±20 ms bounds span about 512 s and bound the rate to about ±80 ppm, so the sawtooth's climb should shrink several times over.
+  - An underestimate silently reorders revisions, so it gets a spec section and the review loop.
 
 Both the ClockBound clock and the soak test are also in `docs/roadmap.md` under Deferred.
 
