@@ -15,6 +15,7 @@ The clock that [[clock]] specifies is built in `sungma` (the port) and `sungma-c
 
 - **A ClockBound clock.** AWS ClockBound publishes a bound of microseconds, which would cut commit-wait from tens of milliseconds. It runs as a daemon on the host, and ECS on Fargate has no host to run it on, so it waits for an EC2 deployment. It would be its own `SystemClock` variant, reading ClockBound's shared memory through `clock-bound-client` 2.0.3 behind an opt-in feature; ClockBound 3.0 was still in beta when this was decided.
 - **A soak test.** A long run comparing readings against a reference clock, such as ClockBound or a PTP hardware clock, counting readings whose range misses it. Neither CI nor Fargate has a reference clock, so it waits for EC2 too.
+- **NTS from ntp-proto.** ntp-proto is the protocol crate under ntpd-rs, an audited NTP daemon in Rust from the Trifecta Tech Foundation. Its NTS key exchange, AES-SIV extension fields, cookies, NAK check and packet parsing could replace `nts.rs` and the packet code in `ntp.rs`, so the authenticated protocol no longer rests on our own review. The deadlines, size caps, address shares, quorum and Kiss-o'-Death limits stay ours, as do the window and bounds. Before adopting it: whether those parts can be used apart from the daemon, how stable its API is for outside callers, and its audit's scope.
 
 Both the ClockBound clock and the soak test are also in `docs/roadmap.md` under Deferred.
 
