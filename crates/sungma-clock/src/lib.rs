@@ -27,6 +27,8 @@ pub use linux::LinuxClock;
 #[cfg(feature = "test-util")]
 pub use manual::ManualClock;
 pub use ntp::NtpClock;
+#[cfg(fuzzing)]
+pub use ntp::fuzz_answer;
 pub use system::SystemClock;
 #[cfg(feature = "test-util")]
 pub use time::ManualTime;

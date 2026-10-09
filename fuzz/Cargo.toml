@@ -10,6 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 sungma = { path = "../crates/sungma" }
+sungma-clock = { path = "../crates/sungma-clock" }
 sungma-lang = { path = "../crates/sungma-lang" }
 
 [[bin]]
@@ -22,6 +23,13 @@ bench = false
 [[bin]]
 name = "fact"
 path = "fuzz_targets/fact.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ntp"
+path = "fuzz_targets/ntp.rs"
 test = false
 doc = false
 bench = false

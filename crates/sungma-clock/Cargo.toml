@@ -3,6 +3,10 @@ name = "sungma-clock"
 version.workspace = true
 edition.workspace = true
 
+[lints.rust]
+# cargo-fuzz builds with --cfg fuzzing, which exposes the fuzz entry points.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
+
 [features]
 # ManualClock, which a test sets by hand.
 test-util = ["tokio/sync"]
@@ -16,5 +20,6 @@ tokio = { workspace = true, features = ["time"] }
 libc.workspace = true
 
 [dev-dependencies]
+proptest.workspace = true
 sungma-clock = { path = ".", features = ["test-util"] }
 tokio = { workspace = true, features = ["macros", "rt", "time"] }

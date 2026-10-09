@@ -157,14 +157,17 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_detected_clock_reads_the_system_clock_within_its_bound() {
+    #[tokio::test]
+    async fn a_detected_clock_reads_the_system_clock_and_waits_it_out() {
         if let Some(clock) = LinuxClock::detect() {
             let before = wall::wall_nanos();
             let now = clock.now().unwrap();
             let after = wall::wall_nanos();
             assert!(now.settled.0 <= after && before <= now.revision.0);
             assert!((1..=2 * MAX_BOUND).contains(&(now.revision.0 - now.settled.0)));
+            let waited = tokio::time::timeout(Duration::from_secs(5), clock.wait(now)).await;
+            waited.unwrap().unwrap();
+            assert!(clock.now().unwrap().settled > now.revision);
         }
     }
 }

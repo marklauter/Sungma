@@ -9,7 +9,9 @@ use std::{
 };
 
 use sungma::clock::{Clock, ClockFault, Reading, Revision};
-use sungma_clock::{ClockError, DevClock, ManualClock, ManualTime, NtpClock, SystemClock};
+use sungma_clock::{
+    ClockError, DevClock, ManualClock, ManualTime, NtpClock, SystemClock, TimeSource,
+};
 use tokio::time::timeout;
 
 const SECOND: u64 = 1_000_000_000;
@@ -202,7 +204,10 @@ fn a_resync_that_disagrees_is_a_drift_and_starts_the_window_over() {
 async fn an_ntp_clock_waits_until_settled_passes() {
     let clock = NtpClock::sync(&[server("127.0.0.1:0", vec![0])]).unwrap();
     let stamped = clock.now().unwrap();
-    clock.wait(stamped).await.unwrap();
+    timeout(Duration::from_secs(5), clock.wait(stamped))
+        .await
+        .unwrap()
+        .unwrap();
     assert!(clock.now().unwrap().settled > stamped.revision);
 }
 
@@ -217,7 +222,10 @@ async fn the_system_clock_reads_true_time_and_waits_it_out() {
         now.settled.0 <= wall() && before <= now.revision.0,
         "{now:?}"
     );
-    clock.wait(now).await.unwrap();
+    timeout(Duration::from_secs(5), clock.wait(now))
+        .await
+        .unwrap()
+        .unwrap();
     assert!(clock.now().unwrap().settled > now.revision);
 }
 
@@ -258,7 +266,86 @@ fn an_ntp_clock_reads_its_time_source() {
     assert!(reading(&clock).abs_diff(start + 3 * SECOND) <= 1);
     time.advance(Duration::from_secs(1));
     assert!(reading(&clock).abs_diff(start + 4 * SECOND) <= 1);
-    // A step of the system clock alone leaves true time where it was.
-    time.step(5_000_000);
-    assert!(reading(&clock).abs_diff(start + 4 * SECOND) <= 1);
+}
+
+#[test]
+fn a_small_step_either_way_widens_the_reading_by_its_size() {
+    for by in [5_000_000, -5_000_000] {
+        let (time, clock) = driven(1);
+        let before = clock.now().unwrap();
+        time.step(by);
+        let after = clock.now().unwrap();
+        // True time follows the monotonic clock, so the reading stays put
+        // and widens by 5 ms on each side.
+        assert_eq!(after.settled.0, before.settled.0 - 5_000_000);
+        assert_eq!(after.revision.0, before.revision.0 + 5_000_000);
+    }
+}
+
+/// An NTP clock on clocks a test drives, synced to a server in step with
+/// true time that answers `answers` times.
+fn driven(answers: usize) -> (Arc<ManualTime>, NtpClock<Arc<ManualTime>>) {
+    let time = Arc::new(ManualTime::new(wall()));
+    let server = server("127.0.0.1:0", vec![0; answers]);
+    let clock = NtpClock::sync_with(&[server], time.clone()).unwrap();
+    (time, clock)
+}
+
+#[test]
+fn a_step_either_way_faults_the_clock_until_a_resync() {
+    for by in [20_000_000, -20_000_000] {
+        let (time, clock) = driven(2);
+        time.step(by);
+        assert_eq!(clock.now(), Err(ClockFault::Jumped { by }));
+        clock.resync().unwrap();
+        assert!(clock.now().is_ok());
+    }
+}
+
+#[test]
+fn a_suspend_the_monotonic_clock_misses_is_a_jump() {
+    let (time, clock) = driven(2);
+    // The system clock catches up after a minute asleep; a monotonic clock
+    // that stopped during the suspend didn't count it.
+    time.step(60_000_000_000);
+    assert_eq!(clock.now(), Err(ClockFault::Jumped { by: 60_000_000_000 }));
+    clock.resync().unwrap();
+    assert!(clock.now().is_ok());
+}
+
+#[test]
+fn a_suspend_the_monotonic_clock_counts_widens_the_bound() {
+    let (time, clock) = driven(1);
+    let before = clock.now().unwrap();
+    time.advance(Duration::from_secs(60));
+    let after = clock.now().unwrap();
+    let width = |reading: Reading| reading.revision.0 - reading.settled.0;
+    // A minute of drift at 500 ppm is 30 ms each side.
+    assert_eq!(width(after) - width(before), 60_000_000);
+    // The server is in step with the system clock, which is true time.
+    assert!(after.settled.0 <= time.wall() && time.wall() <= after.revision.0);
+}
+
+#[test]
+fn a_failed_resync_leaves_the_bound_growing_from_each_sample() {
+    let (time, clock) = driven(1);
+    let width = |reading: Reading| reading.revision.0 - reading.settled.0;
+    let before = width(clock.now().unwrap());
+    time.advance(Duration::from_secs(10));
+    assert!(matches!(clock.resync(), Err(ClockError::Io(_))));
+    // Ten seconds of drift since the sample: 5 ms each side.
+    assert_eq!(width(clock.now().unwrap()) - before, 10_000_000);
+}
+
+#[tokio::test]
+async fn a_long_outage_refuses_writes_instead_of_hanging_them() {
+    let (time, clock) = driven(1);
+    let stamped = clock.now().unwrap();
+    // 35 minutes without a sample: drift alone passes a one-second bound.
+    time.advance(Duration::from_secs(35 * 60));
+    assert_eq!(clock.now(), Err(ClockFault::Unsynchronized));
+    let wait = timeout(Duration::from_secs(1), clock.wait(stamped)).await;
+    assert_eq!(wait.unwrap(), Err(ClockFault::Unsynchronized));
+    assert!(matches!(clock.resync(), Err(ClockError::Io(_))));
+    assert_eq!(clock.now(), Err(ClockFault::Unsynchronized));
 }

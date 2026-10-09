@@ -17,4 +17,6 @@ exclude_re = [
     "impl Visitor<'de> for (Text|Json|Leaf)Visitor(<V>)?>::expecting",
     # The adjtimex call itself: what it returns depends on the host's sync.
     'linux\.rs:.*replace read ->',
+    # Compiled only by cargo-fuzz, which builds with --cfg fuzzing.
+    "fuzz_answer",
 ]

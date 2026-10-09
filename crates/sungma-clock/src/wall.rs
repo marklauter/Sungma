@@ -34,8 +34,12 @@ const WINDOW: usize = 8;
 
 /// Nanoseconds since the Unix epoch, by the system clock.
 pub(crate) fn wall_nanos() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
+    since_epoch(SystemTime::now())
+}
+
+/// Nanoseconds from the Unix epoch to `time`, or 0 for a time before it.
+fn since_epoch(time: SystemTime) -> u64 {
+    time.duration_since(UNIX_EPOCH)
         .map_or(0, |since| saturate(since.as_nanos()))
 }
 
@@ -79,19 +83,22 @@ pub(crate) fn nanos(elapsed: Duration) -> i128 {
     i128::from(saturate(elapsed.as_nanos()))
 }
 
-/// How long until a clock whose settled time is `settled` passes
-/// `revision`, or `None` once it has.
-pub(crate) fn until_past(settled: Revision, revision: Revision) -> Option<Duration> {
-    (settled <= revision).then(|| Duration::from_nanos(revision.0 - settled.0 + 1))
+/// How long until a clock whose settled time is `settled`, at or before
+/// `revision`, passes it.
+pub(crate) fn until_past(settled: Revision, revision: Revision) -> Duration {
+    Duration::from_nanos(revision.0.saturating_sub(settled.0) + 1)
 }
 
 /// Sleeps until `clock`'s settled time is past `stamped.revision`. A bound
 /// that grows during a sleep takes another, and a fault ends the wait.
 pub(crate) async fn wait(clock: &(impl Clock + Sync), stamped: Reading) -> Result<(), ClockFault> {
-    while let Some(wait) = until_past(clock.now()?.settled, stamped.revision) {
-        tokio::time::sleep(wait).await;
+    loop {
+        let settled = clock.now()?.settled;
+        if settled > stamped.revision {
+            return Ok(());
+        }
+        tokio::time::sleep(until_past(settled, stamped.revision)).await;
     }
-    Ok(())
 }
 
 /// The system clock's error when sampled: true time is the system clock
@@ -236,6 +243,91 @@ mod tests {
     }
 
     #[test]
+    fn a_system_clock_before_1970_reads_as_zero() {
+        assert_eq!(since_epoch(UNIX_EPOCH - Duration::from_secs(1)), 0);
+        // Windows keeps system time in 100 ns ticks.
+        assert_eq!(since_epoch(UNIX_EPOCH + Duration::from_nanos(700)), 700);
+    }
+
+    /// A clock that reads from a script, one result per reading, and then
+    /// keeps the last.
+    struct Scripted(Mutex<Vec<Result<Reading, ClockFault>>>);
+
+    impl Scripted {
+        fn new(readings: &[Result<(u64, u64), ClockFault>]) -> Self {
+            let readings = readings.iter().rev().map(|reading| {
+                reading.map(|(settled, revision)| Reading {
+                    settled: Revision(settled),
+                    revision: Revision(revision),
+                })
+            });
+            Self(Mutex::new(readings.collect()))
+        }
+
+        fn left(&self) -> usize {
+            self.0.lock().unwrap().len()
+        }
+    }
+
+    impl Clock for Scripted {
+        fn now(&self) -> Result<Reading, ClockFault> {
+            let mut script = self.0.lock().unwrap();
+            if script.len() > 1 {
+                script.pop().unwrap()
+            } else {
+                script[0]
+            }
+        }
+
+        fn wait(&self, stamped: Reading) -> impl Future<Output = Result<(), ClockFault>> + Send {
+            wait(self, stamped)
+        }
+    }
+
+    fn stamped(revision: u64) -> Reading {
+        Reading {
+            settled: Revision(0),
+            revision: Revision(revision),
+        }
+    }
+
+    /// Waits on a stamp at `revision`, failing a wait that doesn't end.
+    async fn waited(clock: &Scripted, revision: u64) -> Result<(), ClockFault> {
+        let wait = clock.wait(stamped(revision));
+        tokio::time::timeout(Duration::from_secs(1), wait)
+            .await
+            .expect("the wait ends")
+    }
+
+    #[tokio::test]
+    async fn a_wait_sleeps_again_when_the_bound_grows_during_a_sleep() {
+        let clock = Scripted::new(&[Ok((10, 20)), Ok((12, 30)), Ok((15, 40)), Ok((99, 99))]);
+        assert_eq!(waited(&clock, 14).await, Ok(()));
+        assert_eq!(clock.left(), 1);
+        assert_eq!(clock.now().unwrap().settled, Revision(99));
+    }
+
+    #[tokio::test]
+    async fn a_wait_on_a_stamp_equal_to_settled_sleeps() {
+        let clock = Scripted::new(&[Ok((14, 20)), Ok((15, 20)), Ok((0, 0))]);
+        assert_eq!(waited(&clock, 14).await, Ok(()));
+        assert_eq!(clock.left(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_wait_on_a_passed_stamp_reads_once() {
+        let clock = Scripted::new(&[Ok((15, 20)), Ok((0, 0))]);
+        assert_eq!(waited(&clock, 14).await, Ok(()));
+        assert_eq!(clock.left(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_fault_during_a_wait_ends_it() {
+        let clock = Scripted::new(&[Ok((10, 20)), Err(ClockFault::Drifted)]);
+        assert_eq!(waited(&clock, 14).await, Err(ClockFault::Drifted));
+    }
+
+    #[test]
     fn drift_is_500_parts_per_million() {
         assert_eq!(drift(Duration::from_secs(2)), 1_000_000);
         assert_eq!(drift(Duration::ZERO), 0);
@@ -311,9 +403,8 @@ mod tests {
     #[test]
     fn a_wait_lasts_until_settled_is_one_past() {
         let wait = |settled, revision| until_past(Revision(settled), Revision(revision));
-        assert_eq!(wait(10, 14), Some(Duration::from_nanos(5)));
-        assert_eq!(wait(14, 14), Some(Duration::from_nanos(1)));
-        assert_eq!(wait(15, 14), None);
+        assert_eq!(wait(10, 14), Duration::from_nanos(5));
+        assert_eq!(wait(14, 14), Duration::from_nanos(1));
     }
 
     #[test]
@@ -391,5 +482,223 @@ mod tests {
     fn a_window_too_wide_is_unsynchronized() {
         let sampled = Sampled::new(sample(0, 2 * MAX_BOUND), OsTime);
         assert_eq!(sampled.now(), Err(ClockFault::Unsynchronized));
+    }
+}
+
+/// The clocks against a model of true time: nodes whose clocks drift and
+/// step within what a sample allows, and whose samples are honest.
+#[cfg(test)]
+mod simulation {
+    use std::sync::Arc;
+
+    use proptest::{collection::vec, prelude::*, test_runner::RngSeed};
+
+    use super::*;
+    use crate::ManualTime;
+
+    const MS: i64 = 1_000_000;
+
+    /// A fixed seed, so a failure reproduces from the seed proptest prints.
+    fn config() -> ProptestConfig {
+        ProptestConfig {
+            rng_seed: RngSeed::Fixed(20_261_008),
+            // A broken clock fails fast instead of shrinking for minutes.
+            max_shrink_iters: 64,
+            ..ProptestConfig::default()
+        }
+    }
+
+    /// 2026-10-08T00:00:00Z.
+    const START: i128 = 1_791_417_600_000_000_000;
+
+    /// How far a node's monotonic clock may run from true time over
+    /// `elapsed`, kept just inside the drift allowance.
+    fn honest_drift(elapsed: u64) -> u64 {
+        elapsed * 499 / 1_000_000
+    }
+
+    /// A node: its clocks, its sampling clock, and its drift, from -1 to 1
+    /// of the allowance.
+    struct Node {
+        time: Arc<ManualTime>,
+        clock: Sampled<Arc<ManualTime>>,
+        drift: f64,
+    }
+
+    impl Node {
+        /// A node whose system clock is `offset` behind true time `now`,
+        /// sampled with an error of `error` (from -1 to 1) of `bound`.
+        fn new(now: i128, offset: i64, bound: u64, error: f64, drift: f64) -> Self {
+            let wall = u64::try_from(now - i128::from(offset)).unwrap();
+            let time = Arc::new(ManualTime::new(wall));
+            let clock = Sampled::new(sample(offset, bound, error), time.clone());
+            Self { time, clock, drift }
+        }
+
+        /// True time passes `by` nanoseconds; this node's clocks count
+        /// that, give or take its drift.
+        fn pass(&self, by: u64) {
+            let drift = (self.drift * honest_drift(by) as f64) as i64;
+            self.time
+                .advance(Duration::from_nanos(by.saturating_add_signed(drift)));
+        }
+
+        /// How far behind true time `now` the system clock is.
+        fn offset(&self, now: i128) -> i64 {
+            i64::try_from(now - i128::from(self.time.wall())).unwrap()
+        }
+    }
+
+    fn sample(offset: i64, bound: u64, error: f64) -> Sample {
+        Sample {
+            offset: offset + (error * bound as f64) as i64,
+            bound,
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    enum Event {
+        /// True time passes this many milliseconds.
+        Pass(u64),
+        /// The system clock steps this many nanoseconds.
+        Step(i64),
+        /// A fresh sample, with this error and bound.
+        Resync(f64, u64),
+    }
+
+    fn events() -> impl Strategy<Value = Vec<Event>> {
+        let event = prop_oneof![
+            (0u64..600_000).prop_map(Event::Pass),
+            (-12 * MS..12 * MS).prop_map(Event::Step),
+            (-1.0..1.0, 1_000u64..100_000_000).prop_map(|(e, b)| Event::Resync(e, b)),
+        ];
+        vec(event, 1..30)
+    }
+
+    proptest! {
+        #![proptest_config(config())]
+
+        /// Every reading contains true time, or the clock reports why it
+        /// can't: a step past 10 ms since its newest sample, or a bound
+        /// past a second. Honest samples never disagree.
+        #[test]
+        fn a_reading_contains_true_time(
+            offset in -10_000 * MS..10_000 * MS,
+            bound in 1_000u64..100_000_000,
+            error in -1.0..1.0f64,
+            drift in -1.0..1.0f64,
+            events in events(),
+        ) {
+            let mut now = START;
+            let node = Node::new(now, offset, bound, error, drift);
+            let mut stepped = 0i64;
+            for event in events {
+                match event {
+                    Event::Pass(ms) => {
+                        node.pass(ms * 1_000_000);
+                        now += i128::from(ms) * 1_000_000;
+                    }
+                    Event::Step(by) => {
+                        node.time.step(by);
+                        stepped += by;
+                    }
+                    Event::Resync(error, bound) => {
+                        let fresh = sample(node.offset(now), bound, error);
+                        prop_assert_eq!(node.clock.add(fresh), Ok(()));
+                        stepped = 0;
+                    }
+                }
+                match node.clock.now() {
+                    Ok(reading) => {
+                        prop_assert!(stepped.unsigned_abs() <= MAX_STEP);
+                        let (settled, revision) = (reading.settled.0, reading.revision.0);
+                        prop_assert!(i128::from(settled) <= now && now <= i128::from(revision));
+                    }
+                    Err(ClockFault::Jumped { by }) => {
+                        prop_assert!(stepped.unsigned_abs() > MAX_STEP);
+                        prop_assert_eq!(by, stepped);
+                    }
+                    Err(ClockFault::Unsynchronized) => {
+                        prop_assert!(stepped.unsigned_abs() <= MAX_STEP);
+                    }
+                    Err(other) => prop_assert!(false, "{other:?}"),
+                }
+            }
+        }
+
+        /// Commit-wait across nodes, with writes that overlap: each write
+        /// stamps its node's revision when it starts, and is acknowledged
+        /// once that node's settled time passes it. For every pair where
+        /// one write starts after the other is acknowledged, the later
+        /// write has the greater revision, whichever nodes they run on.
+        #[test]
+        fn a_later_write_gets_a_later_revision(
+            nodes in vec(
+                (-10_000 * MS..10_000 * MS, 1_000u64..50_000_000, -1.0..1.0f64, -1.0..1.0f64),
+                2..5,
+            ),
+            history in vec(prop_oneof![
+                (0usize..5).prop_map(Some),
+                Just(None),
+            ], 2..40),
+        ) {
+            let mut now = START;
+            let nodes: Vec<_> = nodes
+                .into_iter()
+                .map(|(offset, bound, error, drift)| Node::new(now, offset, bound, error, drift))
+                .collect();
+            // Each write: its node, revision, start, and acknowledgement.
+            let mut writes: Vec<(usize, Revision, i128, Option<i128>)> = Vec::new();
+            let settle = |now: i128, writes: &mut Vec<(usize, Revision, i128, Option<i128>)>| {
+                for (node, revision, _, acknowledged) in writes.iter_mut() {
+                    if acknowledged.is_none() && nodes[*node].clock.now().unwrap().settled > *revision {
+                        *acknowledged = Some(now);
+                    }
+                }
+            };
+            for event in history.into_iter().map(Some).chain(std::iter::repeat_n(None, 200)) {
+                match event {
+                    Some(Some(pick)) => {
+                        let node = pick % nodes.len();
+                        let revision = nodes[node].clock.now().unwrap().revision;
+                        writes.push((node, revision, now, None));
+                    }
+                    // A millisecond of true time passes on every node.
+                    Some(None) | None => {
+                        for node in &nodes {
+                            node.pass(1_000_000);
+                        }
+                        now += 1_000_000;
+                    }
+                }
+                settle(now, &mut writes);
+            }
+            for (_, earlier, _, acknowledged) in &writes {
+                let acknowledged = acknowledged.expect("every write is acknowledged");
+                for (_, later, started, _) in &writes {
+                    if *started >= acknowledged {
+                        prop_assert!(later > earlier, "{later:?} started after {earlier:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// The same order fails for a node whose sample claims less error than
+    /// it has: its stamps can fall behind writes already acknowledged.
+    #[test]
+    fn a_node_outside_its_bound_can_stamp_an_earlier_revision() {
+        let now = START;
+        let honest = Node::new(now, 0, MS as u64, 0.0, 0.0);
+        // 50 ms behind, sampled as if exact, with a 1 ms bound.
+        let liar = Node::new(now, 50 * MS, MS as u64, -50.0, 0.0);
+        let stamped = honest.clock.now().unwrap();
+        for _ in 0..10 {
+            honest.pass(1_000_000);
+            liar.pass(1_000_000);
+        }
+        assert!(honest.clock.now().unwrap().settled > stamped.revision);
+        let later = liar.clock.now().unwrap();
+        assert!(later.revision < stamped.revision, "{later:?} {stamped:?}");
     }
 }

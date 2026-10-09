@@ -149,6 +149,24 @@ fn answer(reply: &[u8], sent: u64, received: u64) -> Result<Sample, ClockError> 
     })
 }
 
+/// Runs the reply parser on arbitrary bytes, for the fuzzer. The first 16
+/// bytes are the send and receive times. When the first of them is odd,
+/// the reply's origin is set to match the send time, so the arithmetic
+/// past that check is reached too.
+#[cfg(fuzzing)]
+pub fn fuzz_answer(data: &[u8]) {
+    let Some((times, reply)) = data.split_first_chunk::<16>() else {
+        return;
+    };
+    let sent = u64::from_le_bytes(times[..8].try_into().expect("8 bytes"));
+    let received = u64::from_le_bytes(times[8..].try_into().expect("8 bytes"));
+    let mut reply = reply.to_vec();
+    if sent % 2 == 1 && reply.len() >= 32 {
+        reply[24..32].copy_from_slice(&to_ntp(sent).to_be_bytes());
+    }
+    let _ = answer(&reply, sent, received);
+}
+
 /// NTP's short format, 16.16 fixed-point seconds, in nanoseconds.
 fn short(value: u32) -> i128 {
     (i128::from(value) * NANOS) >> 16
@@ -199,10 +217,89 @@ fn intersect(samples: &[Sample]) -> Result<Sample, ClockError> {
 
 #[cfg(test)]
 mod tests {
+    use proptest::{collection::vec, prelude::*};
+
     use super::*;
 
     /// 2026-10-08T00:00:00Z.
     const NOW: u64 = 1_791_417_600_000_000_000;
+
+    /// 2100-01-01T00:00:00Z, in NTP's second era.
+    const LATER: u64 = 4_102_444_800_000_000_000;
+
+    fn samples() -> impl Strategy<Value = Vec<Sample>> {
+        let sample = (
+            -1_000_000_000_000i64..1_000_000_000_000,
+            0u64..10_000_000_000,
+        )
+            .prop_map(|(offset, bound)| Sample { offset, bound });
+        vec(sample, 1..6)
+    }
+
+    fn range(sample: &Sample) -> (i128, i128) {
+        let (offset, bound) = (i128::from(sample.offset), i128::from(sample.bound));
+        (offset - bound, offset + bound)
+    }
+
+    proptest! {
+        #[test]
+        fn a_timestamp_round_trips_in_either_era(nanos in 0..LATER) {
+            let back = from_ntp(to_ntp(nanos), nanos);
+            prop_assert!((back - i128::from(nanos)).abs() <= 1);
+        }
+
+        #[test]
+        fn a_timestamp_reads_back_from_up_to_68_years_away(
+            nanos in NOW..LATER,
+            away in -2_000_000_000i64..2_000_000_000,
+        ) {
+            let near = nanos.saturating_add_signed(away * 1_000_000_000);
+            let back = from_ntp(to_ntp(nanos), near);
+            prop_assert!((back - i128::from(nanos)).abs() <= 1);
+        }
+
+        #[test]
+        fn the_intersection_is_inside_every_range(samples in samples()) {
+            let low = samples.iter().map(|s| range(s).0).max().unwrap();
+            let high = samples.iter().map(|s| range(s).1).min().unwrap();
+            match intersect(&samples) {
+                Ok(met) => {
+                    prop_assert!(low <= high);
+                    for sample in &samples {
+                        let (l, h) = range(sample);
+                        prop_assert!((l..=h).contains(&i128::from(met.offset)));
+                    }
+                    // The met range covers the intersection, rounding up by
+                    // at most a nanosecond.
+                    let (l, h) = range(&met);
+                    prop_assert!(l <= low && high <= h && (h - l) - (high - low) <= 1);
+                }
+                Err(ClockError::Disagree) => prop_assert!(low > high),
+                Err(other) => prop_assert!(false, "{other:?}"),
+            }
+        }
+
+        #[test]
+        fn the_intersection_doesnt_depend_on_order(samples in samples()) {
+            let mut reversed = samples.clone();
+            reversed.reverse();
+            prop_assert_eq!(intersect(&samples).ok(), intersect(&reversed).ok());
+        }
+
+        #[test]
+        fn any_reply_is_parsed_or_refused_without_panicking(
+            bytes in vec(any::<u8>(), 0..64),
+            sent: u64,
+            received: u64,
+            origin_matches: bool,
+        ) {
+            let mut bytes = bytes;
+            if origin_matches && bytes.len() >= 32 {
+                bytes[24..32].copy_from_slice(&to_ntp(sent).to_be_bytes());
+            }
+            let _ = answer(&bytes, sent, received);
+        }
+    }
 
     fn reply(origin: u64, receive: u64, transmit: u64) -> [u8; PACKET] {
         let mut packet = [0; PACKET];
