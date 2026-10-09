@@ -6,8 +6,6 @@ use sungma::clock::{Clock, ClockFault, Reading};
 
 #[cfg(target_os = "linux")]
 use crate::LinuxClock;
-#[cfg(windows)]
-use crate::WindowsClock;
 use crate::{ClockError, NtpClock, wall};
 
 /// The platform's clock when it reports a bound, else NTP. An enum rather
@@ -18,8 +16,6 @@ use crate::{ClockError, NtpClock, wall};
 pub enum SystemClock {
     #[cfg(target_os = "linux")]
     Linux(LinuxClock),
-    #[cfg(windows)]
-    Windows(WindowsClock),
     Ntp(NtpClock),
 }
 
@@ -31,10 +27,6 @@ impl SystemClock {
         if let Some(clock) = LinuxClock::detect() {
             return Ok(Self::Linux(clock));
         }
-        #[cfg(windows)]
-        if let Some(clock) = WindowsClock::detect() {
-            return Ok(Self::Windows(clock));
-        }
         NtpClock::sync(servers).map(Self::Ntp)
     }
 
@@ -44,8 +36,6 @@ impl SystemClock {
         match self {
             #[cfg(target_os = "linux")]
             Self::Linux(_) => Ok(()),
-            #[cfg(windows)]
-            Self::Windows(clock) => clock.refresh(),
             Self::Ntp(clock) => clock.resync(),
         }
     }
@@ -56,8 +46,6 @@ impl Clock for SystemClock {
         match self {
             #[cfg(target_os = "linux")]
             Self::Linux(clock) => clock.now(),
-            #[cfg(windows)]
-            Self::Windows(clock) => clock.now(),
             Self::Ntp(clock) => clock.now(),
         }
     }

@@ -1,8 +1,8 @@
 //! Implementations of [`sungma::clock::Clock`].
 //!
-//! [`SystemClock`] is the production clock: the platform's own bound where
-//! the platform reports one, Linux through the kernel and Windows through
-//! the Windows Time service, and [`NtpClock`] where it doesn't.
+//! [`SystemClock`] is the production clock: the Linux kernel's own bound
+//! where it reports one, and [`NtpClock`] everywhere else, Windows
+//! included.
 //! [`DevClock`] is a counter for a single node, and `ManualClock`, behind
 //! the `test-util` feature, is set by hand.
 //!
@@ -16,10 +16,7 @@ mod linux;
 mod manual;
 mod ntp;
 mod system;
-mod w32tm;
 mod wall;
-#[cfg(windows)]
-mod windows;
 
 use std::io;
 
@@ -30,8 +27,6 @@ pub use linux::LinuxClock;
 pub use manual::ManualClock;
 pub use ntp::NtpClock;
 pub use system::SystemClock;
-#[cfg(windows)]
-pub use windows::WindowsClock;
 
 /// Why a clock couldn't take a sample.
 #[derive(Debug, thiserror::Error)]
@@ -44,8 +39,6 @@ pub enum ClockError {
     Reply(&'static str),
     #[error("NTP servers disagree: their ranges don't overlap")]
     Disagree,
-    #[error("the Windows Time service reports no bound")]
-    Unsynchronized,
     #[error(transparent)]
     Fault(#[from] sungma::clock::ClockFault),
 }
