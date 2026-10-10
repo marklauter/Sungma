@@ -12,6 +12,7 @@ libfuzzer-sys = "0.4"
 sungma = { path = "../crates/sungma" }
 sungma-clock = { path = "../crates/sungma-clock" }
 sungma-lang = { path = "../crates/sungma-lang" }
+sungma-memory = { path = "../crates/sungma-memory" }
 
 [[bin]]
 name = "document"

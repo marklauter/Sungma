@@ -11,7 +11,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use sungma::clock::{Clock, ClockFault, Reading, Revision};
+use sungma::revision::Revision;
+use sungma_clock::{Clock, ClockFault, Reading};
 use sungma_clock::{
     ClockError, DevClock, FaultCounts, Leap, ManualClock, ManualTime, NtpClock, Refresh, Servers,
     SystemClock, TimeSource,

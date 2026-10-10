@@ -6,16 +6,16 @@
 #![allow(dead_code)]
 
 use sungma::{
-    clock::Revision,
     graph::{Subject, Subjectset},
     id::{RelationId, TheoryId},
-    memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore},
-    resolve,
+    revision::Revision,
     rewrite::Rewrite,
     store::{FactStore, Pool},
     theory::{Theory, TheoryError},
 };
+use sungma_check::resolve;
 use sungma_lang::{fact::load_facts, theory::load_theories};
+use sungma_memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore};
 
 pub const THEORIES: [&str; 3] = [
     include_str!("../fixtures/theories/file.json"),

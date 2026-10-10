@@ -1,4 +1,4 @@
-//! Implementations of [`sungma::clock::Clock`].
+//! Implementations of [`Clock`].
 //!
 //! [`SystemClock`] is the production clock: the Linux kernel's own bound
 //! where it reports one, and [`NtpClock`] everywhere else, Windows
@@ -9,6 +9,7 @@
 //! The clocks that read time report revisions in nanoseconds since the Unix
 //! epoch.
 
+mod clock;
 mod dev;
 #[cfg(target_os = "linux")]
 mod linux;
@@ -25,6 +26,7 @@ mod wall;
 
 use std::io;
 
+pub use clock::{Clock, ClockFault, Reading, behind};
 pub use dev::DevClock;
 #[cfg(target_os = "linux")]
 pub use linux::LinuxClock;
@@ -58,7 +60,7 @@ pub enum ClockError {
     #[error("the NTP server sent Kiss-o'-Death {}", String::from_utf8_lossy(.0))]
     Kiss([u8; 4]),
     #[error(transparent)]
-    Fault(#[from] sungma::clock::ClockFault),
+    Fault(#[from] ClockFault),
     #[error("a refresh panicked: {0}")]
     Panicked(String),
     #[error("NTS: {0}")]

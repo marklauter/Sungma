@@ -7,8 +7,10 @@ edition.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sungma.workspace = true
+sungma-memory.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+sungma-check.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

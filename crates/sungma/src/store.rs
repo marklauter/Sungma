@@ -1,6 +1,6 @@
 //! Ports to external storage. Every call is async and fallible because
-//! that is the shape of the real stores; the in-memory versions in
-//! [`crate::memory`] simulate them.
+//! that is the shape of the real stores; the in-memory versions in the
+//! `sungma-memory` crate simulate them.
 //!
 //! Reads and writes are separate ports: Check only reads, so it takes a
 //! [`Dictionary`] and a [`FactStore`], and writes take an [`Interner`] and
@@ -20,9 +20,9 @@ use std::{future::Future, ops::Range, sync::Arc};
 use thiserror::Error;
 
 use crate::{
-    clock::Revision,
     graph::{Fact, Subject, Subjectset},
     id::{RelationId, TheoryId},
+    revision::Revision,
     rewrite::Rewrite,
 };
 

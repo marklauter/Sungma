@@ -7,12 +7,12 @@ use proptest::prelude::*;
 use serde_json::{Value, json};
 use sungma::{
     graph::Subject,
-    memory::{MemoryDictionary, MemoryFactStore},
     name::{MAX_IDENTITY_BYTES, MAX_NAME_BYTES, MAX_RESOURCE_BYTES, ResourceName, SubjectsetName},
-    resolve,
     store::{FactStore, Pool},
 };
+use sungma_check::resolve;
 use sungma_lang::fact;
+use sungma_memory::{MemoryDictionary, MemoryFactStore};
 
 /// The message a fact JSON document is refused with.
 fn refused(json: &str) -> String {

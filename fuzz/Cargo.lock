@@ -422,6 +422,7 @@ dependencies = [
  "sungma",
  "sungma-clock",
  "sungma-lang",
+ "sungma-memory",
 ]
 
 [[package]]
@@ -431,7 +432,15 @@ dependencies = [
  "serde",
  "serde_json",
  "sungma",
+ "sungma-memory",
  "thiserror",
+]
+
+[[package]]
+name = "sungma-memory"
+version = "0.1.0"
+dependencies = [
+ "sungma",
 ]
 
 [[package]]

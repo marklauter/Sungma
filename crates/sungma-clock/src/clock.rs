@@ -11,10 +11,7 @@
 //! instead of a reading. The node refuses to stamp until the clock
 //! recovers, and another node takes the write.
 
-/// Each write produces the next revision, and a read at a revision sees
-/// every fact written at or before it.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct Revision(pub u64);
+use sungma::revision::Revision;
 
 /// One reading of the clock, which brackets true time.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -46,8 +43,8 @@ pub enum ClockFault {
     Unsynchronized,
 }
 
-/// Reads the revision clock. Implementations live in their own crates;
-/// the writer ports call one inside a commit, and the domain never does.
+/// Reads the revision clock. The writer ports call one inside a commit,
+/// and the domain never does.
 pub trait Clock {
     /// A reading that brackets true time.
     fn now(&self) -> Result<Reading, ClockFault>;

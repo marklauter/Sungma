@@ -2,7 +2,8 @@
 
 use std::future::Future;
 
-use sungma::clock::{Clock, ClockFault, Reading, Revision};
+use crate::{Clock, ClockFault, Reading};
+use sungma::revision::Revision;
 
 #[cfg(target_os = "linux")]
 use crate::LinuxClock;

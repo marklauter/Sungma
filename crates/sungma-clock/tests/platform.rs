@@ -10,7 +10,7 @@
 fn a_synced_kernel_gives_a_linux_clock() {
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use sungma::clock::Clock;
+    use sungma_clock::Clock;
     use sungma_clock::{LinuxClock, SystemClock};
 
     let wall = || {

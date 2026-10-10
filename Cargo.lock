@@ -1082,7 +1082,9 @@ name = "sungma"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "sungma-check",
  "sungma-lang",
+ "sungma-memory",
  "thiserror",
  "tokio",
 ]
@@ -1096,10 +1098,20 @@ dependencies = [
  "serde",
  "serde_json",
  "sungma",
+ "sungma-check",
  "sungma-lang",
+ "sungma-memory",
  "thiserror",
  "tokio",
  "tower",
+]
+
+[[package]]
+name = "sungma-check"
+version = "0.1.0"
+dependencies = [
+ "sungma",
+ "thiserror",
 ]
 
 [[package]]
@@ -1128,7 +1140,18 @@ dependencies = [
  "serde",
  "serde_json",
  "sungma",
+ "sungma-check",
+ "sungma-memory",
  "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "sungma-memory"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "sungma",
  "tokio",
 ]
 

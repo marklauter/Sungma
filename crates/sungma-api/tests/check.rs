@@ -10,8 +10,8 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
-use sungma::check::Verdict;
 use sungma_api::{AppState, router};
+use sungma_check::Verdict;
 use tower::ServiceExt;
 
 const THEORIES: [&str; 3] = [

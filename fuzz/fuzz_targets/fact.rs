@@ -10,11 +10,9 @@ use std::{
 };
 
 use libfuzzer_sys::fuzz_target;
-use sungma::{
-    memory::{MemoryDictionary, MemoryFactStore},
-    store::FactStore,
-};
+use sungma::store::FactStore;
 use sungma_lang::fact;
+use sungma_memory::{MemoryDictionary, MemoryFactStore};
 
 fuzz_target!(|data: &[u8]| {
     let Ok(text) = std::str::from_utf8(data) else {
