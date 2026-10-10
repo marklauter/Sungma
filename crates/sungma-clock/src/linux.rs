@@ -8,8 +8,9 @@ use std::{
     time::Duration,
 };
 
+use crate::{Clock, ClockFault, Reading};
 use libc::{c_int, c_long};
-use sungma::clock::{Clock, ClockFault, Reading, Revision};
+use sungma::revision::Revision;
 
 use crate::{
     ClockStatus, Moment, OsTime, TimeSource,
@@ -163,7 +164,7 @@ impl<T: TimeSource> Clock for LinuxClock<T> {
 
     fn observe(&self, seen: Revision) -> Result<(), ClockFault> {
         let now = self.now()?;
-        self.faults.record(sungma::clock::behind(now, seen))
+        self.faults.record(crate::behind(now, seen))
     }
 }
 

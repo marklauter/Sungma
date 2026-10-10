@@ -6,10 +6,10 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use crate::{
-    clock::Revision,
+use sungma::{
     graph::{Fact, Subject, Subjectset},
     id::{RelationId, TheoryId},
+    revision::Revision,
     rewrite::Rewrite,
     store::{
         Dictionary, FactStore, FactWrite, FactWriter, NameStore, Pool, StoreError, TheoryStore,
@@ -53,7 +53,7 @@ impl Names {
 
 /// A [`NameStore`]. Setup code mints through [`MemoryDictionary::intern`],
 /// one id at a time from the same counters the leases advance, so its ids
-/// never meet a [`crate::intern::LeasingInterner`]'s.
+/// never meet a [`sungma::intern::LeasingInterner`]'s.
 #[derive(Debug, Default)]
 pub struct MemoryDictionary {
     pools: Mutex<HashMap<Pool, Names>>,

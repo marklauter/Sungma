@@ -2,8 +2,8 @@
 //! replay needs to judge it again.
 
 use crate::{
-    clock::Revision,
     graph::{Fact, Subject, Subjectset},
+    revision::Revision,
 };
 
 /// A version of the evaluation rules. Bumped whenever a change could make

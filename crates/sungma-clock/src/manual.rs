@@ -2,7 +2,7 @@
 
 use std::future::Future;
 
-use sungma::clock::{Clock, ClockFault, Reading};
+use crate::{Clock, ClockFault, Reading};
 use tokio::sync::watch;
 
 /// Reads whatever the test last set: a reading, or a fault. A wait

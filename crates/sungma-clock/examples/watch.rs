@@ -10,7 +10,7 @@
 
 use std::{env, error::Error, sync::Arc, time::Duration};
 
-use sungma::clock::{Clock, Reading};
+use sungma_clock::{Clock, Reading};
 use sungma_clock::{ClockStatus, Servers, SystemClock, refresher};
 
 /// Public NTS servers from independent operators, none of which smears

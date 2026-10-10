@@ -27,13 +27,13 @@ use thiserror::Error;
 use sungma::{
     graph::{Fact, Resource, Subject, Subjectset},
     id::{IdentityId, RelationId, ResourceId, TheoryId},
-    memory::{MemoryDictionary, MemoryFactStore},
     name::{
         Identity, NameError, RelationName, ResourceName, SubjectsetName, TheoryName,
         check_resource_id,
     },
     store::Pool,
 };
+use sungma_memory::{MemoryDictionary, MemoryFactStore};
 
 /// Why a fact document was refused, with its line and column.
 #[derive(Debug, Error)]

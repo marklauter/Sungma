@@ -1,0 +1,8 @@
+[package]
+name = "sungma-check"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sungma.workspace = true
+thiserror.workspace = true

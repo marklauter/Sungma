@@ -13,7 +13,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use sungma::clock::{Clock, ClockFault, Reading, Revision};
+use crate::{Clock, ClockFault, Reading};
+use sungma::revision::Revision;
 
 use crate::{Moment, TimeSource};
 

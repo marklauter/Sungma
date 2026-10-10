@@ -40,15 +40,17 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use sungma::{
-    check::{CheckRequest, CheckService, MemoryAuditLog, RequestContext, SubjectName, Verdict},
-    clock::Revision,
-    memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore},
     name::{NameError, SubjectsetName},
+    revision::Revision,
+};
+use sungma_check::{
+    CheckRequest, CheckService, MemoryAuditLog, RequestContext, SubjectName, Verdict,
 };
 use sungma_lang::{
     fact::{self, FactError},
     theory::{self, Refusal},
 };
+use sungma_memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore};
 use thiserror::Error;
 
 /// Why the state didn't load.

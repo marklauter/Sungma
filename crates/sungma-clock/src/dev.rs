@@ -5,7 +5,8 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use sungma::clock::{Clock, ClockFault, Reading, Revision};
+use crate::{Clock, ClockFault, Reading};
+use sungma::revision::Revision;
 
 /// A clock with no uncertainty: each reading is one past the last, with
 /// `settled` equal to `revision`, so a wait never sleeps. Revisions count

@@ -18,7 +18,7 @@ use rustls::{
     ServerConfig, ServerConnection, StreamOwned,
     pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer},
 };
-use sungma::clock::Clock;
+use sungma_clock::Clock;
 use sungma_clock::{ManualTime, NtpClock, Servers};
 
 const EXPORTER: &[u8] = b"EXPORTER-network-time-security";

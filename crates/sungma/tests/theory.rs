@@ -6,11 +6,11 @@ use std::time::{Duration, Instant};
 
 use sungma::{
     id::RelationId,
-    memory::{MemoryDictionary, MemoryTheoryStore},
     rewrite::Rewrite::{self, Computed, Exclusion, This, Union},
     theory::{MAX_CYCLE_NAMES, MAX_REWRITE_DEPTH, Problem, Theory, TheoryError},
 };
 use sungma_lang::theory::{ErrorKind, Refusal, load_theories, parse};
+use sungma_memory::{MemoryDictionary, MemoryTheoryStore};
 
 fn load(json: &str) -> Result<(), Refusal> {
     let dictionary = MemoryDictionary::default();

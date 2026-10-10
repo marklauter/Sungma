@@ -13,15 +13,16 @@ use std::{
 
 use thiserror::Error;
 
-use crate::{
-    clock::Revision,
+use sungma::{
     closure::Closure,
     decision::Decision,
     graph::Subject,
     name::SubjectsetName,
-    resolve,
+    revision::Revision,
     store::{Dictionary, FactStore, StoreError, TheoryStore},
 };
+
+pub mod resolve;
 
 /// A subject named as a caller sends it.
 #[derive(Clone, PartialEq, Eq, Debug)]

@@ -2,7 +2,7 @@
 //! never interned appears in no fact, so its check is denied without
 //! touching the fact store.
 
-use crate::{
+use sungma::{
     graph::{Resource, Subjectset},
     id::{IdentityId, RelationId, ResourceId, TheoryId},
     name::{ResourceName, SubjectsetName},

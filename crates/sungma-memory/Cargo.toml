@@ -1,14 +1,11 @@
 [package]
-name = "sungma"
+name = "sungma-memory"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-thiserror.workspace = true
+sungma.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-sungma-check.workspace = true
-sungma-lang.workspace = true
-sungma-memory.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

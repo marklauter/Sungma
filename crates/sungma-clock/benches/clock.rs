@@ -7,7 +7,8 @@ use std::{
     thread,
 };
 
-use sungma::clock::{Clock, ClockFault, Reading, Revision};
+use sungma::revision::Revision;
+use sungma_clock::{Clock, ClockFault, Reading};
 use sungma_clock::{ClockStatus, DevClock, ManualClock, NtpClock, Servers};
 
 fn main() {

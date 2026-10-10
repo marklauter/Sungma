@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use sungma::clock::{ClockFault, Reading};
+use crate::{ClockFault, Reading};
 
 use crate::{Drift, SyncReport};
 
@@ -90,7 +90,7 @@ impl Faults {
 
 #[cfg(test)]
 mod tests {
-    use sungma::clock::Revision;
+    use sungma::revision::Revision;
 
     use super::*;
 

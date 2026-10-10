@@ -21,8 +21,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::{Clock, ClockFault, Reading};
 use rustls::ClientConfig;
-use sungma::clock::{Clock, ClockFault, Reading, Revision};
+use sungma::revision::Revision;
 
 use crate::{
     ClockError, ClockStatus, OsTime, Resolve, Servers, TimeSource,
@@ -241,7 +242,7 @@ impl<T: TimeSource> Clock for NtpClock<T> {
 
     fn observe(&self, seen: Revision) -> Result<(), ClockFault> {
         let now = self.now()?;
-        self.faults.record(sungma::clock::behind(now, seen))
+        self.faults.record(crate::behind(now, seen))
     }
 }
 

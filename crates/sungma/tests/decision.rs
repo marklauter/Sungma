@@ -7,14 +7,15 @@ use std::time::SystemTime;
 
 use common::{World, declare, head, identity, subjectset, world};
 use sungma::{
-    check::{CheckRequest, CheckService, MemoryAuditLog, RequestContext, SubjectName, Verdict},
-    clock::Revision,
     closure::Closure,
     decision::{Decision, Outcome, SEMANTICS, Semantics},
     graph::{Fact, Subject},
     replay::{Replay, replay},
-    resolve,
+    revision::Revision,
     rewrite::Rewrite::This,
+};
+use sungma_check::{
+    resolve, {CheckRequest, CheckService, MemoryAuditLog, RequestContext, SubjectName, Verdict},
 };
 use sungma_lang::fact::load_facts;
 
