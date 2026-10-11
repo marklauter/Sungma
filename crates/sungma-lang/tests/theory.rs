@@ -952,16 +952,17 @@ fn a_refused_document_reports_the_same_errors_each_time() {
 fn an_error_quotes_at_most_a_bounded_cut_of_the_input() {
     let long = "n".repeat(1000);
     let error = only(&format!(r#"{{ "t": {{ "{long}": "this" }} }}"#));
-    let quoted = format!("{}...", "n".repeat(MAX_QUOTE_BYTES));
+    let quoted = format!("{}...", "n".repeat(MAX_QUOTE_BYTES - 3));
     assert_eq!(error.relation.as_deref(), Some(quoted.as_str()));
     assert!(matches!(&error.kind, ErrorKind::Name(NameError::TooLong(name)) if *name == quoted));
-    // A cut never splits a character: 21 three-byte characters fill 63 bytes.
+    // A cut never splits a character: 20 three-byte characters fill 60
+    // bytes, and a 21st leaves no room for the cut mark.
     let wide = "€".repeat(30);
     let error = only(&format!(r#"{{ "t": {{ "{wide}": "this" }} }}"#));
     let ErrorKind::Name(NameError::TooLong(name)) = &error.kind else {
         panic!("expected a name too long, got {error}");
     };
-    assert_eq!(*name, format!("{}...", "€".repeat(21)));
+    assert_eq!(*name, format!("{}...", "€".repeat(20)));
     let target = "x".repeat(200);
     let error = only(&format!(r#"{{ "t": {{ "a": "{target}" }} }}"#));
     assert!(error.to_string().len() < 300, "{error}");

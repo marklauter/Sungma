@@ -481,7 +481,7 @@ fn an_error_quotes_a_bounded_and_escaped_cut_of_the_text() {
     let fact = fact_json("file", "a", "owner", &identity(&long));
     let error = refused(&json!([fact]).to_string());
     assert!(
-        error.contains(&format!("'{}...'", "x".repeat(64))),
+        error.contains(&format!("'{}...'", "x".repeat(61))),
         "{error}"
     );
     let hidden = "a\u{202e}\u{200b} b";

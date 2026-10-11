@@ -9,7 +9,7 @@ status: evolving
 
 ## Where it stands
 
-- Theories enter only as theory documents (`docs/specs/theory-documents.md`), through `theory::load_theories` (`crates/sungma-lang/src/theory.rs`), or built in code by the tests through `Theory::new`, into `MemoryTheoryStore` (`crates/sungma/src/memory.rs`). `sungma-api` loads them once at startup.
+- Theories enter only as theory documents (`docs/specs/theory-documents.md`), through `theory::load_theories` (`crates/sungma-lang/src/theory.rs`), or built in code by the tests through `Theory::new`, into `MemoryTheoryStore` (`crates/sungma-memory/src/lib.rs`). `sungma-api` loads them once at startup.
 - `TheoryStore` (`crates/sungma/src/store.rs`) is read-only and unversioned: `rewrite(theory, relation)` returns the current rewrite.
 - A `Decision` (`crates/sungma/src/decision.rs`) records the fact `Revision` and the `Semantics` version, not which theories it was judged under. `replay` (`crates/sungma/src/replay.rs`) reads the current theories, so a theory change since the decision shows up as `Replay::Differs`, or as `Replay::Regrounded` when only the grounds move.
 - `Theory::new` (`crates/sungma/src/theory.rs`) checks a theory whole and returns every problem. A theory is valid once built, and a write port keeps that: no stored theory fails to evaluate.
@@ -66,7 +66,7 @@ Fact writes and theory writes draw revisions from one [[revision-clock]], so the
 - A writer takes `stamped = now()` while it holds its locks, commits at `stamped.revision`, and calls `wait(stamped)` before acknowledging. Any write that starts after the acknowledgement gets a later revision.
 - A read at revision t waits until its node's safe time reaches t, so no write at or before t is still in flight.
 - The writer ports call the clock inside the commit. The domain never ticks it.
-- The port (`Revision`, `Reading`, `Span`, `RevisionToken`, `Clock`) stays in `sungma`, since every store port speaks `Revision`. The implementations go in a `sungma-clock` crate, with platform code under `#[cfg(target_os)]`.
+- `Revision` stays in `sungma`; the `Clock` port and `Reading` live in `sungma-clock` with its implementations.
 
 ## Pieces already in place
 

@@ -1,7 +1,7 @@
 ---
 title: Models refuse invalid states
 type: note
-summary: Each model enforces its own rules, so an invalid one can't be built; this tab lists the models that don't yet.
+summary: Each model enforces its own rules, so an invalid one can't be built; this note lists the models that don't yet.
 status: evolving
 ---
 
