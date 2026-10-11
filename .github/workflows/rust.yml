@@ -181,6 +181,28 @@ jobs:
         cargo +$NIGHTLY fuzz run --target x86_64-unknown-linux-gnu
         ntp fuzz/corpus/ntp -- -max_len=64 -max_total_time=30
 
+    # The NTS parsers read untrusted bytes from the key exchange and from
+    # replies. Odd-first inputs to the reply target are sealed, so the
+    # cookie parsing behind the authenticator is reached too. Inputs up to
+    # 64 KiB reach the size caps: a key exchange response's, and a field's.
+    - name: Fuzz the NTS key exchange response parser for 30 seconds
+      run: >
+        mkdir -p fuzz/corpus/nts_ke &&
+        cargo +$NIGHTLY fuzz run --target x86_64-unknown-linux-gnu
+        nts_ke fuzz/corpus/nts_ke -- -max_len=65536 -max_total_time=30
+
+    - name: Fuzz the NTP extension field parser for 30 seconds
+      run: >
+        mkdir -p fuzz/corpus/nts_fields &&
+        cargo +$NIGHTLY fuzz run --target x86_64-unknown-linux-gnu
+        nts_fields fuzz/corpus/nts_fields -- -max_len=65536 -max_total_time=30
+
+    - name: Fuzz NTS reply verification for 30 seconds
+      run: >
+        mkdir -p fuzz/corpus/nts_verify &&
+        cargo +$NIGHTLY fuzz run --target x86_64-unknown-linux-gnu
+        nts_verify fuzz/corpus/nts_verify -- -max_len=65536 -max_total_time=30
+
     - name: Keep the crashing input
       if: failure()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

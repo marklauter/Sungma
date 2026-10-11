@@ -34,3 +34,24 @@ path = "fuzz_targets/ntp.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "nts_ke"
+path = "fuzz_targets/nts_ke.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "nts_fields"
+path = "fuzz_targets/nts_fields.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "nts_verify"
+path = "fuzz_targets/nts_verify.rs"
+test = false
+doc = false
+bench = false

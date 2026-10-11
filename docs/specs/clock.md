@@ -79,7 +79,7 @@ Servers that offer NTS include `time.cloudflare.com`, `nts.netnod.se`, `ptbtime1
 
 A sync asks every server at once. The clock keeps the range where the most servers agree, as Marzullo's algorithm does, and a server outside it is a falseticker. A sync needs answers from at least three servers, so they can outvote one wrong one; with fewer it fails with `TooFewAnswers`, and the window stays as it was. Of `n` answers, up to `(n − 1) / 2` falsetickers are tolerated; past that, the sync fails with `Disagree`. Each answer's bound grows by drift from when its reply arrived to when the sample is stored. A server whose leap indicator announces a leap second is noted in the sync's report.
 
-Server names are resolved on every sync, so a pool's addresses can change. Every address a name resolves to is tried in turn, each with an equal share of the time left, so a dead address doesn't starve a working one. Resolving, connecting, sending and receiving all count against a query's 1 s.
+Server names are resolved on every sync, so a pool's addresses can change. A lookup runs on a thread of its own, since a system lookup can't be interrupted. A query that finds a lookup of its name still running waits on it, within its own deadline, rather than starting another. A lookup running longer than a poll is taken to be stuck, and the next query starts a fresh one beside it, up to three threads a name, so one stuck lookup doesn't silence a server and a resolver that hangs can't hold more than three threads a name. A lookup whose resolver panics, or that the system can't start a thread for, fails that query alone. Every address a name resolves to is tried in turn, each with an equal share of the time left, so a dead address doesn't starve a working one. Resolving, connecting, sending and receiving all count against a query's 1 s.
 
 A server that answers Kiss-o'-Death is asked less often, as it requests. A kiss over NTS is honored as written. A kiss over plain NTP isn't authenticated, and an attacker on the path can forge one, so it is honored within limits:
 
@@ -105,7 +105,7 @@ The measure assumes the rate holds steady across the window, about eight minutes
 
 Network Time Security, RFC 8915, authenticates NTP. A TLS 1.3 handshake on TCP port 4460 agrees keys and hands the client cookies. Each query, still over UDP port 123, then carries a cookie and an authentication tag, and a forged or altered reply is dropped. NTS doesn't prevent delay, but a delayed reply has a longer round trip, which the bound already counts. NTS replaces the transport; the offset, bound, sync and window stay as they are.
 
-A key exchange finishes within 5 s in all, counting resolving and connecting, and every socket read and write; its response is refused past 64 KiB. The client keeps at most eight cookies. A reply that doesn't verify is skipped, and the client waits for one that does until the query times out. A server forgets its cookies with an `NTSN` Kiss-o'-Death, which comes unauthenticated: the client honors it only when it echoes the request's unique identifier, and then repeats the key exchange.
+A key exchange finishes within 5 s in all, counting resolving and connecting, and every socket read and write; its response is refused past 64 KiB. The client keeps at most eight cookies. A failure of the protocol is a `ClockError::Nts` whose `NtsError` names it: a response too long, a refusal with the server's error code, an unknown critical record, no agreement on NTPv4 with AES-SIV, no cookies, an invalid host name, checked before any lookup, or an invalid trusted certificate, a TLS error, including one the handshake raises, no cookie left, no randomness from the system, or an `NTSN` NAK. A query whose thread panics fails for its server alone, as `ClockError::Panicked`. A reply that doesn't verify is skipped, and the client waits for one that does until the query times out. A server forgets its cookies with an `NTSN` Kiss-o'-Death, which comes unauthenticated: the client honors it only when it echoes the request's unique identifier, and then repeats the key exchange.
 
 `Servers::nts` names NTS servers, checked against Mozilla's roots or, with `trusting_only`, a private root, and `Servers::new` names plain NTP servers. Each server keeps its own roots, so lists joined with `and` keep theirs. A list can mix both, but a production list is all NTS.
 
@@ -154,7 +154,7 @@ A clock whose reading misses true time reverses revisions without an error. A ch
 13. **Choosing the clock.** `SystemClock` takes the Linux kernel's clock when it reports a bound and NTP otherwise, and `refresh` takes a new sample for a clock that samples.
 14. **Test clocks.** `DevClock` counts one past its last reading, never waits, and starts after a given revision. `ManualClock` holds a wait until it is set past the stamp, and a fault ends it.
 15. **Platforms.** A workflow, run weekly and by hand, runs the clocks against real time services: `LinuxClock` under chrony, and NTS from the public servers on Linux and Windows.
-16. **Fuzzing.** A `cargo-fuzz` target, and a property test in CI, assert the NTP reply parser never panics on arbitrary input.
+16. **Fuzzing.** `cargo-fuzz` targets, and a property test in CI, assert the NTP reply parser and the NTS parsers never panic on arbitrary input.
 17. **Mutation testing.** `cargo mutants` leaves no surviving mutant in the clock arithmetic.
 
 Classes 3 and 4 drive the clocks through `ManualTime`. Commit-wait in a writer, and a read waiting for writes in flight, are tested with the writer ports.
@@ -279,6 +279,7 @@ The cases each class covers, at minimum.
 
 1. A `cargo-fuzz` target runs the NTP reply parser on arbitrary bytes and send and receive times.
 2. A property test runs it in CI. It never panics or aborts.
+3. `cargo-fuzz` targets run the NTS key exchange response parser, the extension field parser, and reply verification on arbitrary bytes, and CI runs each. None panics; a response or reply leaves at most eight cookies; the fields found account for every byte. Reply verification also runs on plaintexts sealed with the association's key, so the cookie parsing behind the authenticator is reached.
 
 #### Mutation testing
 
