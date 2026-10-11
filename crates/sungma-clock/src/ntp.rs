@@ -28,6 +28,7 @@ use sungma::revision::Revision;
 use crate::{
     ClockError, ClockStatus, NtsError, OsTime, Servers, TimeSource,
     nts::{self, Association},
+    refresher,
     servers::Lookups,
     status::Faults,
     wall::{self, Sample, Sampled},
@@ -345,9 +346,19 @@ fn query_all(
                 })
             })
             .collect();
+        // A query that panicked fails for its server alone, and that
+        // server exchanges keys again at the next sync.
         queries
             .into_iter()
-            .map(|query| query.join().expect("a query doesn't panic"))
+            .map(|query| {
+                query.join().unwrap_or_else(|panic| {
+                    let failed = ClockError::Panicked {
+                        what: "a query",
+                        message: refresher::panic_message(panic),
+                    };
+                    (Reply::unauthenticated(Err(failed)), None)
+                })
+            })
             .collect()
     })
 }
@@ -582,10 +593,8 @@ fn ask_nts(
     let deadline = Instant::now() + TIMEOUT;
     let addresses = lookups.resolve_by(&association.server, deadline)?;
     let sent = time.wall();
-    let unique = nts::random();
-    let packet = association
-        .request(request(sent), unique)
-        .ok_or(NtsError::NoCookieLeft)?;
+    let unique = nts::random()?;
+    let packet = association.request(request(sent), unique)?;
     let mut nak_seen = false;
     let result = ask(
         &addresses,

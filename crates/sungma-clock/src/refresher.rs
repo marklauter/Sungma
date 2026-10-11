@@ -1,6 +1,6 @@
 //! Keeps a sampling clock's window fresh in the background.
 
-use std::{sync::Arc, time::Duration};
+use std::{any::Any, sync::Arc, time::Duration};
 
 use tokio::{
     task::{self, JoinHandle},
@@ -57,15 +57,23 @@ pub fn refresher<C: Refresh>(
 /// message where it has one.
 fn panicked(failed: task::JoinError) -> ClockError {
     let message = match failed.try_into_panic() {
-        Ok(panic) => match panic.downcast::<&str>() {
-            Ok(text) => (*text).to_owned(),
-            Err(panic) => panic
-                .downcast::<String>()
-                .map_or_else(|_| "no message".to_owned(), |text| *text),
-        },
+        Ok(panic) => panic_message(panic),
         Err(failed) => failed.to_string(),
     };
-    ClockError::Panicked(message)
+    ClockError::Panicked {
+        what: "a refresh",
+        message,
+    }
+}
+
+/// A panic's message, where it has one.
+pub(crate) fn panic_message(panic: Box<dyn Any + Send>) -> String {
+    match panic.downcast::<&str>() {
+        Ok(text) => (*text).to_owned(),
+        Err(panic) => panic
+            .downcast::<String>()
+            .map_or_else(|_| "no message".to_owned(), |text| *text),
+    }
 }
 
 #[cfg(test)]
@@ -149,9 +157,13 @@ mod tests {
         let failed = task::spawn_blocking(|| std::panic::panic_any(7))
             .await
             .unwrap_err();
-        assert!(matches!(panicked(failed), ClockError::Panicked(text) if text == "no message"));
+        assert!(
+            matches!(panicked(failed), ClockError::Panicked { message, .. } if message == "no message")
+        );
         let formatted = task::spawn_blocking(|| panic!("{}", 7)).await.unwrap_err();
-        assert!(matches!(panicked(formatted), ClockError::Panicked(text) if text == "7"));
+        assert!(
+            matches!(panicked(formatted), ClockError::Panicked { message, .. } if message == "7")
+        );
     }
 
     #[test]

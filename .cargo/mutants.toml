@@ -18,7 +18,7 @@ exclude_re = [
     # The adjtimex call itself: what it returns depends on the host's sync.
     'linux\.rs:.*replace read ->',
     # Compiled only by cargo-fuzz, which builds with --cfg fuzzing.
-    "fuzz_answer",
+    "fuzz_(answer|ke_response|fields|verify)",
     # Compiled only off Linux, and CI runs mutants on Linux.
     "replace since_start -> u64",
     # The next read drives any TLS bytes a no-op flush leaves pending, so

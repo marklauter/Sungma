@@ -4,15 +4,14 @@ use std::{
     collections::HashMap,
     fmt, io,
     net::{SocketAddr, ToSocketAddrs},
-    panic::{self, AssertUnwindSafe},
     sync::{Arc, Condvar, Mutex, PoisonError},
     thread,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use rustls::{ClientConfig, RootCertStore, pki_types::CertificateDer};
 
-use crate::{ClockError, NtsError, nts};
+use crate::{ClockError, NtsError, POLL, nts};
 
 /// Turns a server's name into the addresses to try, in order. A clock
 /// resolves each name again on every sync, so a pool's addresses can
@@ -48,23 +47,42 @@ impl Resolve for Dns {
 /// since an [`io::Error`] can't be cloned for every caller waiting on it.
 type Found = Result<Vec<SocketAddr>, (io::ErrorKind, String)>;
 
+/// A lookup running this long is taken to be stuck, and the next caller
+/// starts another beside it: a poll.
+const STALE: Duration = POLL;
+
+/// The most lookup threads one name holds at once, stuck ones included.
+const MOST: usize = 3;
+
 /// One lookup on a thread of its own, and what it found once it finishes.
-#[derive(Default)]
 struct Lookup {
+    started: Instant,
     found: Mutex<Option<Found>>,
     finished: Condvar,
 }
 
+/// A name's lookups: the one callers wait on, if it hasn't finished, and
+/// how many threads the name holds, stuck ones included.
+#[derive(Default)]
+struct Running {
+    current: Option<Arc<Lookup>>,
+    threads: usize,
+}
+
+type Names = Arc<Mutex<HashMap<String, Running>>>;
+
 /// A resolver, and the lookups it is running. A system lookup can't be
 /// interrupted, so each runs on a thread of its own, which finishes alone
-/// if the caller's deadline passes first. A name has one lookup at a time:
-/// a caller that finds one running waits on it rather than starting
-/// another, so a resolver that hangs holds one thread per name instead of
-/// one per name each sync.
+/// if the caller's deadline passes first. A caller that finds a lookup of
+/// its name running waits on it rather than starting another, so a
+/// resolver that hangs doesn't leave a thread behind on every sync. A
+/// lookup running past [`STALE`] is taken to be stuck, and the next caller
+/// starts a fresh one, up to [`MOST`] threads a name.
 #[derive(Clone)]
 pub(crate) struct Lookups {
     pub(crate) resolver: Arc<dyn Resolve>,
-    running: Arc<Mutex<HashMap<String, Arc<Lookup>>>>,
+    running: Names,
+    stale: Duration,
 }
 
 impl Lookups {
@@ -72,6 +90,7 @@ impl Lookups {
         Self {
             resolver: Arc::new(resolver),
             running: Arc::default(),
+            stale: STALE,
         }
     }
 
@@ -81,7 +100,7 @@ impl Lookups {
         server: &str,
         deadline: Instant,
     ) -> Result<Vec<SocketAddr>, ClockError> {
-        let lookup = self.start(server);
+        let lookup = self.start(server)?;
         let found = lookup.found.lock().unwrap_or_else(PoisonError::into_inner);
         let left = deadline.saturating_duration_since(Instant::now());
         let (found, _) = lookup
@@ -99,36 +118,89 @@ impl Lookups {
         }
     }
 
-    /// The lookup of `server` already running, or a new one.
-    fn start(&self, server: &str) -> Arc<Lookup> {
+    /// The lookup of `server` to wait on: the one running, unless it is
+    /// stuck and the name has room for another thread, or a new one. The
+    /// error when the system can't start a thread.
+    fn start(&self, server: &str) -> io::Result<Arc<Lookup>> {
         let mut running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(lookup) = running.get(server) {
-            return lookup.clone();
+        if let Some(entry) = running.get(server)
+            && let Some(lookup) = &entry.current
+            && (lookup.started.elapsed() < self.stale || entry.threads >= MOST)
+        {
+            return Ok(lookup.clone());
         }
-        let lookup = Arc::new(Lookup::default());
-        running.insert(server.to_owned(), lookup.clone());
-        let (resolver, all, name, mine) = (
+        let lookup = Arc::new(Lookup {
+            started: Instant::now(),
+            found: Mutex::new(None),
+            finished: Condvar::new(),
+        });
+        let (resolver, names, name, mine) = (
             self.resolver.clone(),
             self.running.clone(),
             server.to_owned(),
             lookup.clone(),
         );
-        thread::spawn(move || {
-            // A resolver that panics still finishes its lookup, or the name
-            // would wait on it forever.
-            let found = panic::catch_unwind(AssertUnwindSafe(|| resolver.resolve(&name)))
-                .unwrap_or_else(|_| Err(io::Error::other("the resolver panicked")))
-                .map_err(|failed| (failed.kind(), failed.to_string()));
-            *mine.found.lock().unwrap_or_else(PoisonError::into_inner) = Some(found);
-            mine.finished.notify_all();
-            // The next caller starts afresh, so a pool's addresses can change.
-            // Only this thread removes the entry it was started for, and no
-            // other is added while it's there.
-            all.lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .remove(&name);
+        // The thread counts itself out under the lock this holds, so the
+        // count is raised below before the thread can lower it. A thread
+        // that can't start leaves no entry behind.
+        thread::Builder::new()
+            .name("sungma-dns".to_owned())
+            .spawn(move || {
+                let mut finish = Finish {
+                    lookup: mine,
+                    names,
+                    name,
+                    found: None,
+                };
+                let found = resolver.resolve(&finish.name);
+                finish.found = Some(found.map_err(|failed| (failed.kind(), failed.to_string())));
+            })?;
+        let entry = running.entry(server.to_owned()).or_default();
+        entry.current = Some(lookup.clone());
+        entry.threads += 1;
+        Ok(lookup)
+    }
+}
+
+/// Finishes a lookup when its thread ends, however it ends. A resolver
+/// that panics leaves an error, rather than a name that waits on it until
+/// every deadline passes.
+struct Finish {
+    lookup: Arc<Lookup>,
+    names: Names,
+    name: String,
+    found: Option<Found>,
+}
+
+impl Drop for Finish {
+    fn drop(&mut self) {
+        let found = self.found.take().unwrap_or_else(|| {
+            Err((
+                io::ErrorKind::Other,
+                "the resolver stopped without an answer".to_owned(),
+            ))
         });
-        lookup
+        *self
+            .lookup
+            .found
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(found);
+        self.lookup.finished.notify_all();
+        // The next caller starts afresh, so a pool's addresses can change.
+        let mut names = self.names.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(running) = names.get_mut(&self.name) {
+            running.threads = running.threads.saturating_sub(1);
+            if running
+                .current
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &self.lookup))
+            {
+                running.current = None;
+            }
+            if running.threads == 0 {
+                names.remove(&self.name);
+            }
+        }
     }
 }
 
@@ -277,6 +349,45 @@ mod tests {
     }
 
     #[test]
+    fn a_stuck_lookup_makes_way_for_another_up_to_three() {
+        let address: SocketAddr = "10.0.0.3:123".parse().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        // Every lookup hangs until `release` is dropped.
+        let (release, released) = mpsc::channel::<()>();
+        let released = Mutex::new(released);
+        let counted = calls.clone();
+        let mut hung = Lookups::new(move |_: &str| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            let _ = released.lock().unwrap().recv();
+            Ok(vec![address])
+        });
+        hung.stale = Duration::from_millis(30);
+        let soon = || Instant::now() + Duration::from_millis(5);
+        let calls_after = |hung: &Lookups| {
+            assert!(timed_out(hung.resolve_by("hung.test:123", soon())));
+            calls.load(Ordering::SeqCst)
+        };
+        // A fresh lookup is waited on; a stuck one makes way.
+        assert_eq!(calls_after(&hung), 1);
+        assert_eq!(calls_after(&hung), 1);
+        thread::sleep(Duration::from_millis(40));
+        assert_eq!(calls_after(&hung), 2);
+        thread::sleep(Duration::from_millis(40));
+        assert_eq!(calls_after(&hung), 3);
+        // Three threads is the most a name holds.
+        thread::sleep(Duration::from_millis(40));
+        assert_eq!(calls_after(&hung), 3);
+        drop(release);
+        let later = Instant::now() + Duration::from_secs(5);
+        assert_eq!(hung.resolve_by("hung.test:123", later).unwrap(), [address]);
+        let gone = Instant::now() + Duration::from_secs(5);
+        while !hung.running.lock().unwrap().is_empty() && Instant::now() < gone {
+            thread::yield_now();
+        }
+        assert!(hung.running.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn a_finished_lookup_makes_way_for_a_fresh_one() {
         let calls = Arc::new(AtomicUsize::new(0));
         let counted = calls.clone();
@@ -289,9 +400,9 @@ mod tests {
         let later = || Instant::now() + Duration::from_secs(5);
         let panicked = lookups.resolve_by("a.test:123", later());
         assert!(
-            matches!(panicked, Err(ClockError::Io(failed)) if failed.to_string() == "the resolver panicked")
+            matches!(panicked, Err(ClockError::Io(failed)) if failed.to_string() == "the resolver stopped without an answer")
         );
-        // The panicked lookup leaves the running set once it has finished.
+        // The lookup that panicked leaves the running set once it has ended.
         let gone = Instant::now() + Duration::from_secs(5);
         while !lookups.running.lock().unwrap().is_empty() && Instant::now() < gone {
             thread::yield_now();

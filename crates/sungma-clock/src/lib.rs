@@ -63,8 +63,9 @@ pub enum ClockError {
     Kiss([u8; 4]),
     #[error(transparent)]
     Fault(#[from] ClockFault),
-    #[error("a refresh panicked: {0}")]
-    Panicked(String),
+    /// A refresh or a query panicked, with the panic's message.
+    #[error("{what} panicked: {message}")]
+    Panicked { what: &'static str, message: String },
     #[error("NTS: {0}")]
     Nts(#[from] NtsError),
 }
@@ -97,6 +98,10 @@ pub enum NtsError {
     Tls(#[from] rustls::Error),
     #[error("no cookie is left")]
     NoCookieLeft,
+    /// The system couldn't give random bytes for a request's identifier
+    /// or nonce.
+    #[error("the system gave no random bytes: {0}")]
+    Randomness(getrandom::Error),
     /// An `NTSN` Kiss-o'-Death: the server no longer knows our cookies.
     #[error("the server no longer knows our cookies")]
     Nak,

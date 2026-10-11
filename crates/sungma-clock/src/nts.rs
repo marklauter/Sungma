@@ -269,17 +269,16 @@ pub(crate) fn exchange(
     lookups: &Lookups,
     tls: &Arc<ClientConfig>,
 ) -> Result<Association, ClockError> {
+    // A name that can't be valid fails before it costs a lookup.
+    let name =
+        ServerName::try_from(host.to_owned()).map_err(|_| NtsError::HostName(host.to_owned()))?;
     let started = Instant::now();
     let deadline = started + KE_DEADLINE;
     let addresses = lookups.resolve_by(&format!("{host}:{KE_PORT}"), deadline)?;
     let socket = connect(&addresses, deadline)?;
-    let name =
-        ServerName::try_from(host.to_owned()).map_err(|_| NtsError::HostName(host.to_owned()))?;
     let connection = ClientConnection::new(tls.clone(), name).map_err(NtsError::Tls)?;
     let mut stream = StreamOwned::new(connection, Deadline { socket, started });
-    stream.write_all(&ke_request())?;
-    stream.flush()?;
-    let negotiated = ke_response(&mut stream)?;
+    let negotiated = negotiate(&mut stream).map_err(tls_failure)?;
     let export = |direction| {
         exported(
             |key, label, context| {
@@ -300,6 +299,26 @@ pub(crate) fn exchange(
         cookies: negotiated.cookies,
         server: format!("{server}:{port}"),
     })
+}
+
+/// Sends the key exchange request on `stream`, and reads the response.
+fn negotiate(stream: &mut (impl Read + Write)) -> Result<Negotiated, ClockError> {
+    stream.write_all(&ke_request())?;
+    stream.flush()?;
+    ke_response(stream)
+}
+
+/// A TLS failure, such as a certificate that doesn't verify, which the
+/// stream reports as an I/O error, as the TLS error it is.
+fn tls_failure(failed: ClockError) -> ClockError {
+    if let ClockError::Io(io) = &failed
+        && let Some(tls) = io
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<rustls::Error>())
+    {
+        return NtsError::Tls(tls.clone()).into();
+    }
+    failed
 }
 
 /// An NTP extension field: type, length, and the body padded to a
@@ -383,27 +402,33 @@ pub(crate) fn open(cipher: &Aes128SivAead, body: &[u8], before: &[u8]) -> Option
 }
 
 /// Random bytes for an identifier or a nonce.
-pub(crate) fn random<const N: usize>() -> [u8; N] {
+pub(crate) fn random<const N: usize>() -> Result<[u8; N], NtsError> {
     let mut bytes = [0; N];
-    getrandom::fill(&mut bytes).expect("the system has randomness");
-    bytes
+    getrandom::fill(&mut bytes).map_err(NtsError::Randomness)?;
+    Ok(bytes)
 }
 
 impl Association {
     /// A request carrying one cookie, a unique identifier, and placeholders
-    /// for the cookies that would refill the client's eight. `None` when
-    /// no cookie is left.
-    pub(crate) fn request(&mut self, header: [u8; 48], unique: [u8; 32]) -> Option<Vec<u8>> {
-        let cookie = self.cookies.pop()?;
+    /// for the cookies that would refill the client's eight. The nonce is
+    /// drawn first, so a request the system can't give randomness for
+    /// doesn't spend a cookie.
+    pub(crate) fn request(
+        &mut self,
+        header: [u8; 48],
+        unique: [u8; 32],
+    ) -> Result<Vec<u8>, NtsError> {
+        let nonce = random()?;
+        let cookie = self.cookies.pop().ok_or(NtsError::NoCookieLeft)?;
         let mut packet = header.to_vec();
         packet.extend(field(UNIQUE_ID, &unique));
         packet.extend(field(COOKIE, &cookie));
         for _ in self.cookies.len() + 1..COOKIES {
             packet.extend(field(PLACEHOLDER, &vec![0; cookie.len()]));
         }
-        let sealed = authenticator(&self.c2s, random(), &packet, &[]);
+        let sealed = authenticator(&self.c2s, nonce, &packet, &[]);
         packet.extend(sealed);
-        Some(packet)
+        Ok(packet)
     }
 
     /// Checks that `reply` answers the request with `unique`, authenticated
@@ -633,7 +658,7 @@ mod tests {
                 (EXPORTER.to_vec(), vec![0, 0, 0, 15, 1]),
             ]
         );
-        let sealed = authenticator(&to_server, random(), b"ad", b"");
+        let sealed = authenticator(&to_server, random().unwrap(), b"ad", b"");
         assert!(open(&cipher(0), &sealed[4..], b"ad").is_some());
         assert!(open(&to_client, &sealed[4..], b"ad").is_none());
         let failed = exported(|_, _, _| Err(rustls::Error::HandshakeNotComplete), 0);
@@ -642,6 +667,35 @@ mod tests {
             Err(ClockError::Nts(NtsError::Tls(
                 rustls::Error::HandshakeNotComplete
             )))
+        ));
+    }
+
+    #[test]
+    fn a_tls_failure_the_stream_wraps_is_a_tls_error() {
+        let wrapped = io::Error::new(
+            io::ErrorKind::InvalidData,
+            rustls::Error::HandshakeNotComplete,
+        );
+        assert!(matches!(
+            tls_failure(wrapped.into()),
+            ClockError::Nts(NtsError::Tls(rustls::Error::HandshakeNotComplete))
+        ));
+        let plain = io::Error::from(io::ErrorKind::ConnectionReset);
+        assert!(matches!(tls_failure(plain.into()), ClockError::Io(_)));
+        assert!(matches!(
+            tls_failure(NtsError::NoCookies.into()),
+            ClockError::Nts(NtsError::NoCookies)
+        ));
+    }
+
+    #[test]
+    fn an_invalid_host_name_fails_before_a_lookup() {
+        let lookups =
+            Lookups::new(|_: &str| -> io::Result<Vec<SocketAddr>> { panic!("no lookup") });
+        let tls = tls(public_roots());
+        assert!(matches!(
+            exchange("bad host!", &lookups, &tls),
+            Err(ClockError::Nts(NtsError::HostName(host))) if host == "bad host!"
         ));
     }
 
@@ -676,7 +730,7 @@ mod tests {
 
     #[test]
     fn a_sealed_message_opens_only_unaltered() {
-        let sealed = authenticator(&cipher(1), random(), b"before", b"secret");
+        let sealed = authenticator(&cipher(1), random().unwrap(), b"before", b"secret");
         let body = &sealed[4..];
         assert_eq!(open(&cipher(1), body, b"before"), Some(b"secret".to_vec()));
         assert_eq!(open(&cipher(1), body, b"altered"), None);
@@ -707,7 +761,10 @@ mod tests {
         let (at, _, body) = fields[8];
         assert_eq!(open(&cipher(1), body, &packet[..48 + at]), Some(vec![]));
         association.request([0; 48], [4; 32]).unwrap();
-        assert!(association.request([0; 48], [4; 32]).is_none());
+        assert_eq!(
+            association.request([0; 48], [4; 32]),
+            Err(NtsError::NoCookieLeft)
+        );
     }
 
     /// A server's reply: the header, the echoed identifier, and an
@@ -719,7 +776,7 @@ mod tests {
             .iter()
             .flat_map(|cookie| field(COOKIE, cookie))
             .collect();
-        let sealed = authenticator(key, random(), &packet, &plaintext);
+        let sealed = authenticator(key, random().unwrap(), &packet, &plaintext);
         packet.extend(sealed);
         packet
     }
@@ -762,14 +819,14 @@ mod tests {
         refused(&malformed, &mut association);
         // The identifier must come before the authenticator, not after.
         let mut late = vec![0x24; 48];
-        let sealed = authenticator(&cipher(2), random(), &late, &[]);
+        let sealed = authenticator(&cipher(2), random().unwrap(), &late, &[]);
         late.extend(sealed);
         late.extend(field(UNIQUE_ID, &[4; 32]));
         refused(&late, &mut association);
         // Plaintext that isn't fields gives no cookies.
         let mut garbled = vec![0x24; 48];
         garbled.extend(field(UNIQUE_ID, &[4; 32]));
-        let sealed = authenticator(&cipher(2), random(), &garbled, &[0, 1, 0, 3]);
+        let sealed = authenticator(&cipher(2), random().unwrap(), &garbled, &[0, 1, 0, 3]);
         garbled.extend(sealed);
         refused(&garbled, &mut association);
     }
@@ -799,6 +856,6 @@ mod tests {
 
     #[test]
     fn random_bytes_differ() {
-        assert_ne!(random::<16>(), random::<16>());
+        assert_ne!(random::<16>().unwrap(), random::<16>().unwrap());
     }
 }
