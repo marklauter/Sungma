@@ -49,7 +49,7 @@ The epoch exists for one purpose: when a later theory version re-declares a drop
 - Re-adding a dropped relation in a later version moves its epoch, so older facts under it stay dead and old grants don't resurrect.
 - A replay or expand at an earlier revision reads the earlier version and its epoch, so the facts are valid there.
 - The theory write is cheap: no fact is rewritten, no cross-theory scan runs, and facts carry no theory version. Late binding means the catalog can't see which other theories reach a dropped relation, and scanning the fact graph on every theory write is impractical. Dropping a relation therefore empties it everywhere, including on the excluded side of another theory's exclusion, which can widen access there. That widening is accepted.
-- Re-applying a fact whose span started before the epoch has to open a new span. Today an insert of a live fact is a no-op (`crates/sungma/src/memory.rs`, `Span`), which would leave a re-asserted grant dead.
+- Re-applying a fact whose span started before the epoch has to open a new span. Today an insert of a live fact is a no-op (`crates/sungma-memory/src/lib.rs`, `Span`), which would leave a re-asserted grant dead.
 - Every reader of the graph applies the same epoch filter: Check, Expand, Read, Watch and dumps. A reader that skips it shows orphans as live.
 - The eager alternative closes the orphans' spans in the theory write. It gives the same visible facts at every revision and needs no reader filter, but the write costs as much as there are orphans.
 - This replaces the theory-write half of idea 4, which refuses a theory write that strands live facts. It depends on idea 5: `replay` reads the current theories today ([[theory-writes-wait-on-theory-versioning]]).

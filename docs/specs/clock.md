@@ -16,7 +16,7 @@ A clock reads the [[revision-clock]]. It never knows true time, only a reading t
 
 ## The port
 
-`Clock` in `sungma::clock` has three methods:
+`Clock` in `sungma_clock::clock`, re-exported from the crate root, has three methods:
 
 - `now()` returns a `Reading { settled, revision }`, or a `ClockFault` when the clock can't be trusted. True time is certainly past `settled` and not yet past `revision`.
 - `wait(stamped)` takes the reading a write was stamped with, and resolves once the clock's `settled` time is past `stamped.revision`, or with the fault that stopped the wait. The caller hands back the reading whole, so it can't compare the wrong fields.
