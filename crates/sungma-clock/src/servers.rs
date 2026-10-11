@@ -288,7 +288,9 @@ mod tests {
         });
         let later = || Instant::now() + Duration::from_secs(5);
         let panicked = lookups.resolve_by("a.test:123", later());
-        assert!(matches!(panicked, Err(ClockError::Io(failed)) if failed.to_string() == "the resolver panicked"));
+        assert!(
+            matches!(panicked, Err(ClockError::Io(failed)) if failed.to_string() == "the resolver panicked")
+        );
         // The panicked lookup leaves the running set once it has finished.
         let gone = Instant::now() + Duration::from_secs(5);
         while !lookups.running.lock().unwrap().is_empty() && Instant::now() < gone {
@@ -304,7 +306,10 @@ mod tests {
         let elsewhere: SocketAddr = "10.0.0.1:123".parse().unwrap();
         let servers =
             Servers::new(["a.test:123"]).resolving_with(move |_: &str| Ok(vec![elsewhere]));
-        assert_eq!(servers.lookups.resolver.resolve("a.test:123").unwrap(), [elsewhere]);
+        assert_eq!(
+            servers.lookups.resolver.resolve("a.test:123").unwrap(),
+            [elsewhere]
+        );
         assert_eq!(
             format!("{servers:?}"),
             r#"Servers { names: ["a.test:123"], nts: [false], .. }"#

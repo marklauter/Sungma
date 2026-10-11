@@ -536,11 +536,7 @@ pub(crate) fn share(left: Duration, addresses: usize) -> Duration {
     left / u32::try_from(addresses.max(1)).unwrap_or(u32::MAX)
 }
 
-fn query(
-    server: &str,
-    lookups: &Lookups,
-    time: &impl TimeSource,
-) -> Result<Answer, ClockError> {
+fn query(server: &str, lookups: &Lookups, time: &impl TimeSource) -> Result<Answer, ClockError> {
     let deadline = Instant::now() + TIMEOUT;
     let addresses = lookups.resolve_by(server, deadline)?;
     let sent = Cell::new(0);

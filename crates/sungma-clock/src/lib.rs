@@ -34,9 +34,9 @@ pub use linux::LinuxClock;
 pub use manual::ManualClock;
 #[cfg(fuzzing)]
 pub use ntp::fuzz_answer;
+pub use ntp::{Leap, NtpClock, SyncReport};
 #[cfg(fuzzing)]
 pub use nts::{fuzz_fields, fuzz_ke_response, fuzz_verify};
-pub use ntp::{Leap, NtpClock, SyncReport};
 pub use refresher::{POLL, Refresh, refresher};
 pub use servers::{Resolve, Servers};
 pub use status::{ClockStatus, FaultCounts};

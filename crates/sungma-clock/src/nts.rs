@@ -568,10 +568,7 @@ mod tests {
             end.clone(),
         ];
         refused(other_aead, disagreed);
-        refused(
-            [agreed(), vec![end.clone()]].concat(),
-            NtsError::NoCookies,
-        );
+        refused([agreed(), vec![end.clone()]].concat(), NtsError::NoCookies);
         refused(
             vec![record(CRITICAL | ERROR, &[0, 1])],
             NtsError::Refused { code: Some(1) },
@@ -642,7 +639,9 @@ mod tests {
         let failed = exported(|_, _, _| Err(rustls::Error::HandshakeNotComplete), 0);
         assert!(matches!(
             failed,
-            Err(ClockError::Nts(NtsError::Tls(rustls::Error::HandshakeNotComplete)))
+            Err(ClockError::Nts(NtsError::Tls(
+                rustls::Error::HandshakeNotComplete
+            )))
         ));
     }
 
