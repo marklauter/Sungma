@@ -26,9 +26,9 @@ use rustls::ClientConfig;
 use sungma::revision::Revision;
 
 use crate::{
-    ClockError, ClockStatus, OsTime, Resolve, Servers, TimeSource,
+    ClockError, ClockStatus, NtsError, OsTime, Servers, TimeSource,
     nts::{self, Association},
-    servers::resolve_by,
+    servers::Lookups,
     status::Faults,
     wall::{self, Sample, Sampled},
 };
@@ -339,7 +339,7 @@ fn query_all(
                     if let Some(tls) = &servers.tls[at] {
                         query_nts(name, tls, association, servers, time)
                     } else {
-                        let result = query(name, &servers.resolver, time);
+                        let result = query(name, &servers.lookups, time);
                         (Reply::unauthenticated(result), None)
                     }
                 })
@@ -538,11 +538,11 @@ pub(crate) fn share(left: Duration, addresses: usize) -> Duration {
 
 fn query(
     server: &str,
-    resolver: &Arc<dyn Resolve>,
+    lookups: &Lookups,
     time: &impl TimeSource,
 ) -> Result<Answer, ClockError> {
     let deadline = Instant::now() + TIMEOUT;
-    let addresses = resolve_by(resolver, server, deadline)?;
+    let addresses = lookups.resolve_by(server, deadline)?;
     let sent = Cell::new(0);
     let packet = || {
         sent.set(time.wall());
@@ -565,13 +565,13 @@ fn query_nts(
 ) -> (Reply, Option<Association>) {
     let association = match association.filter(|association| !association.cookies.is_empty()) {
         Some(association) => association,
-        None => match nts::exchange(host, &servers.resolver, tls) {
+        None => match nts::exchange(host, &servers.lookups, tls) {
             Ok(association) => association,
             Err(failed) => return (Reply::unauthenticated(Err(failed)), None),
         },
     };
     let mut association = association;
-    let reply = ask_nts(&mut association, &servers.resolver, time)
+    let reply = ask_nts(&mut association, &servers.lookups, time)
         .unwrap_or_else(|failed| Reply::unauthenticated(Err(failed)));
     (reply, Some(association))
 }
@@ -580,16 +580,16 @@ fn query_nts(
 /// cookies, empties the association, so the next sync exchanges keys again.
 fn ask_nts(
     association: &mut Association,
-    resolver: &Arc<dyn Resolve>,
+    lookups: &Lookups,
     time: &impl TimeSource,
 ) -> Result<Reply, ClockError> {
     let deadline = Instant::now() + TIMEOUT;
-    let addresses = resolve_by(resolver, &association.server, deadline)?;
+    let addresses = lookups.resolve_by(&association.server, deadline)?;
     let sent = time.wall();
     let unique = nts::random();
     let packet = association
         .request(request(sent), unique)
-        .ok_or_else(|| ClockError::Nts("no cookie is left".to_owned()))?;
+        .ok_or(NtsError::NoCookieLeft)?;
     let mut nak_seen = false;
     let result = ask(
         &addresses,
@@ -605,9 +605,7 @@ fn ask_nts(
             }
             if nak(reply, sent, &unique) {
                 nak_seen = true;
-                return Some(Err(ClockError::Nts(
-                    "the server no longer knows our cookies".to_owned(),
-                )));
+                return Some(Err(NtsError::Nak.into()));
             }
             None
         },

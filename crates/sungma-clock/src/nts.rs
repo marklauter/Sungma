@@ -19,7 +19,7 @@ use aes_siv::{
 };
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned, pki_types::ServerName};
 
-use crate::{ClockError, Resolve, ntp::share, servers::resolve_by};
+use crate::{ClockError, NtsError, ntp::share, servers::Lookups};
 
 /// The key exchange's port.
 pub(crate) const KE_PORT: u16 = 4460;
@@ -96,10 +96,6 @@ impl std::fmt::Debug for Association {
     }
 }
 
-fn nts(reason: &str) -> ClockError {
-    ClockError::Nts(reason.to_owned())
-}
-
 /// One key exchange record: the critical bit and type, then the body.
 fn record(kind: u16, body: &[u8]) -> Vec<u8> {
     let length = u16::try_from(body.len()).expect("a record body fits 64 KiB");
@@ -142,7 +138,7 @@ pub(crate) fn ke_response(stream: &mut impl Read) -> Result<Negotiated, ClockErr
         let mut body = vec![0; usize::from(u16::from_be_bytes([header[2], header[3]]))];
         read += header.len() + body.len();
         if read > KE_LIMIT {
-            return Err(nts("the key exchange response is too long"));
+            return Err(NtsError::ResponseTooLong.into());
         }
         stream.read_exact(&mut body)?;
         let pairs = || {
@@ -155,27 +151,30 @@ pub(crate) fn ke_response(stream: &mut impl Read) -> Result<Negotiated, ClockErr
             END => break,
             NEXT_PROTOCOL => protocol = pairs().eq([NTPV4]),
             AEAD => aead = pairs().eq([AES_SIV]),
-            ERROR => return Err(nts("the key exchange server refused")),
+            ERROR => {
+                let code = pairs().next();
+                return Err(NtsError::Refused { code }.into());
+            }
             NEW_COOKIE => {
                 if negotiated.cookies.len() < COOKIES {
                     negotiated.cookies.push(body);
                 }
             }
             SERVER => {
-                let host = String::from_utf8(body).map_err(|_| nts("a server name isn't text"))?;
+                let host = String::from_utf8(body).map_err(|_| NtsError::ServerName)?;
                 negotiated.server = Some(host);
             }
             PORT => negotiated.port = pairs().next(),
             WARNING => {}
-            _ if kind & CRITICAL != 0 => return Err(nts("a critical record isn't known")),
+            other if kind & CRITICAL != 0 => return Err(NtsError::UnknownCritical(other).into()),
             _ => {}
         }
     }
     if !protocol || !aead {
-        return Err(nts("the server didn't agree NTPv4 with AES-SIV"));
+        return Err(NtsError::Disagreed.into());
     }
     if negotiated.cookies.is_empty() {
-        return Err(nts("the server gave no cookies"));
+        return Err(NtsError::NoCookies.into());
     }
     Ok(negotiated)
 }
@@ -189,8 +188,7 @@ pub(crate) fn exported(
     let context = [0, 0, 0, 15, direction];
     // The exporter fills the key in place.
     let mut key = Key::<Aes128SivAead>::default();
-    export(key.as_mut_slice(), EXPORTER, &context)
-        .map_err(|failed| ClockError::Nts(failed.to_string()))?;
+    export(key.as_mut_slice(), EXPORTER, &context).map_err(NtsError::Tls)?;
     Ok(Aes128SivAead::new(&key))
 }
 
@@ -268,16 +266,16 @@ fn first<T>(
 /// [`KE_DEADLINE`], resolving and connecting included.
 pub(crate) fn exchange(
     host: &str,
-    resolver: &Arc<dyn Resolve>,
+    lookups: &Lookups,
     tls: &Arc<ClientConfig>,
 ) -> Result<Association, ClockError> {
     let started = Instant::now();
     let deadline = started + KE_DEADLINE;
-    let addresses = resolve_by(resolver, &format!("{host}:{KE_PORT}"), deadline)?;
+    let addresses = lookups.resolve_by(&format!("{host}:{KE_PORT}"), deadline)?;
     let socket = connect(&addresses, deadline)?;
-    let name = ServerName::try_from(host.to_owned()).map_err(|_| nts("a host name isn't valid"))?;
-    let connection = ClientConnection::new(tls.clone(), name)
-        .map_err(|failed| ClockError::Nts(failed.to_string()))?;
+    let name =
+        ServerName::try_from(host.to_owned()).map_err(|_| NtsError::HostName(host.to_owned()))?;
+    let connection = ClientConnection::new(tls.clone(), name).map_err(NtsError::Tls)?;
     let mut stream = StreamOwned::new(connection, Deadline { socket, started });
     stream.write_all(&ke_request())?;
     stream.flush()?;
@@ -436,6 +434,58 @@ impl Association {
     }
 }
 
+/// Runs the key exchange response parser on arbitrary bytes, for the
+/// fuzzer. However the bytes end, it keeps at most eight cookies.
+#[cfg(fuzzing)]
+pub fn fuzz_ke_response(data: &[u8]) {
+    let mut stream = data;
+    if let Ok(negotiated) = ke_response(&mut stream) {
+        assert!(negotiated.cookies.len() <= COOKIES);
+    }
+}
+
+/// Runs the extension field parser on arbitrary bytes, for the fuzzer. The
+/// fields it finds account for every byte.
+#[cfg(fuzzing)]
+pub fn fuzz_fields(data: &[u8]) {
+    if let Some(found) = fields(data) {
+        let read: usize = found.iter().map(|(_, _, body)| 4 + body.len()).sum();
+        assert_eq!(read, data.len());
+    }
+}
+
+/// Runs reply verification on arbitrary bytes, for the fuzzer. A forger
+/// can't pass the authenticator, so when the first byte is odd the rest is
+/// sealed as the reply's plaintext, and the cookie parsing past it is
+/// reached too. Either way the association keeps at most eight cookies.
+#[cfg(fuzzing)]
+pub fn fuzz_verify(data: &[u8]) {
+    let Some((&mode, rest)) = data.split_first() else {
+        return;
+    };
+    let key = |byte| Aes128SivAead::new(&Key::<Aes128SivAead>::from([byte; 32]));
+    let mut association = Association {
+        c2s: key(1),
+        s2c: key(2),
+        cookies: vec![vec![7; 8]],
+        server: "fuzz.test:123".to_owned(),
+    };
+    let unique = [4; 32];
+    let reply = if mode % 2 == 1 {
+        let mut reply = vec![0x24; 48];
+        reply.extend(field(UNIQUE_ID, &unique));
+        // A sealed plaintext past this wouldn't fit a field's length.
+        let plaintext = &rest[..rest.len().min(60_000)];
+        let sealed = authenticator(&association.s2c, [0; 16], &reply, plaintext);
+        reply.extend(sealed);
+        reply
+    } else {
+        rest.to_vec()
+    };
+    let _ = association.verify(&reply, &unique);
+    assert!(association.cookies.len() <= COOKIES);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -498,18 +548,18 @@ mod tests {
     fn a_response_that_doesnt_agree_is_refused() {
         let end = record(CRITICAL | END, &[]);
         let cookie = record(NEW_COOKIE, b"c");
-        let refused = |records: Vec<Vec<u8>>, why: &str| match response(&records) {
+        let refused = |records: Vec<Vec<u8>>, why: NtsError| match response(&records) {
             Err(ClockError::Nts(reason)) => assert_eq!(reason, why),
             other => panic!("{other:?}"),
         };
-        let disagreed = "the server didn't agree NTPv4 with AES-SIV";
+        let disagreed = NtsError::Disagreed;
         refused(
             vec![record(AEAD, &[0, 15]), cookie.clone(), end.clone()],
-            disagreed,
+            disagreed.clone(),
         );
         refused(
             vec![record(NEXT_PROTOCOL, &[0, 0]), cookie.clone(), end.clone()],
-            disagreed,
+            disagreed.clone(),
         );
         let other_aead = vec![
             record(NEXT_PROTOCOL, &[0, 0]),
@@ -520,17 +570,21 @@ mod tests {
         refused(other_aead, disagreed);
         refused(
             [agreed(), vec![end.clone()]].concat(),
-            "the server gave no cookies",
+            NtsError::NoCookies,
         );
         refused(
             vec![record(CRITICAL | ERROR, &[0, 1])],
-            "the key exchange server refused",
+            NtsError::Refused { code: Some(1) },
+        );
+        refused(
+            vec![record(CRITICAL | ERROR, &[0])],
+            NtsError::Refused { code: None },
         );
         refused(
             vec![record(CRITICAL | 99, &[])],
-            "a critical record isn't known",
+            NtsError::UnknownCritical(99),
         );
-        refused(vec![record(SERVER, &[0xff])], "a server name isn't text");
+        refused(vec![record(SERVER, &[0xff])], NtsError::ServerName);
         assert!(matches!(
             response(&[record(NEW_COOKIE, b"c")]),
             Err(ClockError::Io(_))
@@ -552,9 +606,7 @@ mod tests {
         flood.extend((0..64).map(|_| record(NEW_COOKIE, &[0; 1_020])));
         flood.push(record(CRITICAL | END, &[]));
         match response(&flood) {
-            Err(ClockError::Nts(reason)) => {
-                assert_eq!(reason, "the key exchange response is too long");
-            }
+            Err(ClockError::Nts(reason)) => assert_eq!(reason, NtsError::ResponseTooLong),
             other => panic!("{other:?}"),
         }
         // Exactly 64 KiB is read.
@@ -588,7 +640,10 @@ mod tests {
         assert!(open(&cipher(0), &sealed[4..], b"ad").is_some());
         assert!(open(&to_client, &sealed[4..], b"ad").is_none());
         let failed = exported(|_, _, _| Err(rustls::Error::HandshakeNotComplete), 0);
-        assert!(matches!(failed, Err(ClockError::Nts(_))));
+        assert!(matches!(
+            failed,
+            Err(ClockError::Nts(NtsError::Tls(rustls::Error::HandshakeNotComplete)))
+        ));
     }
 
     #[test]

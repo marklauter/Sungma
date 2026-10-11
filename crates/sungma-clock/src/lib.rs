@@ -34,6 +34,8 @@ pub use linux::LinuxClock;
 pub use manual::ManualClock;
 #[cfg(fuzzing)]
 pub use ntp::fuzz_answer;
+#[cfg(fuzzing)]
+pub use nts::{fuzz_fields, fuzz_ke_response, fuzz_verify};
 pub use ntp::{Leap, NtpClock, SyncReport};
 pub use refresher::{POLL, Refresh, refresher};
 pub use servers::{Resolve, Servers};
@@ -64,5 +66,38 @@ pub enum ClockError {
     #[error("a refresh panicked: {0}")]
     Panicked(String),
     #[error("NTS: {0}")]
-    Nts(String),
+    Nts(#[from] NtsError),
+}
+
+/// Why an NTS key exchange or an authenticated query failed.
+#[derive(Clone, PartialEq, Debug, thiserror::Error)]
+pub enum NtsError {
+    #[error("the key exchange response is too long")]
+    ResponseTooLong,
+    /// The server sent an error record, with its code when the record
+    /// carries one.
+    #[error(
+        "the key exchange server refused{}",
+        .code.map_or_else(String::new, |code| format!(" with error code {code}"))
+    )]
+    Refused { code: Option<u16> },
+    #[error("record type {0} is critical, but isn't known")]
+    UnknownCritical(u16),
+    #[error("a server name isn't text")]
+    ServerName,
+    #[error("the server didn't agree NTPv4 with AES-SIV")]
+    Disagreed,
+    #[error("the server gave no cookies")]
+    NoCookies,
+    #[error("{0:?} isn't a valid host name")]
+    HostName(String),
+    #[error("a trusted certificate isn't valid: {0}")]
+    Certificate(rustls::Error),
+    #[error("TLS: {0}")]
+    Tls(#[from] rustls::Error),
+    #[error("no cookie is left")]
+    NoCookieLeft,
+    /// An `NTSN` Kiss-o'-Death: the server no longer knows our cookies.
+    #[error("the server no longer knows our cookies")]
+    Nak,
 }
