@@ -169,16 +169,23 @@ fn is_reserved(name: &str) -> bool {
     name.eq_ignore_ascii_case("this")
 }
 
-/// The most an error writes of a caller's text, escapes included.
+/// The most an error writes of a caller's text, escapes and cut mark
+/// included.
 pub const MAX_QUOTE_BYTES: usize = 64;
 
+/// Marks a quote that was cut.
+const CUT: &str = "...";
+
 /// A caller's text as an error quotes it: at most [`MAX_QUOTE_BYTES`]
-/// written, escapes included, cut at a character boundary and marked `...` when cut, with control,
-/// invisible and reordering characters written as `\u{..}` escapes, so a
-/// quote can't forge a log line, recolor a terminal or reorder its line.
+/// written, escapes and cut mark included, cut at a character boundary and
+/// marked `...` when cut, with control, invisible and reordering characters
+/// written as `\u{..}` escapes, so a quote can't forge a log line, recolor a
+/// terminal or reorder its line.
 pub fn quote(text: &str) -> String {
     let mut quoted = String::new();
     let mut written = String::new();
+    // The longest prefix that leaves room for the cut mark.
+    let mut room = 0;
     for c in text.chars() {
         written.clear();
         if is_hidden(c) {
@@ -187,10 +194,14 @@ pub fn quote(text: &str) -> String {
             written.push(c);
         }
         if quoted.len() + written.len() > MAX_QUOTE_BYTES {
-            quoted.push_str("...");
+            quoted.truncate(room);
+            quoted.push_str(CUT);
             break;
         }
         quoted.push_str(&written);
+        if quoted.len() + CUT.len() <= MAX_QUOTE_BYTES {
+            room = quoted.len();
+        }
     }
     quoted
 }

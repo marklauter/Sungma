@@ -2,8 +2,8 @@
 
 use proptest::prelude::*;
 use sungma::name::{
-    Identity, MAX_IDENTITY_BYTES, MAX_NAME_BYTES, MAX_RESOURCE_BYTES, NameError, RelationName,
-    ResourceName, SubjectsetName, TheoryName,
+    Identity, MAX_IDENTITY_BYTES, MAX_NAME_BYTES, MAX_QUOTE_BYTES, MAX_RESOURCE_BYTES, NameError,
+    RelationName, ResourceName, SubjectsetName, TheoryName, quote,
 };
 
 #[test]
@@ -159,7 +159,7 @@ fn a_name_has_checked_and_unchecked_constructors() {
 fn a_name_error_quotes_a_bounded_and_escaped_cut_of_the_text() {
     let long = format!("{}{}", "x".repeat(100), char::from_u32(0x202e).unwrap());
     let error = format!("{long}:a").parse::<ResourceName>().unwrap_err();
-    assert_eq!(error, NameError::TooLong(format!("{}...", "x".repeat(64))));
+    assert_eq!(error, NameError::TooLong(format!("{}...", "x".repeat(61))));
     let hidden = format!("a{}b:x", char::from_u32(0x202e).unwrap());
     let error = hidden.parse::<ResourceName>().unwrap_err().to_string();
     assert!(error.contains("a\\u{202e}b"), "{error}");
@@ -211,8 +211,8 @@ fn a_quote_counts_its_escapes_toward_its_bound() {
     else {
         panic!("expected an invalid name");
     };
-    // Each escape is 8 bytes, so 8 fit, then the cut.
-    assert_eq!(quoted, format!("{}...", "\\u{200b}".repeat(8)));
+    // Each escape is 8 bytes, so 7 fit beside the 3-byte cut mark.
+    assert_eq!(quoted, format!("{}...", "\\u{200b}".repeat(7)));
     for code in [0x1bca0, 0x1d173] {
         let c = char::from_u32(code).unwrap();
         let error = format!("a{c}:x")
@@ -221,4 +221,13 @@ fn a_quote_counts_its_escapes_toward_its_bound() {
             .to_string();
         assert!(!error.contains(c), "{code:x}: {error}");
     }
+}
+
+#[test]
+fn a_cut_quote_fits_its_bound_with_the_cut_mark() {
+    let text = |len: usize| "x".repeat(len);
+    assert_eq!(quote(&text(MAX_QUOTE_BYTES)), text(MAX_QUOTE_BYTES));
+    let cut = quote(&text(MAX_QUOTE_BYTES + 1));
+    assert_eq!(cut, format!("{}...", text(MAX_QUOTE_BYTES - 3)));
+    assert_eq!(cut.len(), MAX_QUOTE_BYTES);
 }
