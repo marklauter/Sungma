@@ -24,4 +24,7 @@ exclude_re = [
     # The next read drives any TLS bytes a no-op flush leaves pending, so
     # no test can tell the difference.
     "impl Write for Deadline>::flush",
+    # A lookup exactly as old as the stale limit, to the nanosecond, is
+    # either side of it; no test can time one that closely.
+    'servers\.rs:.*replace < with <= in Lookups::start',
 ]
