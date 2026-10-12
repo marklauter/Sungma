@@ -6,6 +6,17 @@ Sungma: spirits bound by oath to protect the sacred teachings of the Dharma.
 
 Sungma is a Zanzibar-style relationship-based access control (ReBAC) service. It answers one question: is subject S in the subjectset `namespace:resource#relation` at revision R? It answers with the facts that prove a yes, and can replay any recorded decision at its revision.
 
+## Why revisions
+
+Most authorization code checks a permission in one query and acts in another. That gap is a time-of-check to time-of-use (TOCTOU) bug: between the two, a grant can be revoked, a replica can lag or a cache can go stale. The action then goes ahead on a decision nobody can reconstruct.
+
+Sungma answers every check at a revision, and the answer names it:
+
+- A write returns the revision it was stamped with. A client that stores content alongside that revision, and passes it on later checks, is never judged against a snapshot older than the content. That is Zanzibar's answer to the new enemy problem, where a user removed from a folder sees a document added after the removal.
+- A decision records its revision and the facts that proved it, so replay shows what was true when it was made, not what is true now.
+
+A revision doesn't close the gap between a check and the action that follows it. It names the snapshot the action relied on, so a stale decision can be detected rather than silently trusted. Writes that overlap can still race; [the clock spec](docs/specs/clock.md#overlapping-writes) says how.
+
 ## Status
 
 A proof of concept. The evaluator, decisions with grounds and replay, namespace documents and the revision clock work; storage is in memory only, and there is one HTTP route, `POST /check`. [docs/roadmap.md](docs/roadmap.md) lists what comes next.
