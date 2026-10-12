@@ -1,10 +1,10 @@
 ---
 title: catalog
 type: definition
-summary: "A snapshot of every theory."
+summary: "A snapshot of every namespace."
 status: locked
 is-a: "[[snapshot]]"
-has-a: "[[theory]]"
+has-a: "[[namespace]]"
 ---
 
-A snapshot of every theory.
+A snapshot of every namespace.

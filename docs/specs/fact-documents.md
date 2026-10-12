@@ -1,7 +1,7 @@
 ---
 title: Fact documents
 type: specification
-summary: "A fact document is the JSON form of a list of facts: each fact names its subjectset's theory, resource and relation under their own keys, and its subject as an object whose keys say which kind of subject it is."
+summary: "A fact document is the JSON form of a list of facts: each fact names its subjectset's namespace, resource and relation under their own keys, and its subject as an object whose keys say which kind of subject it is."
 status: evolving
 cites:
   - "[[fact]]"
@@ -10,12 +10,12 @@ cites:
   - "[[identity]]"
   - "[[resource]]"
   - "[[relation]]"
-  - "[[theory]]"
+  - "[[namespace]]"
 ---
 
 # Fact documents
 
-A fact document is the JSON form of a list of [[fact]]s. Each fact binds a [[subject]] to a [[subjectset]]. Facts record memberships outright, and a [[theory]]'s rewrites derive further memberships from them. A fact is a value built from typed parts; a document is notation for it.
+A fact document is the JSON form of a list of [[fact]]s. Each fact binds a [[subject]] to a [[subjectset]]. Facts record memberships outright, and a [[namespace]]'s rewrites derive further memberships from them. A fact is a value built from typed parts; a document is notation for it.
 
 Every part of a fact has its own JSON key, so Sungma splits no string to read one. Resources and identities are opaque, and an email or a URI is a valid one.
 
@@ -23,24 +23,24 @@ Every part of a fact has its own JSON key, so Sungma splits no string to read on
 
 ```json
 [
-  { "theory": "file", "resource": "readme", "relation": "owner",
+  { "namespace": "file", "resource": "readme", "relation": "owner",
     "subject": { "identity": "anne@example.com" } },
-  { "theory": "folder", "resource": "root", "relation": "viewer",
-    "subject": { "theory": "group", "resource": "eng", "relation": "member" } },
-  { "theory": "file", "resource": "readme", "relation": "parent",
-    "subject": { "theory": "folder", "resource": "root" } }
+  { "namespace": "folder", "resource": "root", "relation": "viewer",
+    "subject": { "namespace": "group", "resource": "eng", "relation": "member" } },
+  { "namespace": "file", "resource": "readme", "relation": "parent",
+    "subject": { "namespace": "folder", "resource": "root" } }
 ]
 ```
 
 ## Document
 
 - A document is one JSON array of facts. An empty array holds no facts.
-- A fact is an object with four keys: `theory`, `resource` and `relation` name its subjectset, and `subject` holds its subject.
+- A fact is an object with four keys: `namespace`, `resource` and `relation` name its subjectset, and `subject` holds its subject.
 - A subject is an object, and its keys say which kind it is:
   - `identity` alone is an [[identity]].
-  - `theory` and `resource` are a [[resource]], called a resource member as a subject.
-  - `theory`, `resource` and `relation` are a subjectset.
-- A subject with any other set of keys is refused, such as `identity` with `theory`, or `theory` without `resource`.
+  - `namespace` and `resource` are a [[resource]], called a resource member as a subject.
+  - `namespace`, `resource` and `relation` are a subjectset.
+- A subject with any other set of keys is refused, such as `identity` with `namespace`, or `namespace` without `resource`.
 - A fact missing a key, a key written twice, and a key the document doesn't define are refused.
 - Every name is a string.
 - Key order and fact order carry no meaning.
@@ -52,12 +52,12 @@ A fact is never changed. A write adds facts and retires facts, and a retired fac
 ```json
 {
   "add": [
-    { "theory": "file", "resource": "readme", "relation": "parent",
-      "subject": { "theory": "folder", "resource": "b" } }
+    { "namespace": "file", "resource": "readme", "relation": "parent",
+      "subject": { "namespace": "folder", "resource": "b" } }
   ],
   "retire": [
-    { "theory": "file", "resource": "readme", "relation": "parent",
-      "subject": { "theory": "folder", "resource": "a" } }
+    { "namespace": "file", "resource": "readme", "relation": "parent",
+      "subject": { "namespace": "folder", "resource": "a" } }
   ]
 }
 ```
@@ -69,7 +69,7 @@ A fact is never changed. A write adds facts and retires facts, and a retired fac
 
 ## Names
 
-A theory name and a [[relation]] name follow the grammar in [Theory documents](theory-documents.md#names).
+A namespace name and a [[relation]] name follow the grammar in [Namespace documents](namespace-documents.md#names).
 
 A resource and an identity are owned by the caller: a natural key, a surrogate key, a GUID, a path or an email address. Sungma compares them and never interprets them. Each one:
 
@@ -77,19 +77,19 @@ A resource and an identity are owned by the caller: a natural key, a surrogate k
 - holds no whitespace;
 - is case-sensitive, so `Anne` and `anne` are two identities.
 
-Sungma's other interfaces, such as the check API and error messages, write a resource as `theory:resource` and a subjectset as `theory:resource#relation`. That text splits at the first `:` and the last `#`, because theory and relation names allow neither. A fact document doesn't use it.
+Sungma's other interfaces, such as the check API and error messages, write a resource as `namespace:resource` and a subjectset as `namespace:resource#relation`. That text splits at the first `:` and the last `#`, because namespace and relation names allow neither. A fact document doesn't use it.
 
 ## Limits
 
 A fact is refused if it breaks any of these limits:
 
-- A theory name and its resource, written `theory:resource`, are at most 256 bytes.
+- A namespace name and its resource, written `namespace:resource`, are at most 256 bytes.
 - An identity is at most 512 bytes.
-- A theory or relation name is at most 64 bytes.
+- A namespace or relation name is at most 64 bytes.
 
 ## Errors
 
-A JSON library reads the document. A document that isn't valid JSON, and a fact that breaks a rule above, are refused with an error that carries its line and column. An error that quotes a name quotes at most 64 bytes of it, with control and other invisible characters escaped, as theory document errors do.
+A JSON library reads the document. A document that isn't valid JSON, and a fact that breaks a rule above, are refused with an error that carries its line and column. An error that quotes a name quotes at most 64 bytes of it, with control and other invisible characters escaped, as namespace document errors do.
 
 A refused document declares no facts.
 
@@ -99,7 +99,7 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 
 1. **Document shape.** Each rule in [Document](#document) holds, for valid documents and for each way of breaking it.
 2. **Subjects.** Each kind of subject is read from its keys, and every other set of keys is refused.
-3. **Names.** Theory and relation names follow the theory document grammar, including the reserved `this`.
+3. **Names.** Namespace and relation names follow the namespace document grammar, including the reserved `this`.
 4. **Resources and identities.** Opaque text is accepted, whitespace and empty text are refused, and case is kept.
 5. **Limits.** Each limit at its value and one past it.
 6. **Errors.** Each error carries the line and column of the value at fault, and quoted text is bounded and escaped.
@@ -121,20 +121,20 @@ The cases each class covers, at minimum.
 1. The sample loads.
 2. An empty array loads and holds no facts.
 3. A document that isn't an array, and a fact that isn't an object, are refused.
-4. A fact missing `theory`, `resource`, `relation` or `subject` is refused, naming the missing key.
+4. A fact missing `namespace`, `resource`, `relation` or `subject` is refused, naming the missing key.
 5. A key written twice is refused as a duplicate, even when its second value is also invalid.
 6. A key the document doesn't define is refused, in a fact and in a subject.
 7. A name that isn't a string is refused.
 
 #### Subjects
 
-1. `identity` alone, `theory` and `resource`, and `theory`, `resource` and `relation` load as an identity, a resource member and a subjectset.
-2. An empty subject, `identity` with any other key, `theory` without `resource`, `resource` without `theory`, and `relation` without both are refused.
+1. `identity` alone, `namespace` and `resource`, and `namespace`, `resource` and `relation` load as an identity, a resource member and a subjectset.
+2. An empty subject, `identity` with any other key, `namespace` without `resource`, `resource` without `namespace`, and `relation` without both are refused.
 3. A subject that isn't an object is refused.
 
 #### Names
 
-1. A theory or relation name that breaks the grammar is refused.
+1. A namespace or relation name that breaks the grammar is refused.
 2. `this`, in any casing, is refused as a relation name in a fact and in a subjectset subject.
 
 #### Resources and identities
@@ -146,9 +146,9 @@ The cases each class covers, at minimum.
 
 #### Limits
 
-1. `theory:resource` of 256 bytes loads and of 257 is refused.
+1. `namespace:resource` of 256 bytes loads and of 257 is refused.
 2. An identity of 512 bytes loads and of 513 is refused.
-3. A theory or relation name of 64 bytes loads and of 65 is refused.
+3. A namespace or relation name of 64 bytes loads and of 65 is refused.
 
 #### Errors
 

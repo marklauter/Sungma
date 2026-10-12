@@ -1,5 +1,5 @@
 # Every mutant runs every crate's tests: sungma-lang's tests check the core
-# code its parsers call, such as theory checks and names.
+# code its parsers call, such as namespace checks and names.
 test_workspace = true
 
 # CI builds with RUSTFLAGS="-D warnings". A mutant such as `fn f(x) -> Ok(())`
@@ -12,7 +12,7 @@ cap_lints = true
 exclude_re = [
     # Default::default() for a Vec is Vec::new().
     "impl Proof for Vec<Fact>>::empty",
-    # Only the wording of a serde error that a theory document's visitors,
+    # Only the wording of a serde error that a namespace document's visitors,
     # which accept every JSON value they are offered, never raise.
     "impl Visitor<'de> for (Text|Json|Leaf)Visitor(<V>)?>::expecting",
     # The adjtimex call itself: what it returns depends on the host's sync.

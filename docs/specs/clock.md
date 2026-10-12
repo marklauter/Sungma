@@ -12,7 +12,7 @@ cites:
 
 # The clock
 
-A clock reads the [[revision-clock]]. It never knows true time, only a reading that brackets it, and a [[revision]] is taken from that reading. [[one-timeline]] orders facts and theories on these revisions.
+A clock reads the [[revision-clock]]. It never knows true time, only a reading that brackets it, and a [[revision]] is taken from that reading. [[one-timeline]] orders facts and namespaces on these revisions.
 
 ## The port
 

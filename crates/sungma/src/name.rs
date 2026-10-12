@@ -1,19 +1,19 @@
 //! Names as callers write them, parsed once at the edge so nothing past it
 //! splits a string.
 //!
-//! `theory:id` names a resource and `theory:id#relation` a subjectset. A
-//! theory name contains no `:` and a relation name no `#`, so the text
+//! `namespace:id` names a resource and `namespace:id#relation` a subjectset. A
+//! namespace name contains no `:` and a relation name no `#`, so the text
 //! splits at the first `:` and the last `#`. The resource id between them
 //! is opaque and may contain either. No part may be empty, and no relation
-//! is named `...`: `theory:id#...` is the resource itself, not a subjectset.
+//! is named `...`: `namespace:id#...` is the resource itself, not a subjectset.
 //!
 //! A resource id and an [`Identity`] are owned by the caller and opaque, but
 //! hold no whitespace. A resource name is at most [`MAX_RESOURCE_BYTES`] and
 //! an identity at most [`MAX_IDENTITY_BYTES`], as
 //! `docs/specs/fact-documents.md` specifies.
 //!
-//! Theory and relation names are [`TheoryName`] and [`RelationName`], as
-//! `docs/specs/theory-documents.md` specifies. Text from a caller becomes
+//! Namespace and relation names are [`NamespaceName`] and [`RelationName`], as
+//! `docs/specs/namespace-documents.md` specifies. Text from a caller becomes
 //! one through [`FromStr`] or [`TryFrom`], which refuse a name outside the
 //! grammar; only a trusted source, such as storage, uses `new_unchecked`.
 
@@ -26,9 +26,9 @@ use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum NameError {
-    #[error("malformed resource '{0}', expected theory:id")]
+    #[error("malformed resource '{0}', expected namespace:id")]
     Resource(String),
-    #[error("malformed subjectset '{0}', expected theory:id#relation")]
+    #[error("malformed subjectset '{0}', expected namespace:id#relation")]
     Subjectset(String),
     #[error("'{0}' names a resource, not a subjectset")]
     ResourceMember(String),
@@ -50,10 +50,10 @@ pub enum NameError {
     IdentityTooLong(String),
 }
 
-/// The longest theory or relation name.
+/// The longest namespace or relation name.
 pub const MAX_NAME_BYTES: usize = 64;
 
-/// The longest resource name, `theory:id`.
+/// The longest resource name, `namespace:id`.
 pub const MAX_RESOURCE_BYTES: usize = 256;
 
 /// The longest identity.
@@ -61,7 +61,7 @@ pub const MAX_IDENTITY_BYTES: usize = 512;
 
 /// One or more names joined by dots, such as `file` or `drive.file`.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct TheoryName(String);
+pub struct NamespaceName(String);
 
 /// One name, never `this` in any casing.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -117,7 +117,7 @@ macro_rules! name_type {
     };
 }
 
-name_type!(TheoryName, check_theory_name);
+name_type!(NamespaceName, check_namespace_name);
 name_type!(RelationName, check_relation_name);
 name_type!(Identity, check_identity);
 
@@ -133,7 +133,7 @@ fn check_identity(text: &str) -> Result<(), NameError> {
     }
 }
 
-fn check_theory_name(text: &str) -> Result<(), NameError> {
+fn check_namespace_name(text: &str) -> Result<(), NameError> {
     if text.len() > MAX_NAME_BYTES {
         Err(NameError::TooLong(quote(text)))
     } else if !text.split('.').all(is_name) {
@@ -231,7 +231,7 @@ fn is_hidden(c: char) -> bool {
 }
 
 /// Checks a resource id on its own: never empty, with no whitespace. Its
-/// length is checked with its theory, by [`ResourceName::new`].
+/// length is checked with its namespace, by [`ResourceName::new`].
 pub fn check_resource_id(id: &str) -> Result<(), NameError> {
     if id.is_empty() {
         Err(NameError::EmptyResource)
@@ -242,29 +242,31 @@ pub fn check_resource_id(id: &str) -> Result<(), NameError> {
     }
 }
 
-/// `theory:id`
+/// `namespace:id`
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ResourceName {
-    theory: TheoryName,
+    namespace: NamespaceName,
     id: String,
 }
 
 impl ResourceName {
-    /// The resource `id` under `theory`. The id is opaque but holds no
-    /// whitespace, and `theory:id` is at most [`MAX_RESOURCE_BYTES`].
-    pub fn new(theory: TheoryName, id: &str) -> Result<Self, NameError> {
+    /// The resource `id` under `namespace`. The id is opaque but holds no
+    /// whitespace, and `namespace:id` is at most [`MAX_RESOURCE_BYTES`].
+    pub fn new(namespace: NamespaceName, id: &str) -> Result<Self, NameError> {
         check_resource_id(id)?;
-        if theory.as_str().len() + 1 + id.len() > MAX_RESOURCE_BYTES {
-            return Err(NameError::ResourceTooLong(quote(&format!("{theory}:{id}"))));
+        if namespace.as_str().len() + 1 + id.len() > MAX_RESOURCE_BYTES {
+            return Err(NameError::ResourceTooLong(quote(&format!(
+                "{namespace}:{id}"
+            ))));
         }
         Ok(Self {
-            theory,
+            namespace,
             id: id.to_owned(),
         })
     }
 
-    pub fn theory(&self) -> &TheoryName {
-        &self.theory
+    pub fn namespace(&self) -> &NamespaceName {
+        &self.namespace
     }
 
     pub fn id(&self) -> &str {
@@ -276,23 +278,23 @@ impl FromStr for ResourceName {
     type Err = NameError;
 
     fn from_str(text: &str) -> Result<Self, NameError> {
-        let Some((theory, id)) = text.split_once(':') else {
+        let Some((namespace, id)) = text.split_once(':') else {
             return Err(NameError::Resource(quote(text)));
         };
-        if theory.is_empty() || id.is_empty() {
+        if namespace.is_empty() || id.is_empty() {
             return Err(NameError::Resource(quote(text)));
         }
-        Self::new(theory.parse()?, id)
+        Self::new(namespace.parse()?, id)
     }
 }
 
 impl fmt::Display for ResourceName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.theory, self.id)
+        write!(f, "{}:{}", self.namespace, self.id)
     }
 }
 
-/// `theory:id#relation`
+/// `namespace:id#relation`
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct SubjectsetName {
     resource: ResourceName,

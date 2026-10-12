@@ -9,7 +9,7 @@ Everything whose [[span]] covers one [[revision]].
 
 ## Examples
 
-- A theory version holds over [3, 7) and `file:x#owner@carol` over [4, 9). The snapshot at revision 4 holds both. The snapshot at 3 holds the theory version but not the fact.
+- A namespace version holds over [3, 7) and `file:x#owner@carol` over [4, 9). The snapshot at revision 4 holds both. The snapshot at 3 holds the namespace version but not the fact.
 
 ## Rationale
 

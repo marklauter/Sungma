@@ -9,7 +9,7 @@ use std::{
 
 use proptest::{collection::vec, prelude::*, test_runner::TestCaseError};
 use sungma::{
-    id::TheoryId,
+    id::NamespaceId,
     store::{
         Dictionary,
         Pool::{self, Identities},
@@ -94,10 +94,10 @@ async fn each_pool_mints_its_own_ids() {
     let store = MemoryDictionary::default();
     let node = node(&store, 10);
     let pools = [
-        Pool::Theories,
+        Pool::Namespaces,
         Pool::Relations,
-        Pool::Resources(TheoryId(0)),
-        Pool::Resources(TheoryId(1)),
+        Pool::Resources(NamespaceId(0)),
+        Pool::Resources(NamespaceId(1)),
         Identities,
     ];
     for pool in pools {
@@ -171,7 +171,7 @@ async fn setup_ids_and_leased_ids_never_meet() {
 /// `(node, pool, name)`: the node interns name `n{name}` in `POOLS[pool]`.
 type Intern = (usize, usize, usize);
 
-const POOLS: [Pool; 2] = [Identities, Pool::Resources(TheoryId(0))];
+const POOLS: [Pool; 2] = [Identities, Pool::Resources(NamespaceId(0))];
 
 /// Nodes of the given block sizes, stale or not, intern names in turn.
 async fn ids_are_unique_and_stable(

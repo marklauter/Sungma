@@ -1,16 +1,16 @@
 //! The fact graph: facts are edges from a subjectset to a subject, over
 //! interned ids.
 
-use crate::id::{IdentityId, RelationId, ResourceId, TheoryId};
+use crate::id::{IdentityId, NamespaceId, RelationId, ResourceId};
 
-/// `theory:id`
+/// `namespace:id`
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Resource {
-    pub theory: TheoryId,
+    pub namespace: NamespaceId,
     pub id: ResourceId,
 }
 
-/// `theory:id#relation`
+/// `namespace:id#relation`
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Subjectset {
     pub resource: Resource,
@@ -22,7 +22,7 @@ pub struct Subjectset {
 pub enum Subject {
     Identity(IdentityId),
     Subjectset(Subjectset),
-    /// `theory:id#...`, the resource itself.
+    /// `namespace:id#...`, the resource itself.
     ResourceMember(Resource),
 }
 

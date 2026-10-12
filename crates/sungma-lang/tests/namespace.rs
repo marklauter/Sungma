@@ -1,4 +1,4 @@
-//! Theory documents: parsed, checked whole, and printed back.
+//! Namespace documents: parsed, checked whole, and printed back.
 
 use std::{
     panic::{self, AssertUnwindSafe},
@@ -7,21 +7,21 @@ use std::{
 
 use proptest::{collection::vec, prelude::*};
 use sungma::{
-    name::{NameError, RelationName, TheoryName},
+    name::{NameError, NamespaceName, RelationName},
+    namespace::{MAX_REWRITE_DEPTH, Namespace, NamespaceError},
     rewrite::Rewrite::{self, Computed, Exclusion, FactTo, Intersection, This, Union},
-    theory::{MAX_REWRITE_DEPTH, Theory, TheoryError},
 };
-use sungma_lang::theory::{
+use sungma_lang::namespace::{
     self, DocumentError, ErrorKind, MAX_DOCUMENT_BYTES, MAX_ERRORS, MAX_EXPRESSION_BYTES,
-    MAX_NAME_BYTES, MAX_QUOTE_BYTES, MAX_RELATIONS, TheoryDocument,
+    MAX_NAME_BYTES, MAX_QUOTE_BYTES, MAX_RELATIONS, NamespaceDocument,
 };
 
-fn parsed(json: &str) -> TheoryDocument {
-    theory::parse(json).unwrap_or_else(|errors| panic!("refused: {errors:?}"))
+fn parsed(json: &str) -> NamespaceDocument {
+    namespace::parse(json).unwrap_or_else(|errors| panic!("refused: {errors:?}"))
 }
 
 fn refused(json: &str) -> Vec<DocumentError> {
-    match theory::parse(json) {
+    match namespace::parse(json) {
         Err(errors) => errors,
         Ok(document) => panic!("accepted: {document:?}"),
     }
@@ -55,9 +55,9 @@ fn relation(name: &str) -> RelationName {
     RelationName::new_unchecked(name)
 }
 
-/// The theory `t`.
-fn t() -> TheoryName {
-    TheoryName::new_unchecked("t")
+/// The namespace `t`.
+fn t() -> NamespaceName {
+    NamespaceName::new_unchecked("t")
 }
 
 fn name(name: &str) -> Rewrite<RelationName> {
@@ -71,12 +71,12 @@ fn fact_to(factset: &str, computed: &str) -> Rewrite<RelationName> {
     }
 }
 
-/// A theory's relations, named as written.
+/// A namespace's relations, named as written.
 type Relations = Vec<(&'static str, Rewrite<&'static str>)>;
 
-/// A valid theory of relations written with plain names, each made with
+/// A valid namespace of relations written with plain names, each made with
 /// `new_unchecked`.
-fn checked(relations: &[(&str, Rewrite<&str>)]) -> Theory<RelationName> {
+fn checked(relations: &[(&str, Rewrite<&str>)]) -> Namespace<RelationName> {
     let relations = relations
         .iter()
         .map(|(name, rewrite)| {
@@ -86,15 +86,18 @@ fn checked(relations: &[(&str, Rewrite<&str>)]) -> Theory<RelationName> {
             )
         })
         .collect();
-    Theory::new(relations).expect("a valid theory")
+    Namespace::new(relations).expect("a valid namespace")
 }
 
-fn print(theory: &str, relations: &[(&str, Rewrite<&str>)]) -> String {
-    theory::print(&TheoryName::new_unchecked(theory), &checked(relations))
+fn print(namespace: &str, relations: &[(&str, Rewrite<&str>)]) -> String {
+    namespace::print(
+        &NamespaceName::new_unchecked(namespace),
+        &checked(relations),
+    )
 }
 
 /// A document's relations, in document order.
-fn listed(document: &TheoryDocument) -> Vec<(RelationName, Rewrite<RelationName>)> {
+fn listed(document: &NamespaceDocument) -> Vec<(RelationName, Rewrite<RelationName>)> {
     document
         .relations
         .relations()
@@ -107,8 +110,8 @@ fn listed(document: &TheoryDocument) -> Vec<(RelationName, Rewrite<RelationName>
 fn printed_expression(tree: Rewrite<RelationName>) -> String {
     let mut relations: Vec<_> = DECLARED.iter().map(|name| (relation(name), This)).collect();
     relations.push((relation("r"), tree));
-    let theory = Theory::new(relations).expect("a valid theory");
-    let text = theory::print(&t(), &theory);
+    let namespace = Namespace::new(relations).expect("a valid namespace");
+    let text = namespace::print(&t(), &namespace);
     let line = text
         .lines()
         .find(|line| line.starts_with("    \"r\": "))
@@ -126,9 +129,9 @@ fn exclusion<N>(base: Rewrite<N>, excluded: Rewrite<N>) -> Rewrite<N> {
 #[test]
 fn the_sample_parses() {
     let document = parsed(include_str!(
-        "../../sungma/tests/fixtures/theories/file.json"
+        "../../sungma/tests/fixtures/namespaces/file.json"
     ));
-    assert_eq!(document.theory.as_str(), "file");
+    assert_eq!(document.namespace.as_str(), "file");
     let viewer = &document
         .relations
         .relations()
@@ -208,17 +211,17 @@ fn a_name_is_the_longest_run_of_name_characters() {
 }
 
 #[test]
-fn a_dotted_theory_name_is_one_name() {
+fn a_dotted_namespace_name_is_one_name() {
     assert_eq!(
         parsed(r#"{ "drive.file": { "owner": "this" } }"#)
-            .theory
+            .namespace
             .as_str(),
         "drive.file"
     );
 }
 
 #[test]
-fn a_theory_without_relations_is_empty() {
+fn a_namespace_without_relations_is_empty() {
     assert!(
         parsed(r#"{ "t": {} }"#)
             .relations
@@ -322,15 +325,21 @@ fn a_relation_maps_to_a_non_empty_string() {
 }
 
 #[test]
-fn a_document_declares_exactly_one_theory() {
-    assert!(matches!(only("{}").kind, ErrorKind::NoTheory));
+fn a_document_declares_exactly_one_namespace() {
+    assert!(matches!(only("{}").kind, ErrorKind::NoNamespace));
     let error = only(r#"{ "a": {}, "b": {} }"#);
-    assert_eq!(error.to_string(), "a document declares one theory, not 2");
+    assert_eq!(
+        error.to_string(),
+        "a document declares one namespace, not 2"
+    );
     let error = only(r#"{ "\u0061": {}, "b": {} }"#);
-    assert_eq!(error.to_string(), "a document declares one theory, not 2");
+    assert_eq!(
+        error.to_string(),
+        "a document declares one namespace, not 2"
+    );
     assert!(matches!(
         only(r#"{ "a": {}, "a": {} }"#).kind,
-        ErrorKind::ManyTheories(2)
+        ErrorKind::ManyNamespaces(2)
     ));
     for json in ["[]", "null", r#""t""#] {
         assert!(matches!(only(json).kind, ErrorKind::NotAnObject), "{json}");
@@ -369,7 +378,7 @@ fn a_relation_named_twice_is_one_error() {
     let error = only(r#"{ "t": { "a": "this", "a": "this" } }"#);
     assert!(matches!(
         error.kind,
-        ErrorKind::Theory(TheoryError::DuplicateRelation(_))
+        ErrorKind::Namespace(NamespaceError::DuplicateRelation(_))
     ));
 }
 
@@ -388,14 +397,17 @@ fn a_rewrite_nests_at_most_max_depth() {
     rewrite(&chain(MAX_REWRITE_DEPTH - 1));
     let (column, kind) = syntax(&chain(MAX_REWRITE_DEPTH));
     assert_eq!(column, None);
-    assert!(matches!(kind, ErrorKind::Theory(TheoryError::TooDeep)));
+    assert!(matches!(
+        kind,
+        ErrorKind::Namespace(NamespaceError::TooDeep)
+    ));
     // Unions in groups: each level is a run, one level however wide.
     let unions =
         |levels: usize| (1..levels).fold("a".to_owned(), |inner, _| format!("(a | {inner})"));
     rewrite(&unions(MAX_REWRITE_DEPTH));
     assert!(matches!(
         syntax(&unions(MAX_REWRITE_DEPTH + 1)).1,
-        ErrorKind::Theory(TheoryError::TooDeep)
+        ErrorKind::Namespace(NamespaceError::TooDeep)
     ));
 }
 
@@ -422,7 +434,7 @@ fn every_problem_is_reported_in_document_order() {
     );
     assert!(matches!(
         &errors[2].kind,
-        ErrorKind::Theory(TheoryError::RewriteCycle { path, .. }) if path == &["d", "e", "d"]
+        ErrorKind::Namespace(NamespaceError::RewriteCycle { path, .. }) if path == &["d", "e", "d"]
     ));
 }
 
@@ -431,7 +443,7 @@ fn a_dangling_target_is_reported_once_per_relation() {
     let error = only(r#"{ "t": { "a": "x | x & (x, b)" } }"#);
     assert_eq!(
         error.to_string(),
-        "relation 'a': relation 'a' references 'x', which the theory doesn't declare"
+        "relation 'a': relation 'a' references 'x', which the namespace doesn't declare"
     );
 }
 
@@ -448,7 +460,7 @@ fn relations_that_reach_each_other_are_one_cycle() {
     assert_eq!(error.relation.as_deref(), Some("a"));
     assert!(matches!(
         error.kind,
-        ErrorKind::Theory(TheoryError::RewriteCycle { path, .. }) if path == ["a", "b", "a"]
+        ErrorKind::Namespace(NamespaceError::RewriteCycle { path, .. }) if path == ["a", "b", "a"]
     ));
 }
 
@@ -474,7 +486,7 @@ fn errors_name_their_place() {
         error.to_string(),
         "relation 'r', column 4: expected 'this', a relation name or '(', found the end"
     );
-    assert_eq!(only("{}").to_string(), "a document declares no theory");
+    assert_eq!(only("{}").to_string(), "a document declares no namespace");
 }
 
 #[test]
@@ -502,7 +514,7 @@ fn the_printer_writes_the_canonical_form() {
     ];
     assert_eq!(
         print("file", &relations),
-        include_str!("../../sungma/tests/fixtures/theories/file.json")
+        include_str!("../../sungma/tests/fixtures/namespaces/file.json")
     );
     assert_eq!(print("t", &[]), "{\n  \"t\": {}\n}\n");
 }
@@ -597,14 +609,14 @@ fn each_limit_holds_at_its_value_and_breaks_one_past_it() {
     ));
 
     assert_eq!(
-        parsed(&theory_of(MAX_RELATIONS, |_| "this".to_owned()))
+        parsed(&namespace_of(MAX_RELATIONS, |_| "this".to_owned()))
             .relations
             .relations()
             .count(),
         MAX_RELATIONS
     );
     assert!(matches!(
-        only(&theory_of(MAX_RELATIONS + 1, |_| "this".to_owned())).kind,
+        only(&namespace_of(MAX_RELATIONS + 1, |_| "this".to_owned())).kind,
         ErrorKind::TooManyRelations(501)
     ));
 
@@ -620,8 +632,8 @@ fn each_limit_holds_at_its_value_and_breaks_one_past_it() {
     ));
 }
 
-/// A theory `t` of relations `r0`, `r1` and on, each mapped by `expression`.
-fn theory_of(count: usize, expression: impl Fn(usize) -> String) -> String {
+/// A namespace `t` of relations `r0`, `r1` and on, each mapped by `expression`.
+fn namespace_of(count: usize, expression: impl Fn(usize) -> String) -> String {
     let relations: Vec<_> = (0..count)
         .map(|i| format!(r#""r{i}": "{}""#, expression(i)))
         .collect();
@@ -631,12 +643,12 @@ fn theory_of(count: usize, expression: impl Fn(usize) -> String) -> String {
 // Names.
 
 #[test]
-fn a_dotted_theory_name_needs_a_name_between_each_dot() {
-    for theory in [".a", "a.", "a..b", "a.1b"] {
-        let error = only(&format!(r#"{{ "{theory}": {{ "a": "this" }} }}"#));
+fn a_dotted_namespace_name_needs_a_name_between_each_dot() {
+    for namespace in [".a", "a.", "a..b", "a.1b"] {
+        let error = only(&format!(r#"{{ "{namespace}": {{ "a": "this" }} }}"#));
         assert!(
             matches!(error.kind, ErrorKind::Name(NameError::Invalid(_))),
-            "{theory}"
+            "{namespace}"
         );
     }
 }
@@ -659,14 +671,17 @@ fn a_dangling_target_is_reported_for_each_relation_that_names_it() {
 // Printing.
 
 #[test]
-fn every_fixture_theory_is_in_canonical_form() {
+fn every_fixture_namespace_is_in_canonical_form() {
     for text in [
-        include_str!("../../sungma/tests/fixtures/theories/file.json"),
-        include_str!("../../sungma/tests/fixtures/theories/folder.json"),
-        include_str!("../../sungma/tests/fixtures/theories/group.json"),
+        include_str!("../../sungma/tests/fixtures/namespaces/file.json"),
+        include_str!("../../sungma/tests/fixtures/namespaces/folder.json"),
+        include_str!("../../sungma/tests/fixtures/namespaces/group.json"),
     ] {
         let document = parsed(text);
-        assert_eq!(theory::print(&document.theory, &document.relations), text);
+        assert_eq!(
+            namespace::print(&document.namespace, &document.relations),
+            text
+        );
     }
 }
 
@@ -675,8 +690,8 @@ fn key_order_doesnt_change_the_printed_form() {
     let one = parsed(r#"{ "t": { "b": "this", "a": "b", "c": "a & b" } }"#);
     let other = parsed(r#"{ "t": { "c": "a & b", "a": "b", "b": "this" } }"#);
     assert_eq!(
-        theory::print(&t(), &one.relations),
-        theory::print(&t(), &other.relations)
+        namespace::print(&t(), &one.relations),
+        namespace::print(&t(), &other.relations)
     );
 }
 
@@ -706,11 +721,12 @@ fn the_printer_refuses_caller_defects() {
         ("t", vec![("a b", This), ("r", Computed("a b"))]),
         ("t.", vec![("r", This)]),
     ];
-    for (theory, relations) in defects {
+    for (namespace, relations) in defects {
         let checked = checked(&relations);
-        let theory = TheoryName::new_unchecked(theory);
-        let printed = panic::catch_unwind(AssertUnwindSafe(|| theory::print(&theory, &checked)));
-        assert!(printed.is_err(), "printed {theory}: {relations:?}");
+        let namespace = NamespaceName::new_unchecked(namespace);
+        let printed =
+            panic::catch_unwind(AssertUnwindSafe(|| namespace::print(&namespace, &checked)));
+        assert!(printed.is_err(), "printed {namespace}: {relations:?}");
     }
 }
 
@@ -719,7 +735,7 @@ fn the_printer_refuses_caller_defects() {
 const NAMES: [&str; 4] = ["r0", "r1", "r2", "r3"];
 
 /// A leaf for relation `at`. Computed subjectsets name only later relations,
-/// so a theory of them has no cycle.
+/// so a namespace of them has no cycle.
 fn leaf(at: usize) -> BoxedStrategy<Rewrite<RelationName>> {
     let fact_to = (0..NAMES.len(), 0..NAMES.len()).prop_map(|(f, c)| fact_to(NAMES[f], NAMES[c]));
     if at + 1 == NAMES.len() {
@@ -781,7 +797,7 @@ fn tree(at: usize) -> BoxedStrategy<Rewrite<RelationName>> {
     prop_oneof![small(at), deep(at), wide(at)].boxed()
 }
 
-fn theory() -> impl Strategy<Value = Vec<(RelationName, Rewrite<RelationName>)>> {
+fn namespace() -> impl Strategy<Value = Vec<(RelationName, Rewrite<RelationName>)>> {
     (tree(0), tree(1), tree(2), tree(3)).prop_map(|(a, b, c, d)| {
         NAMES
             .iter()
@@ -794,16 +810,16 @@ fn theory() -> impl Strategy<Value = Vec<(RelationName, Rewrite<RelationName>)>>
 const TOKENS: [&str; 11] = ["this", "r0", "r1", "r2", "(", ")", ",", "|", "&", "!", " "];
 
 proptest! {
-    /// Printing a theory and parsing it back gives an equal theory, and
+    /// Printing a namespace and parsing it back gives an equal namespace, and
     /// printing that gives the same text.
     #[test]
-    fn a_printed_theory_parses_back_equal(relations in theory()) {
-        let checked = Theory::new(relations.clone()).expect("a valid theory");
-        let text = theory::print(&t(), &checked);
-        let document = theory::parse(&text)
+    fn a_printed_namespace_parses_back_equal(relations in namespace()) {
+        let checked = Namespace::new(relations.clone()).expect("a valid namespace");
+        let text = namespace::print(&t(), &checked);
+        let document = namespace::parse(&text)
             .map_err(|errors| TestCaseError::fail(format!("{text}\n{errors:?}")))?;
         prop_assert_eq!(listed(&document), relations);
-        prop_assert_eq!(theory::print(&t(), &document.relations), text);
+        prop_assert_eq!(namespace::print(&t(), &document.relations), text);
     }
 
     /// Expression text built from the grammar's tokens either is refused, or
@@ -816,19 +832,19 @@ proptest! {
         let json = format!(
             r#"{{ "t": {{ "r": "{expression}", "r0": "this", "r1": "this", "r2": "this" }} }}"#
         );
-        if let Ok(document) = theory::parse(&json) {
-            let text = theory::print(&t(), &document.relations);
-            let again = theory::parse(&text)
+        if let Ok(document) = namespace::parse(&json) {
+            let text = namespace::print(&t(), &document.relations);
+            let again = namespace::parse(&text)
                 .map_err(|errors| TestCaseError::fail(format!("{text}\n{errors:?}")))?;
             prop_assert_eq!(listed(&again), listed(&document));
-            prop_assert_eq!(theory::print(&t(), &again.relations), text);
+            prop_assert_eq!(namespace::print(&t(), &again.relations), text);
         }
     }
 
     /// The parser never panics, whatever text it is given.
     #[test]
     fn any_text_is_parsed_or_refused(text in any::<String>()) {
-        let _ = theory::parse(&text);
+        let _ = namespace::parse(&text);
     }
 
     /// The parser never panics on near-JSON text, or on any expression.
@@ -837,9 +853,9 @@ proptest! {
         text in r#"[{}\[\]":, tThisr0-9_.|&!()\\]{0,200}"#,
         expression in any::<String>(),
     ) {
-        let _ = theory::parse(&text);
+        let _ = namespace::parse(&text);
         let json = format!(r#"{{ "t": {{ "r": {} }} }}"#, serde_json::to_string(&expression).unwrap());
-        let _ = theory::parse(&json);
+        let _ = namespace::parse(&json);
     }
 }
 
@@ -861,7 +877,7 @@ fn within<T>(work: impl FnOnce() -> T) -> T {
 
 #[test]
 fn the_longest_chain_of_relations_is_checked_quickly() {
-    let chain = theory_of(MAX_RELATIONS, |i| format!("r{}", i + 1));
+    let chain = namespace_of(MAX_RELATIONS, |i| format!("r{}", i + 1));
     let errors = within(|| refused(&chain));
     assert_eq!(errors.len(), 1);
     assert_eq!(errors[0].relation.as_deref(), Some("r499"));
@@ -870,11 +886,11 @@ fn the_longest_chain_of_relations_is_checked_quickly() {
 #[test]
 fn the_largest_set_of_relations_reaching_each_other_is_one_cycle() {
     let count = MAX_RELATIONS;
-    let ring = theory_of(count, |i| {
+    let ring = namespace_of(count, |i| {
         format!("r{} | r{}", (i + 1) % count, (i + 7) % count)
     });
     let error = within(|| only(&ring));
-    let ErrorKind::Theory(TheoryError::RewriteCycle { path, .. }) = error.kind else {
+    let ErrorKind::Namespace(NamespaceError::RewriteCycle { path, .. }) = error.kind else {
         panic!("expected a cycle, got {error}");
     };
     assert_eq!(path.first(), path.last());
@@ -884,7 +900,7 @@ fn the_largest_set_of_relations_reaching_each_other_is_one_cycle() {
 #[test]
 fn far_more_relations_than_the_limit_are_refused_quickly() {
     let count = 200_000;
-    let many = theory_of(count, |_| "this".to_owned());
+    let many = namespace_of(count, |_| "this".to_owned());
     assert!(many.len() <= MAX_DOCUMENT_BYTES);
     let error = within(|| only(&many));
     assert!(matches!(error.kind, ErrorKind::TooManyRelations(200_000)));
@@ -1259,12 +1275,12 @@ fn a_reserved_or_overlong_name_is_refused_where_it_appears() {
 
 #[test]
 fn the_relation_limit_counts_distinct_relations() {
-    let mut document = theory_of(MAX_RELATIONS, |_| "this".to_owned());
+    let mut document = namespace_of(MAX_RELATIONS, |_| "this".to_owned());
     document.insert_str(document.len() - 4, r#", "r0": "this""#);
     let error = only(&document);
     assert_eq!(error.relation.as_deref(), Some("r0"));
     assert!(matches!(
         error.kind,
-        ErrorKind::Theory(TheoryError::DuplicateRelation(_))
+        ErrorKind::Namespace(NamespaceError::DuplicateRelation(_))
     ));
 }

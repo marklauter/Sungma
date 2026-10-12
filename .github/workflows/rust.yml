@@ -160,7 +160,7 @@ jobs:
     # to 64 KiB reach larger shapes than libFuzzer's 4 KiB default. The target
     # is named because the prebuilt cargo-fuzz defaults to musl, which the
     # address sanitizer can't build for.
-    - name: Fuzz the theory document parser for a minute
+    - name: Fuzz the namespace document parser for a minute
       run: >
         mkdir -p fuzz/corpus/document &&
         cargo +$NIGHTLY fuzz run --target x86_64-unknown-linux-gnu

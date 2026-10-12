@@ -7,7 +7,7 @@ use crate::{
 };
 
 /// A version of the evaluation rules. Bumped whenever a change could make
-/// the same facts and theories at the same revision decide differently.
+/// the same facts and namespaces at the same revision decide differently.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Semantics(pub u32);
 

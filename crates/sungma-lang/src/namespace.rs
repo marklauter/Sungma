@@ -1,5 +1,5 @@
-//! Theory documents: the JSON form of one theory, as
-//! `docs/specs/theory-documents.md` specifies.
+//! Namespace documents: the JSON form of one namespace, as
+//! `docs/specs/namespace-documents.md` specifies.
 //!
 //! ```json
 //! {
@@ -14,9 +14,9 @@
 //! ```
 //!
 //! serde_json reads the JSON, and refuses a document that isn't JSON with
-//! its own error. Sungma reads each expression, checks the theory whole, and
+//! its own error. Sungma reads each expression, checks the namespace whole, and
 //! reports every problem it finds, up to [`MAX_ERRORS`]. [`print()`] writes a
-//! theory back as a document that parses as an equal theory.
+//! namespace back as a document that parses as an equal namespace.
 
 use std::{
     collections::HashSet,
@@ -32,13 +32,13 @@ use thiserror::Error;
 
 pub use sungma::name::{MAX_NAME_BYTES, MAX_QUOTE_BYTES};
 use sungma::{
-    id::{RelationId, TheoryId},
-    name::{NameError, RelationName, TheoryName, quote},
+    id::{NamespaceId, RelationId},
+    name::{NameError, NamespaceName, RelationName, quote},
+    namespace::{MAX_REWRITE_DEPTH, Namespace, NamespaceError, Problem},
     rewrite::Rewrite,
     store::Pool,
-    theory::{MAX_REWRITE_DEPTH, Problem, Theory, TheoryError},
 };
-use sungma_memory::{MemoryDictionary, MemoryTheoryStore};
+use sungma_memory::{MemoryDictionary, MemoryNamespaceStore};
 
 pub const MAX_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_RELATIONS: usize = 500;
@@ -46,11 +46,11 @@ pub const MAX_EXPRESSION_BYTES: usize = 4096;
 /// How many errors a refused document reports before [`ErrorKind::TooManyErrors`].
 pub const MAX_ERRORS: usize = 50;
 
-/// One theory as a document declares it, its relations in document order.
+/// One namespace as a document declares it, its relations in document order.
 #[derive(Debug)]
-pub struct TheoryDocument {
-    pub theory: TheoryName,
-    pub relations: Theory<RelationName>,
+pub struct NamespaceDocument {
+    pub namespace: NamespaceName,
+    pub relations: Namespace<RelationName>,
 }
 
 /// A problem in a document, with the relation it was found at and, inside
@@ -79,15 +79,15 @@ pub enum ErrorKind {
     Json(serde_json::Error),
     #[error("a document is at most {MAX_DOCUMENT_BYTES} bytes")]
     TooLarge,
-    #[error("a document is a JSON object keyed by its theory's name")]
+    #[error("a document is a JSON object keyed by its namespace's name")]
     NotAnObject,
-    #[error("a document declares no theory")]
-    NoTheory,
-    #[error("a document declares one theory, not {0}")]
-    ManyTheories(usize),
-    #[error("theory '{0}' maps to an object of relations")]
+    #[error("a document declares no namespace")]
+    NoNamespace,
+    #[error("a document declares one namespace, not {0}")]
+    ManyNamespaces(usize),
+    #[error("namespace '{0}' maps to an object of relations")]
     RelationsNotAnObject(String),
-    #[error("a theory declares at most {MAX_RELATIONS} relations, not {0}")]
+    #[error("a namespace declares at most {MAX_RELATIONS} relations, not {0}")]
     TooManyRelations(usize),
     #[error("'{0}' contains a JSON escape")]
     Escape(String),
@@ -105,13 +105,13 @@ pub enum ErrorKind {
     #[error("parentheses nest more than {MAX_REWRITE_DEPTH} deep")]
     TooManyParentheses,
     #[error(transparent)]
-    Theory(TheoryError),
+    Namespace(NamespaceError),
     #[error("too many errors; the first {MAX_ERRORS} are reported")]
     TooManyErrors,
 }
 
-/// Parses and checks a theory document, as the [module](self) describes.
-pub fn parse(text: &str) -> Result<TheoryDocument, Vec<DocumentError>> {
+/// Parses and checks a namespace document, as the [module](self) describes.
+pub fn parse(text: &str) -> Result<NamespaceDocument, Vec<DocumentError>> {
     let fail = |kind| Err(vec![error(None, None, kind)]);
     if text.len() > MAX_DOCUMENT_BYTES {
         return fail(ErrorKind::TooLarge);
@@ -120,32 +120,32 @@ pub fn parse(text: &str) -> Result<TheoryDocument, Vec<DocumentError>> {
         Ok(json) => json,
         Err(json) => return fail(ErrorKind::Json(json)),
     };
-    let Json::Object(mut theories) = json else {
+    let Json::Object(mut namespaces) = json else {
         return fail(ErrorKind::NotAnObject);
     };
-    let (theory, relations) = match theories.len() {
-        0 => return fail(ErrorKind::NoTheory),
-        1 => theories.remove(0),
-        count => return fail(ErrorKind::ManyTheories(count)),
+    let (namespace, relations) = match namespaces.len() {
+        0 => return fail(ErrorKind::NoNamespace),
+        1 => namespaces.remove(0),
+        count => return fail(ErrorKind::ManyNamespaces(count)),
     };
     let mut errors = Errors::default();
     // A name that fails is still kept, unchecked, for the checks that
     // follow; the document is refused, so it never leaves.
-    let theory = match theory {
+    let namespace = match namespace {
         Text::Plain(name) => name.parse().unwrap_or_else(|error| {
             errors.push(None, None, ErrorKind::Name(error));
-            TheoryName::new_unchecked(name)
+            NamespaceName::new_unchecked(name)
         }),
         Text::Escaped(name) => {
             errors.push(None, None, ErrorKind::Escape(quote(&name)));
-            TheoryName::new_unchecked(name)
+            NamespaceName::new_unchecked(name)
         }
     };
     let Json::Object(entries) = relations else {
         errors.push(
             None,
             None,
-            ErrorKind::RelationsNotAnObject(quote(theory.as_str())),
+            ErrorKind::RelationsNotAnObject(quote(namespace.as_str())),
         );
         return Err(errors.finish().unwrap_or_default());
     };
@@ -174,7 +174,7 @@ pub fn parse(text: &str) -> Result<TheoryDocument, Vec<DocumentError>> {
             }
         };
         // A relation whose expression fails is still declared, as `this`,
-        // so the theory reports nothing more about it.
+        // so the namespace reports nothing more about it.
         let rewrite = match value {
             Leaf::Text(Text::Plain("")) => Err((None, ErrorKind::NotAnExpression)),
             Leaf::Text(Text::Plain(expression)) if expression.len() > MAX_EXPRESSION_BYTES => {
@@ -193,37 +193,40 @@ pub fn parse(text: &str) -> Result<TheoryDocument, Vec<DocumentError>> {
         relations.push((name, rewrite));
     }
     let names: Vec<_> = relations.iter().map(|(name, _)| name.clone()).collect();
-    let relations = Theory::new(relations).map_err(|problems| {
+    let relations = Namespace::new(relations).map_err(|problems| {
         for Problem { at, error } in problems {
-            let kind = ErrorKind::Theory(quoted(error));
+            let kind = ErrorKind::Namespace(quoted(error));
             errors.at(Some(at), names[at].as_str(), None, kind);
         }
     });
     match (errors.finish(), relations) {
-        (None, Ok(relations)) => Ok(TheoryDocument { theory, relations }),
+        (None, Ok(relations)) => Ok(NamespaceDocument {
+            namespace,
+            relations,
+        }),
         (errors, _) => Err(errors.unwrap_or_default()),
     }
 }
 
-/// Every problem a refused theory document was found with.
+/// Every problem a refused namespace document was found with.
 #[derive(Debug, Error)]
 #[error("{}", .0.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
 pub struct Refusal(pub Vec<DocumentError>);
 
-/// Parses each document in turn and declares its theory, interning its
+/// Parses each document in turn and declares its namespace, interning its
 /// names in `dictionary`.
-pub fn load_theories(
+pub fn load_namespaces(
     documents: &[&str],
     dictionary: &MemoryDictionary,
-    theories: &mut MemoryTheoryStore,
+    namespaces: &mut MemoryNamespaceStore,
 ) -> Result<(), Refusal> {
     for document in documents {
         let document = parse(document).map_err(Refusal)?;
-        let id = TheoryId(dictionary.intern(Pool::Theories, document.theory.as_str()));
+        let id = NamespaceId(dictionary.intern(Pool::Namespaces, document.namespace.as_str()));
         let relations = document
             .relations
             .map(|name| RelationId(dictionary.intern(Pool::Relations, name.as_str())));
-        theories.declare(id, relations);
+        namespaces.declare(id, relations);
     }
     Ok(())
 }
@@ -236,7 +239,7 @@ fn error(relation: Option<&str>, column: Option<usize>, kind: ErrorKind) -> Docu
     }
 }
 
-/// Errors in document order: those of the theory first, then each
+/// Errors in document order: those of the namespace first, then each
 /// relation's in its order, then by column.
 #[derive(Default)]
 struct Errors(Vec<(Option<usize>, DocumentError)>);
@@ -264,17 +267,19 @@ impl Errors {
     }
 }
 
-/// A theory problem with the names it carries quoted.
-fn quoted(problem: TheoryError) -> TheoryError {
+/// A namespace problem with the names it carries quoted.
+fn quoted(problem: NamespaceError) -> NamespaceError {
     match problem {
-        TheoryError::DuplicateRelation(relation) => {
-            TheoryError::DuplicateRelation(quote(&relation))
+        NamespaceError::DuplicateRelation(relation) => {
+            NamespaceError::DuplicateRelation(quote(&relation))
         }
-        TheoryError::DanglingReference { relation, target } => TheoryError::DanglingReference {
-            relation: quote(&relation),
-            target: quote(&target),
-        },
-        TheoryError::RewriteCycle { path, omitted } => TheoryError::RewriteCycle {
+        NamespaceError::DanglingReference { relation, target } => {
+            NamespaceError::DanglingReference {
+                relation: quote(&relation),
+                target: quote(&target),
+            }
+        }
+        NamespaceError::RewriteCycle { path, omitted } => NamespaceError::RewriteCycle {
             path: path.iter().map(|relation| quote(relation)).collect(),
             omitted,
         },
@@ -311,7 +316,7 @@ enum Leaf<'a> {
     Other,
 }
 
-/// A document: theories, each an object of relations, each a [`Leaf`].
+/// A document: namespaces, each an object of relations, each a [`Leaf`].
 type Document<'a> = Json<'a, Json<'a, Leaf<'a>>>;
 
 struct TextVisitor;
@@ -668,21 +673,21 @@ fn relation(lexeme: Lexeme<'_>) -> Result<RelationName, Failure> {
         .map_err(|error| (Some(lexeme.column), ErrorKind::Name(error)))
 }
 
-/// Writes a theory as a document that [`parse`] reads back as an equal
-/// theory: relations sorted by name, two-space indents, `\n` line ends.
+/// Writes a namespace as a document that [`parse`] reads back as an equal
+/// namespace: relations sorted by name, two-space indents, `\n` line ends.
 ///
 /// # Panics
 ///
-/// On a caller defect, a theory no document can declare: a name made with
+/// On a caller defect, a namespace no document can declare: a name made with
 /// `new_unchecked` that breaks the grammar, including `this`, or a union or
 /// intersection with one operand.
-pub fn print(theory: &TheoryName, relations: &Theory<RelationName>) -> String {
-    if let Err(error) = theory.as_str().parse::<TheoryName>() {
+pub fn print(namespace: &NamespaceName, relations: &Namespace<RelationName>) -> String {
+    if let Err(error) = namespace.as_str().parse::<NamespaceName>() {
         panic!("{error}");
     }
     let mut relations: Vec<_> = relations.relations().collect();
     relations.sort_by_key(|(name, _)| *name);
-    let mut text = format!("{{\n  \"{theory}\": {{");
+    let mut text = format!("{{\n  \"{namespace}\": {{");
     for (i, (name, rewrite)) in relations.iter().enumerate() {
         let separator = if i == 0 { "\n" } else { ",\n" };
         let _ = write!(text, "{separator}    \"{}\": \"", printable(name));

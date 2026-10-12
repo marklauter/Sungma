@@ -4,7 +4,7 @@
 
 use sungma::{
     graph::{Resource, Subjectset},
-    id::{IdentityId, RelationId, ResourceId, TheoryId},
+    id::{IdentityId, NamespaceId, RelationId, ResourceId},
     name::{ResourceName, SubjectsetName},
     store::{Dictionary, Pool, StoreError},
 };
@@ -13,18 +13,18 @@ pub async fn resource<D: Dictionary>(
     dictionary: &D,
     name: &ResourceName,
 ) -> Result<Option<Resource>, StoreError> {
-    let Some(theory) = dictionary
-        .lookup(Pool::Theories, name.theory().as_str())
+    let Some(namespace) = dictionary
+        .lookup(Pool::Namespaces, name.namespace().as_str())
         .await?
     else {
         return Ok(None);
     };
-    let theory = TheoryId(theory);
+    let namespace = NamespaceId(namespace);
     let id = dictionary
-        .lookup(Pool::Resources(theory), name.id())
+        .lookup(Pool::Resources(namespace), name.id())
         .await?;
     Ok(id.map(|id| Resource {
-        theory,
+        namespace,
         id: ResourceId(id),
     }))
 }

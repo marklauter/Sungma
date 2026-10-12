@@ -1,12 +1,12 @@
 ---
 title: epoch
 type: definition
-summary: "The revision of the theory version that last introduced a relation, before which no fact under the relation counts."
+summary: "The revision of the namespace version that last introduced a relation, before which no fact under the relation counts."
 status: evolving
 is-a: "[[revision]]"
 ---
 
-The revision of the theory version that last introduced a relation, before which no fact under the relation counts.
+The revision of the namespace version that last introduced a relation, before which no fact under the relation counts.
 
 ## Examples
 
@@ -15,4 +15,4 @@ The revision of the theory version that last introduced a relation, before which
 
 ## Rationale
 
-A snapshot picks a theory version by revision, and the epoch then filters the facts under each relation that version declares. A fact counts when its [[span]] covers the snapshot's revision and opened at or after its relation's epoch. Each theory version records an epoch per relation, so a replay at an earlier revision reads the earlier epoch.
+A snapshot picks a namespace version by revision, and the epoch then filters the facts under each relation that version declares. A fact counts when its [[span]] covers the snapshot's revision and opened at or after its relation's epoch. Each namespace version records an epoch per relation, so a replay at an earlier revision reads the earlier epoch.

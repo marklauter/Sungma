@@ -1,4 +1,4 @@
-//! Decisions, replay, and the audited Check service, against the theories
+//! Decisions, replay, and the audited Check service, against the namespaces
 //! in [`common`].
 
 mod common;
@@ -19,7 +19,7 @@ use sungma_check::{
 };
 use sungma_lang::fact::load_facts;
 
-/// `theory:id#relation@subject`
+/// `namespace:id#relation@subject`
 async fn fact(world: &World, set: &str, subject: Subject) -> Fact {
     Fact {
         subjectset: subjectset(world, set).await.unwrap(),
@@ -27,7 +27,7 @@ async fn fact(world: &World, set: &str, subject: Subject) -> Fact {
     }
 }
 
-/// `theory:id#...`
+/// `namespace:id#...`
 async fn member(world: &World, resource: &str) -> Subject {
     let resource = resolve::resource(&world.dictionary, &resource.parse().unwrap()).await;
     Subject::ResourceMember(resource.unwrap().unwrap())
@@ -36,7 +36,7 @@ async fn member(world: &World, resource: &str) -> Subject {
 async fn decide(world: &World, set: &str, who: &str, revision: Revision) -> Decision {
     let set = subjectset(world, set).await.unwrap();
     let subject = identity(world, who).await.unwrap();
-    Closure::new(&world.theories, &world.facts, set, revision)
+    Closure::new(&world.namespaces, &world.facts, set, revision)
         .decide(subject)
         .await
         .unwrap()
@@ -126,23 +126,23 @@ async fn replay_at_the_recorded_revision_ignores_later_writes() {
     let world = world();
     let decision = decide(&world, "file:design.md#viewer", "alice", head(&world).await).await;
 
-    let ban = r#"[{ "theory": "file", "resource": "design.md", "relation": "banned", "subject": { "identity": "alice" } }]"#;
+    let ban = r#"[{ "namespace": "file", "resource": "design.md", "relation": "banned", "subject": { "identity": "alice" } }]"#;
     load_facts(ban, &world.dictionary, &world.facts).unwrap();
 
-    let replayed = replay(&decision, &world.theories, &world.facts).await;
+    let replayed = replay(&decision, &world.namespaces, &world.facts).await;
     assert_eq!(replayed.unwrap(), Replay::Matches);
     let now = decide(&world, "file:design.md#viewer", "alice", head(&world).await).await;
     assert_eq!(now.outcome, Outcome::Denied);
 }
 
 #[tokio::test]
-async fn replay_differs_when_a_theory_changes() {
+async fn replay_differs_when_a_namespace_changes() {
     let mut world = world();
     let decision = decide(&world, "file:design.md#viewer", "alice", head(&world).await).await;
 
-    // Theories aren't versioned yet, so this edit reaches the past revision.
+    // Namespaces aren't versioned yet, so this edit reaches the past revision.
     declare(
-        &mut world.theories,
+        &mut world.namespaces,
         &world.dictionary,
         "file",
         "viewer",
@@ -150,7 +150,7 @@ async fn replay_differs_when_a_theory_changes() {
     )
     .unwrap();
 
-    let replayed = replay(&decision, &world.theories, &world.facts).await;
+    let replayed = replay(&decision, &world.namespaces, &world.facts).await;
     let Replay::Differs { now } = replayed.unwrap() else {
         panic!("expected the replay to differ");
     };
@@ -166,7 +166,7 @@ async fn replay_reports_the_same_verdict_on_other_grounds() {
     decision.outcome = Outcome::Allowed {
         grounds: grounds(&healthy)[1..].to_vec(),
     };
-    let replayed = replay(&decision, &world.theories, &world.facts).await;
+    let replayed = replay(&decision, &world.namespaces, &world.facts).await;
     assert_eq!(replayed.unwrap(), Replay::Regrounded { now: healthy });
 }
 
@@ -175,7 +175,7 @@ async fn replay_reports_a_semantics_change() {
     let world = world();
     let mut decision = decide(&world, "file:design.md#viewer", "alice", head(&world).await).await;
     decision.semantics = Semantics(0);
-    let replayed = replay(&decision, &world.theories, &world.facts).await;
+    let replayed = replay(&decision, &world.namespaces, &world.facts).await;
     assert!(matches!(
         replayed.unwrap(),
         Replay::SemanticsChanged {
@@ -209,7 +209,7 @@ fn person(name: &str) -> SubjectName {
 async fn check_records_each_verdict_with_its_context() {
     let world = world();
     let audit = MemoryAuditLog::default();
-    let service = CheckService::new(&world.dictionary, &world.theories, &world.facts, &audit);
+    let service = CheckService::new(&world.dictionary, &world.namespaces, &world.facts, &audit);
 
     let allowed = request("file:design.md", "viewer", person("alice"));
     let verdict = service.check(context("r1"), allowed.clone()).await.unwrap();
@@ -230,7 +230,7 @@ async fn check_records_each_verdict_with_its_context() {
 async fn check_records_unknown_names_and_failures() {
     let world = world();
     let audit = MemoryAuditLog::default();
-    let service = CheckService::new(&world.dictionary, &world.theories, &world.facts, &audit);
+    let service = CheckService::new(&world.dictionary, &world.namespaces, &world.facts, &audit);
 
     let unknown = request("file:design.md", "viewer", person("mallory"));
     let verdict = service.check(context("r1"), unknown).await.unwrap();
@@ -253,7 +253,7 @@ async fn check_records_unknown_names_and_failures() {
 async fn check_accepts_a_zookie_at_the_latest_revision() {
     let world = world();
     let audit = MemoryAuditLog::default();
-    let service = CheckService::new(&world.dictionary, &world.theories, &world.facts, &audit);
+    let service = CheckService::new(&world.dictionary, &world.namespaces, &world.facts, &audit);
 
     let mut current = request("file:design.md", "viewer", person("alice"));
     current.zookie = Some(head(&world).await);
@@ -265,7 +265,7 @@ async fn check_accepts_a_zookie_at_the_latest_revision() {
 async fn check_accepts_a_subjectset_as_the_subject() {
     let world = world();
     let audit = MemoryAuditLog::default();
-    let service = CheckService::new(&world.dictionary, &world.theories, &world.facts, &audit);
+    let service = CheckService::new(&world.dictionary, &world.namespaces, &world.facts, &audit);
 
     let eng = SubjectName::Subjectset("group:eng#member".parse().unwrap());
     let verdict = service
