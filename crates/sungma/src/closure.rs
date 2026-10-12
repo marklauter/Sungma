@@ -38,6 +38,7 @@ use crate::{
     decision::{Decision, Outcome, SEMANTICS},
     graph::{Fact, Subject, Subjectset},
     id::RelationId,
+    non_empty::NonEmpty,
     revision::Revision,
     rewrite::Rewrite,
     store::{FactStore, NamespaceStore, StoreError},
@@ -72,45 +73,60 @@ pub enum Expansion {
 /// steps return their futures boxed.
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+/// The subjectsets being evaluated, innermost first. Each step links to the
+/// one before it on the caller's stack, so a step costs no copy.
+struct Path<'a> {
+    set: Subjectset,
+    up: Option<&'a Path<'a>>,
+    depth: usize,
+}
+
+impl Path<'_> {
+    fn holds(&self, set: &Subjectset) -> bool {
+        let mut step = Some(self);
+        while let Some(at) = step {
+            if at.set == *set {
+                return true;
+            }
+            step = at.up;
+        }
+        false
+    }
+}
+
 /// What a membership check collects as it succeeds: the facts that
 /// establish it for [`Closure::decide`], or nothing for [`Closure::contains`].
 trait Proof: Send + Sized {
-    fn empty() -> Self;
-    /// A fact stored under the subjectset in hand.
-    fn fact(fact: Fact) -> Self;
+    /// A fact stored under the subjectset in hand, built only when the
+    /// proof keeps it.
+    fn fact(fact: impl FnOnce() -> Fact) -> Self;
     /// The fact that led to a subjectset, followed by the proof found there.
-    fn cite(fact: Fact, proof: Self) -> Self;
+    /// The fact is built only when the proof keeps it.
+    fn cite(fact: impl FnOnce() -> Fact, proof: Self) -> Self;
     /// Adds the proof of another intersection operand.
     fn join(&mut self, proof: Self);
 }
 
-impl Proof for Vec<Fact> {
-    fn empty() -> Self {
-        Vec::new()
+impl Proof for NonEmpty<Fact> {
+    fn fact(fact: impl FnOnce() -> Fact) -> Self {
+        NonEmpty::one(fact())
     }
 
-    fn fact(fact: Fact) -> Self {
-        vec![fact]
-    }
-
-    fn cite(fact: Fact, proof: Self) -> Self {
-        let mut cited = Vec::with_capacity(proof.len() + 1);
-        cited.push(fact);
-        cited.extend(proof);
+    fn cite(fact: impl FnOnce() -> Fact, proof: Self) -> Self {
+        let mut cited = NonEmpty::one(fact());
+        cited.append(proof);
         cited
     }
 
     fn join(&mut self, proof: Self) {
-        self.extend(proof);
+        self.append(proof);
     }
 }
 
 impl Proof for () {
-    fn empty() -> Self {}
+    fn fact(_: impl FnOnce() -> Fact) -> Self {}
 
-    fn fact(_: Fact) -> Self {}
-
-    fn cite(_: Fact, _: Self) -> Self {}
+    fn cite(_: impl FnOnce() -> Fact, _: Self) -> Self {}
 
     fn join(&mut self, _: Self) {}
 }
@@ -190,7 +206,7 @@ where
 pub struct Closure<'a, T, F> {
     namespaces: &'a T,
     facts: &'a F,
-    subjectset: Subjectset,
+    subjectset: &'a Subjectset,
     revision: Revision,
 }
 
@@ -198,7 +214,7 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
     pub fn new(
         namespaces: &'a T,
         facts: &'a F,
-        subjectset: Subjectset,
+        subjectset: &'a Subjectset,
         revision: Revision,
     ) -> Self {
         Self {
@@ -211,12 +227,12 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
 
     /// Judges whether `subject` is in the closure.
     pub async fn decide(&self, subject: Subject) -> Result<Decision, ClosureError> {
-        let outcome = match self.judge(subject).await? {
+        let outcome = match self.judge(&subject).await? {
             Some(grounds) => Outcome::Allowed { grounds },
             None => Outcome::Denied,
         };
         Ok(Decision {
-            subjectset: self.subjectset,
+            subjectset: self.subjectset.clone(),
             subject,
             revision: self.revision,
             semantics: SEMANTICS,
@@ -228,14 +244,17 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
     /// [`Closure::decide`], but it collects no grounds, so it allocates no
     /// facts. For callers that need many verdicts and no audit, such as
     /// filtering a list.
-    pub async fn contains(&self, subject: Subject) -> Result<bool, ClosureError> {
+    pub async fn contains(&self, subject: &Subject) -> Result<bool, ClosureError> {
         let proof: Option<()> = self.judge(subject).await?;
         Ok(proof.is_some())
     }
 
     /// The proof of membership, `None` when there is none.
-    async fn judge<P: Proof>(&self, subject: Subject) -> Result<Option<P>, ClosureError> {
-        match self.contains_at(self.subjectset, subject, &[]).await? {
+    async fn judge<P: Proof>(&self, subject: &Subject) -> Result<Option<P>, ClosureError> {
+        match self
+            .contains_at(self.subjectset.clone(), subject, None)
+            .await?
+        {
             Holds(proof) => Ok(Some(proof)),
             Fails => Ok(None),
             Unknown(error) => Err(error.into()),
@@ -252,7 +271,7 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
     }
 
     /// `None` when the namespace or the relation isn't declared.
-    async fn rewrite(&self, set: Subjectset) -> Result<Option<Arc<Rewrite>>, StoreError> {
+    async fn rewrite(&self, set: &Subjectset) -> Result<Option<Arc<Rewrite>>, StoreError> {
         self.namespaces
             .rewrite(set.resource.namespace, set.relation)
             .await
@@ -264,51 +283,69 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
     fn contains_at<'b, P: Proof + 'b>(
         &'b self,
         set: Subjectset,
-        subject: Subject,
-        path: &'b [Subjectset],
+        subject: &'b Subject,
+        path: Option<&'b Path<'b>>,
     ) -> BoxFuture<'b, Walk<P>> {
         Box::pin(async move {
-            if path.contains(&set) {
+            if path.is_some_and(|path| path.holds(&set)) {
                 return Ok(Fails);
             }
-            if path.len() >= MAX_DEPTH {
+            let depth = path.map_or(0, |path| path.depth);
+            if depth >= MAX_DEPTH {
                 return Err(ClosureError::DepthExceeded(MAX_DEPTH));
             }
-            let rewrite = match self.rewrite(set).await {
+            let rewrite = match self.rewrite(&set).await {
                 Ok(Some(rewrite)) => rewrite,
                 Ok(None) => return Ok(Fails),
                 Err(error) => return Ok(Unknown(error)),
             };
-            let path = [path, &[set]].concat();
-            self.contains_node(&rewrite, set, subject, &path).await
+            let path = Path {
+                set,
+                up: path,
+                depth: depth + 1,
+            };
+            self.contains_node(&rewrite, &path.set, subject, Some(&path))
+                .await
         })
     }
 
     fn contains_node<'b, P: Proof + 'b>(
         &'b self,
         rewrite: &'b Rewrite,
-        set: Subjectset,
-        subject: Subject,
-        path: &'b [Subjectset],
+        set: &'b Subjectset,
+        subject: &'b Subject,
+        path: Option<&'b Path<'b>>,
     ) -> BoxFuture<'b, Walk<P>> {
         Box::pin(async move {
             match rewrite {
                 Rewrite::This => self.contains_this(set, subject, path).await,
                 Rewrite::Computed(relation) => {
                     let computed = Subjectset {
+                        resource: set.resource.clone(),
                         relation: *relation,
-                        ..set
                     };
                     self.contains_at(computed, subject, path).await
                 }
                 Rewrite::FactTo { factset, computed } => {
-                    let targets = match self.fact_targets(set, *factset, *computed).await {
+                    let factset = &Subjectset {
+                        resource: set.resource.clone(),
+                        relation: *factset,
+                    };
+                    let targets = match self.fact_targets(factset, *computed).await {
                         Ok(targets) => targets,
                         Err(error) => return Ok(Unknown(error)),
                     };
-                    any(targets, move |(fact, target)| async move {
+                    any(targets, move |(cited, target)| async move {
                         let found = self.contains_at(target, subject, path).await?;
-                        Ok(found.map(|proof| P::cite(fact, proof)))
+                        Ok(found.map(|proof| {
+                            P::cite(
+                                || Fact {
+                                    subjectset: factset.clone(),
+                                    subject: cited,
+                                },
+                                proof,
+                            )
+                        }))
                     })
                     .await
                 }
@@ -319,13 +356,14 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
                     .await
                 }
                 Rewrite::Intersection(operands) => {
-                    let mut answer = Holds(P::empty());
-                    for operand in operands {
-                        let found = self.contains_node(operand, set, subject, path).await?;
-                        answer = answer.and(found);
+                    let (first, rest) = operands.first_and_rest();
+                    let mut answer = self.contains_node(first, set, subject, path).await?;
+                    for operand in rest {
                         if let Fails = answer {
                             break;
                         }
+                        let found = self.contains_node(operand, set, subject, path).await?;
+                        answer = answer.and(found);
                     }
                     Ok(answer)
                 }
@@ -347,15 +385,15 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
     /// or is a member of a subjectset stored there.
     async fn contains_this<P: Proof>(
         &self,
-        set: Subjectset,
-        subject: Subject,
-        path: &[Subjectset],
+        set: &Subjectset,
+        subject: &Subject,
+        path: Option<&Path<'_>>,
     ) -> Walk<P> {
         let direct = match self.facts.contains(set, subject, self.revision).await {
             Ok(true) => {
-                return Ok(Holds(P::fact(Fact {
-                    subjectset: set,
-                    subject,
+                return Ok(Holds(P::fact(|| Fact {
+                    subjectset: set.clone(),
+                    subject: subject.clone(),
                 })));
             }
             Ok(false) => Fails,
@@ -364,12 +402,16 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
         let nested = match self.facts.subjectsets(set, self.revision).await {
             Ok(nested) => {
                 any(nested, move |nested| async move {
-                    let fact = Fact {
-                        subjectset: set,
-                        subject: Subject::Subjectset(nested),
-                    };
-                    let found = self.contains_at(nested, subject, path).await?;
-                    Ok(found.map(|proof| P::cite(fact, proof)))
+                    let found = self.contains_at(nested.clone(), subject, path).await?;
+                    Ok(found.map(|proof| {
+                        P::cite(
+                            || Fact {
+                                subjectset: set.clone(),
+                                subject: Subject::Subjectset(nested),
+                            },
+                            proof,
+                        )
+                    }))
                 })
                 .await?
             }
@@ -381,7 +423,7 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
     fn expand_node<'b>(
         &'b self,
         rewrite: &'b Rewrite,
-        set: Subjectset,
+        set: &'b Subjectset,
     ) -> BoxFuture<'b, Result<Expansion, ClosureError>> {
         Box::pin(async move {
             Ok(match rewrite {
@@ -389,16 +431,22 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
                     Expansion::Subjects(self.facts.subjects(set, self.revision).await?)
                 }
                 Rewrite::Computed(relation) => Expansion::Reference(Subjectset {
+                    resource: set.resource.clone(),
                     relation: *relation,
-                    ..set
                 }),
-                Rewrite::FactTo { factset, computed } => Expansion::Union(
-                    self.fact_targets(set, *factset, *computed)
-                        .await?
-                        .into_iter()
-                        .map(|(_, target)| Expansion::Reference(target))
-                        .collect(),
-                ),
+                Rewrite::FactTo { factset, computed } => {
+                    let factset = Subjectset {
+                        resource: set.resource.clone(),
+                        relation: *factset,
+                    };
+                    Expansion::Union(
+                        self.fact_targets(&factset, *computed)
+                            .await?
+                            .into_iter()
+                            .map(|(_, target)| Expansion::Reference(target))
+                            .collect(),
+                    )
+                }
                 Rewrite::Union(operands) => Expansion::Union(self.expand_all(operands, set).await?),
                 Rewrite::Intersection(operands) => {
                     Expansion::Intersection(self.expand_all(operands, set).await?)
@@ -414,7 +462,7 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
     async fn expand_all(
         &self,
         operands: &[Rewrite],
-        set: Subjectset,
+        set: &Subjectset,
     ) -> Result<Vec<Expansion>, ClosureError> {
         let mut expanded = Vec::with_capacity(operands.len());
         for operand in operands {
@@ -423,38 +471,29 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
         Ok(expanded)
     }
 
-    /// `(factset, computed)`: each fact under `factset` that names a
-    /// resource, paired with that resource's `computed` subjectset. A
-    /// resource member names its resource and a subjectset names the
-    /// resource it belongs to, as in Zanzibar; identities name no resource
-    /// and are skipped.
+    /// Each subject stored under `factset` that names a resource, paired with
+    /// that resource's `computed` subjectset. A resource member names its
+    /// resource and a subjectset names the resource it belongs to, as in
+    /// Zanzibar; identities name no resource and are skipped.
     async fn fact_targets(
         &self,
-        set: Subjectset,
-        factset: RelationId,
+        factset: &Subjectset,
         computed: RelationId,
-    ) -> Result<Vec<(Fact, Subjectset)>, StoreError> {
-        let factset = Subjectset {
-            relation: factset,
-            ..set
-        };
+    ) -> Result<Vec<(Subject, Subjectset)>, StoreError> {
         let subjects = self.facts.subjects(factset, self.revision).await?;
         Ok(subjects
             .into_iter()
-            .filter_map(|subject| match subject {
-                Subject::ResourceMember(resource)
-                | Subject::Subjectset(Subjectset { resource, .. }) => {
-                    let fact = Fact {
-                        subjectset: factset,
-                        subject,
-                    };
-                    let target = Subjectset {
-                        resource,
-                        relation: computed,
-                    };
-                    Some((fact, target))
-                }
-                Subject::Identity(_) => None,
+            .filter_map(|subject| {
+                let resource = match &subject {
+                    Subject::ResourceMember(resource)
+                    | Subject::Subjectset(Subjectset { resource, .. }) => resource.clone(),
+                    Subject::Identity(_) => return None,
+                };
+                let target = Subjectset {
+                    resource,
+                    relation: computed,
+                };
+                Some((subject, target))
             })
             .collect())
     }

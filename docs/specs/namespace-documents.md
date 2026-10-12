@@ -45,7 +45,7 @@ The `file` namespace: files sit in folders, and `(parent, viewer)` reads the vie
 
 - A document is one JSON object with exactly one key, the namespace's name. Its value is an object mapping the namespace's relation names to their expressions.
 - Every expression is a string. A relation that takes only the facts bound to it is written `"owner": "this"`. A relation whose value is anything other than a non-empty string, such as `null`, `""`, a number or an object, is refused.
-- A namespace without relations is written `{}`. Any other value for the namespace, such as `null` or `[]`, is refused.
+- A namespace without relations is written `{}`. It names a kind of resource that is only ever a subject, `namespace:id`, of facts in other namespaces, as a `user` type does in other ReBAC models. Any other value for the namespace, such as `null` or `[]`, is refused.
 - A document declares exactly one namespace. An empty document or `{}` declares nothing, and an object with two or more keys declares more than one, so both are refused as parse errors. An API that takes a document answers either as a bad request.
 - An object with the same key twice is refused, including a relation named twice. JSON leaves duplicate keys to the reader, and a reader that keeps the last one would hide a mistake.
 - Key order carries no meaning.
@@ -59,7 +59,8 @@ A document is refused if it breaks any of these limits:
 - A document is at most 4 MiB. The other limits allow about 2.1 MB of compact JSON; the rest is room for whitespace.
 - A single namespace.
 - A namespace declares at most 500 relations.
-- A namespace or relation name is at most 64 bytes.
+- A namespace name is at most 256 bytes.
+- A relation name is at most 64 bytes.
 - An expression is at most 4 KiB (4,096 bytes).
 
 The rewrite depth limit is under [Checks](#checks).
@@ -137,7 +138,6 @@ A subjectset whose relation its namespace doesn't declare has an empty closure. 
 A namespace is checked whole when it is declared, and is refused if any of the following holds:
 
 - A relation is declared twice.
-- A union or intersection is empty. The grammar can't produce one, but a rewrite tree from another source can.
 - A rewrite nests more than 100 levels deep. A leaf is one level, a run of `|` or `&` is one level however many operands it has, and each `!` adds a level. Grouping parentheses nested more than 100 deep are also refused, before the tree is built.
 - A computed subjectset, or the factset of a fact-to-subjectset, names a relation the namespace doesn't declare. The computed relation of a fact-to-subjectset belongs to the namespace of the resource each fact binds, so it isn't checked.
 - Computed subjectsets form a cycle, such as `"viewer": "editor"` with `"editor": "viewer"`, or `"viewer": "this ! viewer"`. A cycle through a fact-to-subjectset, such as folders inside folders, reads a fact at each step and is allowed.
@@ -243,8 +243,8 @@ The cases each class covers, at minimum.
 
 #### Limits
 
-1. Each limit is tested at its value and one past it: a 64-byte name and a 65-byte one, a 4,096-byte expression and a 4,097-byte one, 500 relations and 501, a document of exactly the maximum size and one byte more, 100 levels of nesting and 101, and 100 grouping parentheses and 101.
-2. A dotted namespace name of exactly 64 bytes is accepted.
+1. Each limit is tested at its value and one past it: a 256-byte namespace name and a 257-byte one, a 64-byte relation name and a 65-byte one, a 4,096-byte expression and a 4,097-byte one, 500 relations and 501, a document of exactly the maximum size and one byte more, 100 levels of nesting and 101, and 100 grouping parentheses and 101.
+2. A dotted namespace name of exactly 256 bytes is accepted.
 
 #### Printing
 

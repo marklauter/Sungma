@@ -32,8 +32,8 @@ pub async fn replay<T: NamespaceStore + Sync, F: FactStore + Sync>(
     namespaces: &T,
     facts: &F,
 ) -> Result<Replay, ClosureError> {
-    let now = Closure::new(namespaces, facts, decision.subjectset, decision.revision)
-        .decide(decision.subject)
+    let now = Closure::new(namespaces, facts, &decision.subjectset, decision.revision)
+        .decide(decision.subject.clone())
         .await?;
     Ok(if decision.semantics != SEMANTICS {
         Replay::SemanticsChanged {

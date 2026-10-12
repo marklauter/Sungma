@@ -29,7 +29,7 @@ A write follows commit-wait:
 3. `wait(stamped)`.
 4. Acknowledge, returning the [[revision-token]] for `stamped.revision`.
 
-True time is not yet past the stamp, so a stamp is never in the past. After the wait, true time is past the stamp. A write that starts after the acknowledgement therefore stamps a later revision, on any node. A read at revision `t` waits until no write at or before `t` is still in flight, so a [[snapshot]] never shows a later write without an earlier one.
+True time is not yet past the stamp, so a stamp is never in the past. After the wait, true time is past the stamp. A write that starts after the acknowledgement therefore stamps a later revision, on any node. Writes that overlap are ordered by their revisions, but a read can run before an earlier-stamped write is stored; see [Overlapping writes](#overlapping-writes).
 
 Revisions need not be unique. Two writes stamped with the same revision are concurrent, and a snapshot at that revision holds both.
 
@@ -134,6 +134,25 @@ On ECS on Fargate, `SystemClock` takes `NtpClock` unless the task's kernel repor
 - A task reaches at least three servers from independent operators: outbound UDP 123 for queries and TCP 4460 for NTS key exchange, through a NAT gateway or a public IP.
 - Internet servers give bounds of tens of milliseconds, and the bound grows by up to 32 ms between syncs until the window has measured its drift, so commit-wait adds tens of milliseconds to each write.
 - Amazon Time Sync at `169.254.169.123` smears leap seconds, so it isn't mixed with the servers above.
+
+## Overlapping writes
+
+Commit-wait orders writes in sequence: a write that starts after another is acknowledged stamps a later revision. Writes that overlap are ordered by their revisions too, since the revision is the canonical order. But a write is stamped on the writer node before it travels to the store, and the trip can take longer than another write's whole commit-wait. So a read can run before a write stamped earlier than the read's revision is stored.
+
+For example:
+
+1. Write A removes Bob from a folder. It is stamped revision 5, and its store write stalls on a slow socket.
+2. Write B adds a document to the folder. It is stamped revision 7, is stored, waits out its commit-wait and is acknowledged.
+3. A check at 7 runs before A is stored. Bob was removed before the document was added, but the check lets him see it.
+4. A is stored. A second check at 7 denies Bob.
+
+Sungma accepts this race. Reads at a revision are eventually consistent for writes that overlap: once every write stamped at or before R is stored, every read at R gives the same answer. For writes in sequence, the new enemy problem stays solved, since the first write is stored before it is acknowledged. For writes that overlap, a check inside the race window can miss an earlier-stamped write, and a replay of a decision made then can report `Differs` or `Regrounded`.
+
+A stamp taken before the write reaches the store is closer to arrival order than Zanzibar's commit timestamp, and the race needs a write to stall longer than another's whole commit-wait. The alternatives were weighed and not taken:
+
+- **Stamp where the data is stored.** Spanner does this, so a write has no timestamp until it arrives and a read at R can wait for safe time. It needs a store that assigns timestamps in its commit, which off-the-shelf stores don't offer. A sequencer or a counter in the store would be a hot spot.
+- **Wait for writes in flight.** A read can't, since nothing can know a write exists while it sits in a socket.
+- **A write deadline.** Each write would get a deadline D after its stamp, reads at R would wait until R + D, and a write landing late would be refused. Every read would lag by D.
 
 ## Required tests
 

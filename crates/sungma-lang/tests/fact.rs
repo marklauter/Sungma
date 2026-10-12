@@ -7,7 +7,10 @@ use proptest::prelude::*;
 use serde_json::{Value, json};
 use sungma::{
     graph::Subject,
-    name::{MAX_IDENTITY_BYTES, MAX_NAME_BYTES, MAX_RESOURCE_BYTES, ResourceName, SubjectsetName},
+    name::{
+        MAX_IDENTITY_BYTES, MAX_NAMESPACE_BYTES, MAX_RELATION_BYTES, MAX_RESOURCE_ID_BYTES,
+        ResourceName, SubjectsetName,
+    },
     store::{FactStore, Pool},
 };
 use sungma_check::resolve;
@@ -45,8 +48,6 @@ async fn a_subject_is_read_by_its_keys() {
     ]"#;
     fact::load_facts(json, &dictionary, &facts).unwrap();
     assert_eq!(facts.head().await.unwrap().0, 3);
-    let anne = resolve::identity(&dictionary, "anne@example.com").await;
-    assert!(anne.unwrap().is_some());
     let folder = resolve::resource(&dictionary, &"folder:root".parse().unwrap()).await;
     assert!(folder.unwrap().is_some());
 }
@@ -167,7 +168,7 @@ fn whitespace_in_a_resource_or_identity_is_refused() {
         with_subject(r#"{ "namespace": "group", "resource": "e ng", "relation": "member" }"#),
     ] {
         let error = refused(&json);
-        assert!(error.contains("holds whitespace"), "{error}");
+        assert!(error.contains("other than printable ASCII"), "{error}");
         assert!(error.contains("line 1 column"), "{error}");
     }
 }
@@ -204,8 +205,6 @@ async fn a_refused_document_declares_no_facts() {
     ]"#;
     assert!(fact::load_facts(json, &dictionary, &facts).is_err());
     assert_eq!(facts.head().await.unwrap().0, 0);
-    let alice = resolve::identity(&dictionary, "alice").await.unwrap();
-    assert_eq!(alice, None);
     let file = resolve::resource(&dictionary, &"file:a".parse().unwrap()).await;
     assert_eq!(file.unwrap(), None);
 }
@@ -219,17 +218,15 @@ fn a_fact_and_a_subject_must_be_objects() {
 }
 
 #[tokio::test]
-async fn resource_ids_are_pooled_per_namespace() {
-    let dictionary = MemoryDictionary::default();
-    let facts = MemoryFactStore::default();
-    let json = r#"[{ "namespace": "file", "resource": "a", "relation": "owner",
-        "subject": { "identity": "alice" } }]"#;
-    fact::load_facts(json, &dictionary, &facts).unwrap();
-    let file = resolve::resource(&dictionary, &"file:a".parse().unwrap()).await;
-    assert!(file.unwrap().is_some());
-    dictionary.intern(Pool::Namespaces, "folder");
-    let folder = resolve::resource(&dictionary, &"folder:a".parse().unwrap()).await;
-    assert_eq!(folder.unwrap(), None);
+async fn one_resource_id_names_a_resource_per_namespace() {
+    let world = loaded(
+        r#"[{ "namespace": "file", "resource": "a", "relation": "owner",
+        "subject": { "identity": "alice" } }]"#,
+    );
+    world.0.intern(Pool::Namespaces, "folder");
+    let alice = identity("alice");
+    assert!(holds(&world, ("file", "a", "owner"), &alice).await);
+    assert!(!holds(&world, ("folder", "a", "owner"), &alice).await);
 }
 
 /// The subject of a fact, as a test writes it.
@@ -268,7 +265,7 @@ fn loaded(json: &str) -> (MemoryDictionary, MemoryFactStore) {
 }
 
 fn set_name(namespace: &str, resource: &str, relation: &str) -> SubjectsetName {
-    let resource = ResourceName::new(namespace.parse().unwrap(), resource).unwrap();
+    let resource = ResourceName::new(namespace.parse().unwrap(), resource.parse().unwrap());
     SubjectsetName::new(resource, relation.parse().unwrap())
 }
 
@@ -284,12 +281,9 @@ async fn holds(
         return false;
     };
     let subject = match subject {
-        Who::Identity(identity) => resolve::identity(dictionary, identity)
-            .await
-            .unwrap()
-            .map(Subject::Identity),
+        Who::Identity(identity) => Some(Subject::Identity(identity.parse().unwrap())),
         Who::Resource(namespace, resource) => {
-            let name = ResourceName::new(namespace.parse().unwrap(), resource).unwrap();
+            let name = ResourceName::new(namespace.parse().unwrap(), resource.parse().unwrap());
             resolve::resource(dictionary, &name)
                 .await
                 .unwrap()
@@ -306,7 +300,7 @@ async fn holds(
         return false;
     };
     let head = facts.head().await.unwrap();
-    facts.contains(set, subject, head).await.unwrap()
+    facts.contains(&set, &subject, head).await.unwrap()
 }
 
 fn identity(text: &str) -> Who {
@@ -364,7 +358,7 @@ async fn opaque_text_is_kept_as_written() {
         r"C:\docs\a.md",
         "a+b=c>d",
         "anne@example.com",
-        "é🦀",
+        "!~",
     ];
     let mut documents = Vec::new();
     for text in texts {
@@ -396,10 +390,16 @@ fn whitespace_of_every_kind_is_refused() {
         let text = format!("a{space}b");
         let fact = fact_json("file", &text, "owner", &identity("x"));
         let error = refused(&json!([fact]).to_string());
-        assert!(error.contains("holds whitespace"), "{text:?}: {error}");
+        assert!(
+            error.contains("other than printable ASCII"),
+            "{text:?}: {error}"
+        );
         let fact = fact_json("file", "a", "owner", &identity(&text));
         let error = refused(&json!([fact]).to_string());
-        assert!(error.contains("holds whitespace"), "{text:?}: {error}");
+        assert!(
+            error.contains("other than printable ASCII"),
+            "{text:?}: {error}"
+        );
     }
 }
 
@@ -411,31 +411,32 @@ async fn case_is_kept() {
     ]);
     let world = loaded(&documents.to_string());
     assert_eq!(world.1.head().await.unwrap().0, 2);
-    let upper = resolve::identity(&world.0, "Anne").await.unwrap();
-    let lower = resolve::identity(&world.0, "anne").await.unwrap();
-    assert!(upper.is_some() && lower.is_some() && upper != lower);
+    let owner = ("file", "a", "owner");
+    assert!(holds(&world, owner, &identity("Anne")).await);
+    assert!(holds(&world, owner, &identity("anne")).await);
+    assert!(!holds(&world, owner, &identity("ANNE")).await);
 }
 
 #[test]
-fn a_resource_is_at_most_max_resource_bytes() {
-    let resource = |len: usize| "x".repeat(len - "file:".len());
+fn a_resource_id_is_at_most_max_resource_id_bytes() {
+    let resource = |len: usize| "x".repeat(len);
     let fact = fact_json(
         "file",
-        &resource(MAX_RESOURCE_BYTES),
+        &resource(MAX_RESOURCE_ID_BYTES),
         "owner",
         &identity("x"),
     );
     loaded(&json!([fact]).to_string());
-    let too_long = format!("longer than {MAX_RESOURCE_BYTES} bytes");
+    let too_long = format!("longer than {MAX_RESOURCE_ID_BYTES} bytes");
     let fact = fact_json(
         "file",
-        &resource(MAX_RESOURCE_BYTES + 1),
+        &resource(MAX_RESOURCE_ID_BYTES + 1),
         "owner",
         &identity("x"),
     );
     let error = refused(&json!([fact]).to_string());
     assert!(error.contains(&too_long), "{error}");
-    let subject = Who::Resource("file".into(), resource(MAX_RESOURCE_BYTES + 1));
+    let subject = Who::Resource("file".into(), resource(MAX_RESOURCE_ID_BYTES + 1));
     let error = refused(&json!([fact_json("file", "a", "parent", &subject)]).to_string());
     assert!(error.contains(&too_long), "{error}");
 }
@@ -463,17 +464,23 @@ fn an_identity_is_at_most_max_identity_bytes() {
 }
 
 #[test]
-fn a_name_is_at_most_max_name_bytes() {
-    let longest = format!("n{}", "x".repeat(MAX_NAME_BYTES - 1));
-    let longer = format!("{longest}x");
-    loaded(&json!([fact_json(&longest, "a", &longest, &identity("x"))]).to_string());
-    for fact in [
-        fact_json(&longer, "a", "owner", &identity("x")),
-        fact_json("file", "a", &longer, &identity("x")),
+fn a_name_is_at_most_its_limit() {
+    let name = |bytes: usize| "n".repeat(bytes);
+    let (namespace, relation) = (name(MAX_NAMESPACE_BYTES), name(MAX_RELATION_BYTES));
+    loaded(&json!([fact_json(&namespace, "a", &relation, &identity("x"))]).to_string());
+    for (fact, max) in [
+        (
+            fact_json(&name(MAX_NAMESPACE_BYTES + 1), "a", "owner", &identity("x")),
+            MAX_NAMESPACE_BYTES,
+        ),
+        (
+            fact_json("file", "a", &name(MAX_RELATION_BYTES + 1), &identity("x")),
+            MAX_RELATION_BYTES,
+        ),
     ] {
         let error = refused(&json!([fact]).to_string());
         assert!(
-            error.contains(&format!("longer than {MAX_NAME_BYTES} bytes")),
+            error.contains(&format!("longer than {max} bytes")),
             "{error}"
         );
     }
@@ -535,11 +542,11 @@ async fn a_large_document_loads_within_a_time_bound() {
 #[tokio::test]
 async fn a_json_escape_is_decoded_before_the_rules_apply() {
     let error = refused(&with_subject(r#"{ "identity": "a\u0020b" }"#));
-    assert!(error.contains("holds whitespace"), "{error}");
+    assert!(error.contains("other than printable ASCII"), "{error}");
     let world = loaded(&with_subject(r#"{ "identity": "C:\\docs" }"#));
     assert!(holds(&world, ("file", "a", "owner"), &identity(r"C:\docs")).await);
-    let world = loaded(&with_subject(r#"{ "identity": "a\u0000b" }"#));
-    assert!(holds(&world, ("file", "a", "owner"), &identity("a\0b")).await);
+    let error = refused(&with_subject(r#"{ "identity": "a\u0000b" }"#));
+    assert!(error.contains("other than printable ASCII"), "{error}");
 }
 
 #[test]
@@ -555,11 +562,16 @@ fn name() -> impl Strategy<Value = String> {
     "[a-z_][a-z0-9_]{0,8}".prop_filter("not this", |name| !name.eq_ignore_ascii_case("this"))
 }
 
+/// An opaque resource id or identity: printable ASCII.
+fn opaque() -> impl Strategy<Value = String> {
+    r"[!-~]{1,20}"
+}
+
 fn who() -> impl Strategy<Value = Who> {
     prop_oneof![
-        r"\S{1,20}".prop_map(Who::Identity),
-        (name(), r"\S{1,20}").prop_map(|(namespace, resource)| Who::Resource(namespace, resource)),
-        (name(), r"\S{1,20}", name()).prop_map(|(namespace, resource, relation)| Who::Subjectset(
+        opaque().prop_map(Who::Identity),
+        (name(), opaque()).prop_map(|(namespace, resource)| Who::Resource(namespace, resource)),
+        (name(), opaque(), name()).prop_map(|(namespace, resource, relation)| Who::Subjectset(
             namespace, resource, relation
         )),
     ]
@@ -569,7 +581,7 @@ proptest! {
     /// Generated documents load, and each fact is found under its names.
     #[test]
     fn a_generated_document_loads_and_each_fact_is_found(
-        facts in proptest::collection::vec((name(), r"\S{1,20}", name(), who()), 1..10),
+        facts in proptest::collection::vec((name(), opaque(), name(), who()), 1..10),
     ) {
         let documents: Vec<Value> = facts
             .iter()

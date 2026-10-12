@@ -10,6 +10,7 @@ use sungma::{
     closure::Closure,
     decision::{Decision, Outcome, SEMANTICS, Semantics},
     graph::{Fact, Subject},
+    non_empty::NonEmpty,
     replay::{Replay, replay},
     revision::Revision,
     rewrite::Rewrite::This,
@@ -35,8 +36,8 @@ async fn member(world: &World, resource: &str) -> Subject {
 
 async fn decide(world: &World, set: &str, who: &str, revision: Revision) -> Decision {
     let set = subjectset(world, set).await.unwrap();
-    let subject = identity(world, who).await.unwrap();
-    Closure::new(&world.namespaces, &world.facts, set, revision)
+    let subject = identity(who);
+    Closure::new(&world.namespaces, &world.facts, &set, revision)
         .decide(subject)
         .await
         .unwrap()
@@ -55,7 +56,7 @@ async fn grounds_cite_the_facts_along_the_granting_path() {
     let decision = decide(&world, "file:design.md#viewer", "alice", head(&world).await).await;
 
     let eng = subjectset(&world, "group:eng#member").await.unwrap();
-    let alice = identity(&world, "alice").await.unwrap();
+    let alice = identity("alice");
     let expected = [
         fact(
             &world,
@@ -70,7 +71,7 @@ async fn grounds_cite_the_facts_along_the_granting_path() {
         )
         .await,
         fact(&world, "folder:root#viewer", Subject::Subjectset(eng)).await,
-        fact(&world, "group:eng#member", alice).await,
+        fact(&world, "group:eng#member", alice.clone()).await,
     ];
     assert_eq!(grounds(&decision), expected);
     assert_eq!(decision.subject, alice);
@@ -81,7 +82,7 @@ async fn grounds_cite_the_facts_along_the_granting_path() {
 async fn rewrite_steps_without_facts_leave_no_grounds() {
     let world = world();
     let decision = decide(&world, "file:design.md#viewer", "carol", head(&world).await).await;
-    let carol = identity(&world, "carol").await.unwrap();
+    let carol = identity("carol");
     // viewer → editor → owner: only the owner fact is stored.
     assert_eq!(
         grounds(&decision),
@@ -99,7 +100,7 @@ async fn intersection_cites_every_operand() {
         head(&world).await,
     )
     .await;
-    let alice = identity(&world, "alice").await.unwrap();
+    let alice = identity("alice");
     let cited = grounds(&decision);
     assert_eq!(
         cited[0],
@@ -164,7 +165,7 @@ async fn replay_reports_the_same_verdict_on_other_grounds() {
     // As if a failed read had sent the walk down another path.
     let mut decision = healthy.clone();
     decision.outcome = Outcome::Allowed {
-        grounds: grounds(&healthy)[1..].to_vec(),
+        grounds: NonEmpty::new(grounds(&healthy)[1..].to_vec()).unwrap(),
     };
     let replayed = replay(&decision, &world.namespaces, &world.facts).await;
     assert_eq!(replayed.unwrap(), Replay::Regrounded { now: healthy });
@@ -202,7 +203,7 @@ fn request(resource: &str, relation: &str, subject: SubjectName) -> CheckRequest
 }
 
 fn person(name: &str) -> SubjectName {
-    SubjectName::Identity(name.to_owned())
+    SubjectName::Identity(name.parse().unwrap())
 }
 
 #[tokio::test]
@@ -232,13 +233,25 @@ async fn check_records_unknown_names_and_failures() {
     let audit = MemoryAuditLog::default();
     let service = CheckService::new(&world.dictionary, &world.namespaces, &world.facts, &audit);
 
-    let unknown = request("file:design.md", "viewer", person("mallory"));
+    // Only namespace and relation names are interned, so an unknown one
+    // ends the check before the fact store is read.
+    let unknown = request("drive:design.md", "viewer", person("alice"));
     let verdict = service.check(context("r1"), unknown).await.unwrap();
     assert_eq!(verdict, Verdict::Unknown);
 
-    let nowhere = request("file:nowhere.md", "viewer", person("alice"));
-    let verdict = service.check(context("r1"), nowhere).await.unwrap();
+    let undeclared = request("file:design.md", "reader", person("alice"));
+    let verdict = service.check(context("r1"), undeclared).await.unwrap();
     assert_eq!(verdict, Verdict::Unknown);
+
+    // An identity or resource no fact names is judged, and denied.
+    for (resource, who) in [("file:design.md", "mallory"), ("file:nowhere.md", "alice")] {
+        let request = request(resource, "viewer", person(who));
+        let verdict = service.check(context("r1"), request).await.unwrap();
+        assert!(
+            matches!(&verdict, Verdict::Decided(decision) if !decision.outcome.is_allowed()),
+            "{verdict:?}"
+        );
+    }
 
     let mut ahead = request("file:design.md", "viewer", person("alice"));
     ahead.zookie = Some(Revision(head(&world).await.0 + 1));
@@ -246,7 +259,9 @@ async fn check_records_unknown_names_and_failures() {
     assert!(matches!(verdict, Verdict::Failed(_)));
 
     let verdicts: Vec<_> = audit.records().into_iter().map(|r| r.verdict).collect();
-    assert_eq!(verdicts, [Verdict::Unknown, Verdict::Unknown, verdict]);
+    assert_eq!(verdicts.len(), 5);
+    assert_eq!(verdicts[..2], [Verdict::Unknown, Verdict::Unknown]);
+    assert_eq!(verdicts[4], verdict);
 }
 
 #[tokio::test]

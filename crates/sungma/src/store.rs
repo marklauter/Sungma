@@ -25,7 +25,8 @@ use crate::{
 pub struct StoreError(pub String);
 
 /// The pool a name is interned in. Each pool mints its own ids, so one id
-/// names different strings in different pools.
+/// names different strings in different pools. Only namespace and relation
+/// names are interned; see `docs/interner.md`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Pool {
     Namespaces,
@@ -33,9 +34,6 @@ pub enum Pool {
     /// `viewer` under whichever namespace a parent fact names, so a relation id
     /// means the same name in every namespace.
     Relations,
-    /// The resource ids of one namespace.
-    Resources(NamespaceId),
-    Identities,
 }
 
 /// Maps names to their interned ids and back, within a [`Pool`]. Read-only:
@@ -66,8 +64,8 @@ pub trait FactStore {
     /// Point lookup: whether `set@subject` is stored.
     fn contains(
         &self,
-        set: Subjectset,
-        subject: Subject,
+        set: &Subjectset,
+        subject: &Subject,
         revision: Revision,
     ) -> impl Future<Output = Result<bool, StoreError>> + Send;
 
@@ -75,14 +73,14 @@ pub trait FactStore {
     /// identities and resource members.
     fn subjectsets(
         &self,
-        set: Subjectset,
+        set: &Subjectset,
         revision: Revision,
     ) -> impl Future<Output = Result<Vec<Subjectset>, StoreError>> + Send;
 
     /// Every subject stored under `set`.
     fn subjects(
         &self,
-        set: Subjectset,
+        set: &Subjectset,
         revision: Revision,
     ) -> impl Future<Output = Result<Vec<Subject>, StoreError>> + Send;
 }

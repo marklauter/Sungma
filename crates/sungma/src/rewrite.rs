@@ -1,6 +1,6 @@
 //! The rewrite tree a relation evaluates.
 
-use crate::id::RelationId;
+use crate::{id::RelationId, non_empty::NonEmpty};
 
 /// A relation's rewrite.
 ///
@@ -20,8 +20,10 @@ pub enum Rewrite<R = RelationId> {
         factset: R,
         computed: R,
     },
-    Union(Vec<Rewrite<R>>),
-    Intersection(Vec<Rewrite<R>>),
+    /// Has at least one operand, so an empty union can't be built.
+    Union(NonEmpty<Rewrite<R>>),
+    /// Has at least one operand, so an empty intersection can't be built.
+    Intersection(NonEmpty<Rewrite<R>>),
     Exclusion(Box<Rewrite<R>>, Box<Rewrite<R>>),
 }
 
@@ -35,12 +37,8 @@ impl<R> Rewrite<R> {
                 factset: f(factset),
                 computed: f(computed),
             },
-            Rewrite::Union(operands) => {
-                Rewrite::Union(operands.into_iter().map(|r| r.map(f)).collect())
-            }
-            Rewrite::Intersection(operands) => {
-                Rewrite::Intersection(operands.into_iter().map(|r| r.map(f)).collect())
-            }
+            Rewrite::Union(operands) => Rewrite::Union(operands.map(|r| r.map(f))),
+            Rewrite::Intersection(operands) => Rewrite::Intersection(operands.map(|r| r.map(f))),
             Rewrite::Exclusion(base, excluded) => {
                 Rewrite::Exclusion(Box::new(base.map(f)), Box::new(excluded.map(f)))
             }

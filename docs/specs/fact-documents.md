@@ -74,7 +74,7 @@ A namespace name and a [[relation]] name follow the grammar in [Namespace docume
 A resource and an identity are owned by the caller: a natural key, a surrogate key, a GUID, a path or an email address. Sungma compares them and never interprets them. Each one:
 
 - is at least one character;
-- holds no whitespace;
+- is printable ASCII, `!` to `~`, so a caller encodes any other character, such as by percent-encoding;
 - is case-sensitive, so `Anne` and `anne` are two identities.
 
 Sungma's other interfaces, such as the check API and error messages, write a resource as `namespace:resource` and a subjectset as `namespace:resource#relation`. That text splits at the first `:` and the last `#`, because namespace and relation names allow neither. A fact document doesn't use it.
@@ -83,9 +83,12 @@ Sungma's other interfaces, such as the check API and error messages, write a res
 
 A fact is refused if it breaks any of these limits:
 
-- A namespace name and its resource, written `namespace:resource`, are at most 256 bytes.
+- A namespace name is at most 256 bytes.
+- A resource id is at most 512 bytes, room enough for a path.
+- A relation name is at most 64 bytes.
 - An identity is at most 512 bytes.
-- A namespace or relation name is at most 64 bytes.
+
+Each part guards its own limit. A resource, the pair of a namespace and a resource id, has no limit of its own.
 
 ## Errors
 
@@ -100,13 +103,13 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 1. **Document shape.** Each rule in [Document](#document) holds, for valid documents and for each way of breaking it.
 2. **Subjects.** Each kind of subject is read from its keys, and every other set of keys is refused.
 3. **Names.** Namespace and relation names follow the namespace document grammar, including the reserved `this`.
-4. **Resources and identities.** Opaque text is accepted, whitespace and empty text are refused, and case is kept.
+4. **Resources and identities.** Printable ASCII is accepted, any other character and empty text are refused, and case is kept.
 5. **Limits.** Each limit at its value and one past it.
 6. **Errors.** Each error carries the line and column of the value at fault, and quoted text is bounded and escaped.
 7. **All or nothing.** A refused document declares no facts and interns no names.
 8. **Round trips.** Generated documents load, and each fact is found under the names it was written with.
 9. **Hostile input.** Deeply nested values and large documents are refused or accepted without a crash and within a time bound.
-10. **Text and encoding.** JSON escapes, multibyte characters, NUL and a byte-order mark.
+10. **Text and encoding.** JSON escapes, NUL and a byte-order mark.
 11. **Fuzzing.** A `cargo-fuzz` target, and a property test in CI, assert the parser never panics, overflows its stack or aborts on arbitrary input, and that a refused document declares no facts.
 12. **Mutation testing.** `cargo mutants` leaves no surviving mutant in the parser or the name checks.
 
@@ -139,16 +142,17 @@ The cases each class covers, at minimum.
 
 #### Resources and identities
 
-1. Resources and identities holding `:`, `#`, `@`, `/`, `\`, `+`, `=`, `>` and non-ASCII characters load, and are found under the same text.
-2. Whitespace anywhere in a resource or an identity is refused, including a space, a tab, a line break, a no-break space and an em space.
+1. Resources and identities holding `:`, `#`, `@`, `/`, `\`, `+`, `=` and `>` load, and are found under the same text.
+2. A resource or an identity holding any character outside `!` to `~` is refused, including a space, a tab, a line break, ESC, DEL, `é`, U+200B and U+202E.
 3. An empty resource and an empty identity are refused.
 4. `Anne` and `anne` are two identities.
 
 #### Limits
 
-1. `namespace:resource` of 256 bytes loads and of 257 is refused.
-2. An identity of 512 bytes loads and of 513 is refused.
-3. A namespace or relation name of 64 bytes loads and of 65 is refused.
+1. A namespace name of 256 bytes loads and of 257 is refused.
+2. A resource id of 512 bytes loads and of 513 is refused.
+3. A relation name of 64 bytes loads and of 65 is refused.
+4. An identity of 512 bytes loads and of 513 is refused.
 
 #### Errors
 
@@ -171,8 +175,8 @@ The cases each class covers, at minimum.
 
 #### Text and encoding
 
-1. A JSON escape is decoded before the rules apply, so ` ` in a resource is whitespace and is refused, and `\` is a backslash.
-2. A raw NUL is refused by the JSON library, and an escaped `\u0000` is accepted as an opaque character.
+1. A JSON escape is decoded before the rules apply, so `\u0020` in a resource is a space and is refused, and `\\` is a backslash.
+2. A raw NUL is refused by the JSON library, and an escaped `\u0000` is refused as outside printable ASCII.
 3. A UTF-8 byte-order mark before the document is refused.
 
 #### Fuzzing

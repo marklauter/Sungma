@@ -2,17 +2,17 @@
 
 use proptest::prelude::*;
 use sungma::name::{
-    Identity, MAX_IDENTITY_BYTES, MAX_NAME_BYTES, MAX_QUOTE_BYTES, MAX_RESOURCE_BYTES, NameError,
-    NamespaceName, RelationName, ResourceName, SubjectsetName, quote,
+    Identity, MAX_IDENTITY_BYTES, MAX_NAMESPACE_BYTES, MAX_QUOTE_BYTES, MAX_RESOURCE_ID_BYTES,
+    NameError, NamespaceName, RelationName, ResourceId, ResourceName, SubjectsetName, quote,
 };
 
 #[test]
-fn a_resource_name_is_at_most_max_resource_bytes() {
-    let name = |len: usize| format!("file:{}", "x".repeat(len - "file:".len()));
-    assert!(name(MAX_RESOURCE_BYTES).parse::<ResourceName>().is_ok());
+fn a_resource_id_is_at_most_max_resource_id_bytes() {
+    let name = |len: usize| format!("file:{}", "x".repeat(len));
+    assert!(name(MAX_RESOURCE_ID_BYTES).parse::<ResourceName>().is_ok());
     assert!(matches!(
-        name(MAX_RESOURCE_BYTES + 1).parse::<ResourceName>(),
-        Err(NameError::ResourceTooLong(_))
+        name(MAX_RESOURCE_ID_BYTES + 1).parse::<ResourceName>(),
+        Err(NameError::ResourceIdTooLong(_))
     ));
 }
 
@@ -20,13 +20,16 @@ fn a_resource_name_is_at_most_max_resource_bytes() {
 fn a_resource_id_holds_no_whitespace() {
     for text in ["file:a b", "file:a\tb", "file:a\u{a0}b", "file:a\n"] {
         assert!(
-            matches!(text.parse::<ResourceName>(), Err(NameError::Whitespace(_))),
+            matches!(
+                text.parse::<ResourceName>(),
+                Err(NameError::NotPrintableAscii(_))
+            ),
             "{text:?}"
         );
     }
     assert!(matches!(
         "file:a b#owner".parse::<SubjectsetName>(),
-        Err(NameError::Whitespace(_))
+        Err(NameError::NotPrintableAscii(_))
     ));
 }
 
@@ -37,7 +40,10 @@ fn an_identity_is_opaque_but_holds_no_whitespace() {
     assert_eq!("".parse::<Identity>(), Err(NameError::EmptyIdentity));
     for text in ["a b", "a\tb", "a\u{2003}b"] {
         assert!(
-            matches!(text.parse::<Identity>(), Err(NameError::Whitespace(_))),
+            matches!(
+                text.parse::<Identity>(),
+                Err(NameError::NotPrintableAscii(_))
+            ),
             "{text:?}"
         );
     }
@@ -56,7 +62,7 @@ fn an_identity_is_at_most_max_identity_bytes() {
 fn a_subjectset_name_splits_at_the_first_colon_and_the_last_hash() {
     let name: SubjectsetName = "file:a:b#c#viewer".parse().unwrap();
     assert_eq!(name.resource().namespace().as_str(), "file");
-    assert_eq!(name.resource().id(), "a:b#c");
+    assert_eq!(name.resource().id().as_str(), "a:b#c");
     assert_eq!(name.relation().as_str(), "viewer");
     assert_eq!(name.to_string(), "file:a:b#c#viewer");
 }
@@ -65,7 +71,7 @@ fn a_subjectset_name_splits_at_the_first_colon_and_the_last_hash() {
 fn a_resource_name_splits_at_the_first_colon() {
     let name: ResourceName = "folder:a:b".parse().unwrap();
     assert_eq!(name.namespace().as_str(), "folder");
-    assert_eq!(name.id(), "a:b");
+    assert_eq!(name.id().as_str(), "a:b");
     assert_eq!(name.to_string(), "folder:a:b");
 }
 
@@ -134,11 +140,11 @@ fn the_namespace_and_relation_of_a_name_follow_the_grammar() {
     for (text, error) in cases {
         assert_eq!(text.parse::<SubjectsetName>(), Err(error), "{text}");
     }
-    let long = "n".repeat(MAX_NAME_BYTES + 1);
-    assert!(matches!(
+    let long = "n".repeat(MAX_NAMESPACE_BYTES + 1);
+    assert_eq!(
         format!("{long}:a").parse::<ResourceName>(),
-        Err(NameError::TooLong(_))
-    ));
+        Err(NameError::TooLong(quote(&long), MAX_NAMESPACE_BYTES))
+    );
 }
 
 #[test]
@@ -157,9 +163,12 @@ fn a_name_has_checked_and_unchecked_constructors() {
 
 #[test]
 fn a_name_error_quotes_a_bounded_and_escaped_cut_of_the_text() {
-    let long = format!("{}{}", "x".repeat(100), char::from_u32(0x202e).unwrap());
+    let long = format!("{}{}", "x".repeat(300), char::from_u32(0x202e).unwrap());
     let error = format!("{long}:a").parse::<ResourceName>().unwrap_err();
-    assert_eq!(error, NameError::TooLong(format!("{}...", "x".repeat(61))));
+    assert_eq!(
+        error,
+        NameError::TooLong(format!("{}...", "x".repeat(61)), MAX_NAMESPACE_BYTES)
+    );
     let hidden = format!("a{}b:x", char::from_u32(0x202e).unwrap());
     let error = hidden.parse::<ResourceName>().unwrap_err().to_string();
     assert!(error.contains("a\\u{202e}b"), "{error}");
@@ -178,7 +187,7 @@ proptest! {
         let text = format!("{namespace}:{id}#{relation}");
         let name: SubjectsetName = text.parse().unwrap();
         prop_assert_eq!(name.resource().namespace().as_str(), &namespace);
-        prop_assert_eq!(name.resource().id(), &id);
+        prop_assert_eq!(name.resource().id().as_str(), &id);
         prop_assert_eq!(name.relation().as_str(), &relation);
         prop_assert_eq!(name.to_string(), text);
     }
@@ -188,7 +197,7 @@ proptest! {
         let text = format!("{namespace}:{id}");
         let name: ResourceName = text.parse().unwrap();
         prop_assert_eq!(name.namespace().as_str(), &namespace);
-        prop_assert_eq!(name.id(), &id);
+        prop_assert_eq!(name.id().as_str(), &id);
         prop_assert_eq!(name.to_string(), text);
     }
 
@@ -230,4 +239,27 @@ fn a_cut_quote_fits_its_bound_with_the_cut_mark() {
     let cut = quote(&text(MAX_QUOTE_BYTES + 1));
     assert_eq!(cut, format!("{}...", text(MAX_QUOTE_BYTES - 3)));
     assert_eq!(cut.len(), MAX_QUOTE_BYTES);
+}
+
+#[test]
+fn an_identity_or_resource_id_is_printable_ascii() {
+    for hidden in ['\u{1b}', '\u{7f}', '\u{200b}', '\u{202e}', 'é', ' '] {
+        let text = format!("bob{hidden}");
+        assert!(
+            matches!(
+                text.parse::<Identity>(),
+                Err(NameError::NotPrintableAscii(_))
+            ),
+            "{hidden:?}"
+        );
+        assert!(
+            matches!(
+                text.parse::<ResourceId>(),
+                Err(NameError::NotPrintableAscii(_))
+            ),
+            "{hidden:?}"
+        );
+    }
+    assert!("bob@example.com/a#b:c".parse::<Identity>().is_ok());
+    assert!("folder/a#b:c".parse::<ResourceId>().is_ok());
 }

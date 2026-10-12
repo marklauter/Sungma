@@ -1,10 +1,11 @@
-//! Resolves the strings of a request to interned ids. A name that was
-//! never interned appears in no fact, so its check is denied without
-//! touching the fact store.
+//! Resolves the names of a request to the graph's values. Only namespace
+//! and relation names are interned; a name never interned appears in no
+//! fact, so its check is denied without touching the fact store. Resource
+//! ids and identities are kept as names.
 
 use sungma::{
     graph::{Resource, Subjectset},
-    id::{IdentityId, NamespaceId, RelationId, ResourceId},
+    id::{NamespaceId, RelationId},
     name::{ResourceName, SubjectsetName},
     store::{Dictionary, Pool, StoreError},
 };
@@ -13,20 +14,13 @@ pub async fn resource<D: Dictionary>(
     dictionary: &D,
     name: &ResourceName,
 ) -> Result<Option<Resource>, StoreError> {
-    let Some(namespace) = dictionary
+    Ok(dictionary
         .lookup(Pool::Namespaces, name.namespace().as_str())
         .await?
-    else {
-        return Ok(None);
-    };
-    let namespace = NamespaceId(namespace);
-    let id = dictionary
-        .lookup(Pool::Resources(namespace), name.id())
-        .await?;
-    Ok(id.map(|id| Resource {
-        namespace,
-        id: ResourceId(id),
-    }))
+        .map(|namespace| Resource {
+            namespace: NamespaceId(namespace),
+            id: name.id().clone(),
+        }))
 }
 
 pub async fn subjectset<D: Dictionary>(
@@ -45,14 +39,4 @@ pub async fn subjectset<D: Dictionary>(
         resource,
         relation: RelationId(relation),
     }))
-}
-
-pub async fn identity<D: Dictionary>(
-    dictionary: &D,
-    identity: &str,
-) -> Result<Option<IdentityId>, StoreError> {
-    Ok(dictionary
-        .lookup(Pool::Identities, identity)
-        .await?
-        .map(IdentityId))
 }

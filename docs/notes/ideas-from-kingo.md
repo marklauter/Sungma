@@ -95,9 +95,9 @@ Codes such as `namespace.rewrite_cycle` map onto the RFC 9457 `type` field.
 
 ### 9. Invalid rewrite trees can't be built
 
-Empty operators and excess depth are refused at construction.
+Empty operators can't be built, and excess depth is refused at construction.
 
-- **Sungma: partial.** `Rewrite` variants are public, and only `Namespace::new` checks them.
+- **Sungma: done.** Union and intersection operands are `NonEmpty`, and `Namespace::new` refuses excess depth.
 - Source: `src/Kingo.Theories/SubjectSetRewrite.cs`, `SubjectSetRewrite.Depth.cs`.
 
 ### 10. A rewrite text grammar with a printer that round-trips

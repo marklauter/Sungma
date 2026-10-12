@@ -3,6 +3,7 @@
 
 use crate::{
     graph::{Fact, Subject, Subjectset},
+    non_empty::NonEmpty,
     revision::Revision,
 };
 
@@ -17,8 +18,9 @@ pub const SEMANTICS: Semantics = Semantics(1);
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Outcome {
     /// `grounds` are the stored facts that establish the membership, in
-    /// evaluation order. Rewrite steps that read no fact leave no ground.
-    Allowed { grounds: Vec<Fact> },
+    /// evaluation order. Rewrite steps that read no fact leave no ground,
+    /// but every membership rests on at least one fact.
+    Allowed { grounds: NonEmpty<Fact> },
     /// No derivation exists, so there is nothing to cite.
     Denied,
 }

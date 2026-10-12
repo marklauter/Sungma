@@ -24,6 +24,7 @@
 //! audited.
 
 use std::{
+    str::FromStr,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -39,10 +40,7 @@ use axum::{
     routing::post,
 };
 use serde::{Deserialize, Serialize};
-use sungma::{
-    name::{NameError, SubjectsetName},
-    revision::Revision,
-};
+use sungma::{name::NameError, revision::Revision};
 use sungma_check::{
     CheckRequest, CheckService, MemoryAuditLog, RequestContext, SubjectName, Verdict,
 };
@@ -202,7 +200,7 @@ impl CheckBody {
     fn into_request(self) -> Result<CheckRequest, String> {
         let set = parse(&self.set)?;
         let subject = match (self.identity, self.subjectset) {
-            (Some(identity), None) => SubjectName::Identity(identity),
+            (Some(identity), None) => SubjectName::Identity(parse(&identity)?),
             (None, Some(set)) => SubjectName::Subjectset(parse(&set)?),
             _ => return Err("expected exactly one of identity or subjectset".to_owned()),
         };
@@ -214,6 +212,6 @@ impl CheckBody {
     }
 }
 
-fn parse(text: &str) -> Result<SubjectsetName, String> {
+fn parse<T: FromStr<Err = NameError>>(text: &str) -> Result<T, String> {
     text.parse().map_err(|error: NameError| error.to_string())
 }

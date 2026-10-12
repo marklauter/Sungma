@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use sungma::{
     id::RelationId,
     namespace::{MAX_CYCLE_NAMES, MAX_REWRITE_DEPTH, Namespace, NamespaceError, Problem},
+    nonempty,
     rewrite::Rewrite::{self, Computed, Exclusion, This, Union},
 };
 use sungma_lang::namespace::{ErrorKind, Refusal, load_namespaces, parse};
@@ -141,7 +142,7 @@ fn relations_sharing_a_target_are_no_cycle() {
 
 /// A chain of single-operand unions, `levels` deep counting the leaf.
 fn nested(levels: usize) -> Rewrite<&'static str> {
-    nested_in(levels, |rewrite| Union(vec![rewrite]))
+    nested_in(levels, |rewrite| Union(nonempty![rewrite]))
 }
 
 /// A chain of `wrap`s around `this`, `levels` deep counting the leaf.
@@ -269,7 +270,7 @@ fn a_large_cycle_built_in_code_is_one_problem() {
 fn every_problem_is_returned_in_declaration_order() {
     let problems = Namespace::new(vec![
         (0, Computed(9)),
-        (1, Union(vec![])),
+        (1, Computed(8)),
         (2, Computed(3)),
         (3, Computed(2)),
         (0, This),
@@ -306,7 +307,7 @@ fn a_cycle_path_stays_within_its_relations() {
     // a and b reach each other; b also leads out to c, which leads nowhere back.
     let problems = Namespace::new(vec![
         (0, Computed(1)),
-        (1, Union(vec![Computed(2), Computed(0)])),
+        (1, Union(nonempty![Computed(2), Computed(0)])),
         (2, This),
     ])
     .unwrap_err();

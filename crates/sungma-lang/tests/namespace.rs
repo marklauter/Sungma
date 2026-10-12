@@ -9,11 +9,13 @@ use proptest::{collection::vec, prelude::*};
 use sungma::{
     name::{NameError, NamespaceName, RelationName},
     namespace::{MAX_REWRITE_DEPTH, Namespace, NamespaceError},
+    non_empty::NonEmpty,
+    nonempty,
     rewrite::Rewrite::{self, Computed, Exclusion, FactTo, Intersection, This, Union},
 };
 use sungma_lang::namespace::{
     self, DocumentError, ErrorKind, MAX_DOCUMENT_BYTES, MAX_ERRORS, MAX_EXPRESSION_BYTES,
-    MAX_NAME_BYTES, MAX_QUOTE_BYTES, MAX_RELATIONS, NamespaceDocument,
+    MAX_NAMESPACE_BYTES, MAX_QUOTE_BYTES, MAX_RELATION_BYTES, MAX_RELATIONS, NamespaceDocument,
 };
 
 fn parsed(json: &str) -> NamespaceDocument {
@@ -141,7 +143,7 @@ fn the_sample_parses() {
     assert_eq!(
         **viewer,
         exclusion(
-            Union(vec![This, name("editor"), fact_to("parent", "viewer")]),
+            Union(nonempty![This, name("editor"), fact_to("parent", "viewer")]),
             name("banned")
         )
     );
@@ -162,9 +164,9 @@ fn relations_keep_document_order() {
 fn exclusion_binds_tightest_then_intersection() {
     assert_eq!(
         rewrite("a | b & c ! p"),
-        Union(vec![
+        Union(nonempty![
             name("a"),
-            Intersection(vec![name("b"), exclusion(name("c"), name("p"))])
+            Intersection(nonempty![name("b"), exclusion(name("c"), name("p"))])
         ])
     );
 }
@@ -181,11 +183,11 @@ fn exclusion_reads_left_to_right() {
 fn a_run_of_one_operator_is_one_node() {
     assert_eq!(
         rewrite("a | b | c"),
-        Union(vec![name("a"), name("b"), name("c")])
+        Union(nonempty![name("a"), name("b"), name("c")])
     );
     assert_eq!(
         rewrite("a & b & c"),
-        Intersection(vec![name("a"), name("b"), name("c")])
+        Intersection(nonempty![name("a"), name("b"), name("c")])
     );
 }
 
@@ -193,7 +195,7 @@ fn a_run_of_one_operator_is_one_node() {
 fn parentheses_are_kept_as_structure() {
     assert_eq!(
         rewrite("(a | b) | c"),
-        Union(vec![Union(vec![name("a"), name("b")]), name("c")])
+        Union(nonempty![Union(nonempty![name("a"), name("b")]), name("c")])
     );
     assert_eq!(rewrite("((a))"), name("a"));
 }
@@ -201,7 +203,10 @@ fn parentheses_are_kept_as_structure() {
 #[test]
 fn whitespace_only_separates_tokens() {
     assert_eq!(rewrite("(p,a)|this"), rewrite(" ( p , a )  |  this "));
-    assert_eq!(rewrite("(p,a)|this"), Union(vec![fact_to("p", "a"), This]));
+    assert_eq!(
+        rewrite("(p,a)|this"),
+        Union(nonempty![fact_to("p", "a"), This])
+    );
 }
 
 #[test]
@@ -293,18 +298,22 @@ fn names_follow_the_grammar() {
             "{json}"
         );
     }
-    let long = "n".repeat(65);
+    let namespace = "n".repeat(MAX_NAMESPACE_BYTES + 1);
+    let relation = "n".repeat(MAX_RELATION_BYTES + 1);
     for json in [
-        format!(r#"{{ "t": {{ "{long}": "this" }} }}"#),
-        format!(r#"{{ "{long}": {{ "a": "this" }} }}"#),
+        format!(r#"{{ "t": {{ "{relation}": "this" }} }}"#),
+        format!(r#"{{ "{namespace}": {{ "a": "this" }} }}"#),
     ] {
         assert!(
-            matches!(only(&json).kind, ErrorKind::Name(NameError::TooLong(_))),
+            matches!(only(&json).kind, ErrorKind::Name(NameError::TooLong(..))),
             "{json}"
         );
     }
-    let longest = "n".repeat(64);
-    parsed(&format!(r#"{{ "{longest}": {{ "{longest}": "this" }} }}"#));
+    let namespace = "n".repeat(MAX_NAMESPACE_BYTES);
+    let relation = "n".repeat(MAX_RELATION_BYTES);
+    parsed(&format!(
+        r#"{{ "{namespace}": {{ "{relation}": "this" }} }}"#
+    ));
 }
 
 #[test]
@@ -495,7 +504,7 @@ fn the_printer_writes_the_canonical_form() {
         (
             "viewer",
             exclusion(
-                Union(vec![
+                Union(nonempty![
                     This,
                     Computed("editor"),
                     FactTo {
@@ -506,11 +515,11 @@ fn the_printer_writes_the_canonical_form() {
                 Computed("banned"),
             ),
         ),
-        ("editor", Union(vec![This, Computed("owner")])),
+        ("editor", Union(nonempty![This, Computed("owner")])),
         ("owner", This),
         ("parent", This),
         ("banned", This),
-        ("auditor", Intersection(vec![This, Computed("viewer")])),
+        ("auditor", Intersection(nonempty![This, Computed("viewer")])),
     ];
     assert_eq!(
         print("file", &relations),
@@ -523,33 +532,33 @@ fn the_printer_writes_the_canonical_form() {
 fn the_printer_adds_only_the_parentheses_the_grammar_needs() {
     let cases = [
         (
-            Union(vec![Union(vec![name("a"), name("b")]), name("c")]),
+            Union(nonempty![Union(nonempty![name("a"), name("b")]), name("c")]),
             "(a | b) | c",
         ),
         (
-            Union(vec![
-                Intersection(vec![name("a"), name("b")]),
+            Union(nonempty![
+                Intersection(nonempty![name("a"), name("b")]),
                 exclusion(name("a"), name("b")),
             ]),
             "a & b | a ! b",
         ),
         (
-            Intersection(vec![
-                Union(vec![name("a"), name("b")]),
-                Intersection(vec![name("a"), name("b")]),
+            Intersection(nonempty![
+                Union(nonempty![name("a"), name("b")]),
+                Intersection(nonempty![name("a"), name("b")]),
             ]),
             "(a | b) & (a & b)",
         ),
         (
             exclusion(
                 exclusion(name("a"), name("b")),
-                Intersection(vec![name("a"), name("b")]),
+                Intersection(nonempty![name("a"), name("b")]),
             ),
             "a ! b ! (a & b)",
         ),
         (
             exclusion(
-                Union(vec![name("a"), name("b")]),
+                Union(nonempty![name("a"), name("b")]),
                 exclusion(name("a"), name("b")),
             ),
             "(a | b) ! (a ! b)",
@@ -577,7 +586,7 @@ fn closed_groups_leave_the_nesting_depth() {
     let groups = vec!["(a)"; MAX_REWRITE_DEPTH + 1].join(" | ");
     assert_eq!(
         rewrite(&groups),
-        Union(vec![name("a"); MAX_REWRITE_DEPTH + 1])
+        Union(nonempty![name("a"); MAX_REWRITE_DEPTH + 1])
     );
 }
 
@@ -585,20 +594,36 @@ fn closed_groups_leave_the_nesting_depth() {
 
 #[test]
 fn each_limit_holds_at_its_value_and_breaks_one_past_it() {
-    let at = "n".repeat(MAX_NAME_BYTES);
-    let past = "n".repeat(MAX_NAME_BYTES + 1);
-    parsed(&format!(r#"{{ "{at}": {{ "{at}": "this" }} }}"#));
-    for json in [
-        format!(r#"{{ "t": {{ "{past}": "this" }} }}"#),
-        format!(r#"{{ "{past}": {{ "a": "this" }} }}"#),
+    let namespace = |bytes: usize| "n".repeat(bytes);
+    let relation = |bytes: usize| "r".repeat(bytes);
+    parsed(&format!(
+        r#"{{ "{}": {{ "{}": "this" }} }}"#,
+        namespace(MAX_NAMESPACE_BYTES),
+        relation(MAX_RELATION_BYTES)
+    ));
+    for (json, max) in [
+        (
+            format!(
+                r#"{{ "t": {{ "{}": "this" }} }}"#,
+                relation(MAX_RELATION_BYTES + 1)
+            ),
+            MAX_RELATION_BYTES,
+        ),
+        (
+            format!(
+                r#"{{ "{}": {{ "a": "this" }} }}"#,
+                namespace(MAX_NAMESPACE_BYTES + 1)
+            ),
+            MAX_NAMESPACE_BYTES,
+        ),
     ] {
         assert!(
-            matches!(only(&json).kind, ErrorKind::Name(NameError::TooLong(_))),
+            matches!(only(&json).kind, ErrorKind::Name(NameError::TooLong(_, at)) if at == max),
             "{json}"
         );
     }
-    let dotted = format!("{}.{}", "a".repeat(31), "b".repeat(32));
-    assert_eq!(dotted.len(), MAX_NAME_BYTES);
+    let dotted = format!("{}.{}", "a".repeat(127), "b".repeat(128));
+    assert_eq!(dotted.len(), MAX_NAMESPACE_BYTES);
     parsed(&format!(r#"{{ "{dotted}": {{ "a": "this" }} }}"#));
 
     let expression = |bytes: usize| format!("this{}", " ".repeat(bytes - 4));
@@ -714,9 +739,12 @@ fn the_printer_refuses_caller_defects() {
                 ),
             ],
         ),
-        ("t", vec![("r", Union(vec![This]))]),
-        ("t", vec![("r", Intersection(vec![This]))]),
-        ("t", vec![("r", exclusion(This, Intersection(vec![This])))]),
+        ("t", vec![("r", Union(nonempty![This]))]),
+        ("t", vec![("r", Intersection(nonempty![This]))]),
+        (
+            "t",
+            vec![("r", exclusion(This, Intersection(nonempty![This])))],
+        ),
         ("t", vec![("r-s", This)]),
         ("t", vec![("a b", This), ("r", Computed("a b"))]),
         ("t.", vec![("r", This)]),
@@ -751,8 +779,8 @@ fn small(at: usize) -> BoxedStrategy<Rewrite<RelationName>> {
     leaf(at)
         .prop_recursive(4, 24, 3, |inner| {
             prop_oneof![
-                vec(inner.clone(), 2..4).prop_map(Union),
-                vec(inner.clone(), 2..4).prop_map(Intersection),
+                vec(inner.clone(), 2..4).prop_map(union),
+                vec(inner.clone(), 2..4).prop_map(intersection),
                 (inner.clone(), inner).prop_map(|(base, excluded)| exclusion(base, excluded)),
             ]
         })
@@ -770,8 +798,8 @@ fn deep(at: usize) -> BoxedStrategy<Rewrite<RelationName>> {
                 spine
                     .into_iter()
                     .fold(first.clone(), |inner, (kind, beside)| match kind {
-                        0 => Union(vec![inner, beside]),
-                        1 => Intersection(vec![inner, beside]),
+                        0 => Union(nonempty![inner, beside]),
+                        1 => Intersection(nonempty![inner, beside]),
                         2 => exclusion(inner, beside),
                         _ => exclusion(beside, inner),
                     })
@@ -785,9 +813,9 @@ fn wide(at: usize) -> BoxedStrategy<Rewrite<RelationName>> {
     (any::<bool>(), vec(leaf(at), 2..300))
         .prop_map(|(union, operands)| {
             if union {
-                Union(operands)
+                self::union(operands)
             } else {
-                Intersection(operands)
+                intersection(operands)
             }
         })
         .boxed()
@@ -970,12 +998,12 @@ fn an_error_quotes_at_most_a_bounded_cut_of_the_input() {
     let error = only(&format!(r#"{{ "t": {{ "{long}": "this" }} }}"#));
     let quoted = format!("{}...", "n".repeat(MAX_QUOTE_BYTES - 3));
     assert_eq!(error.relation.as_deref(), Some(quoted.as_str()));
-    assert!(matches!(&error.kind, ErrorKind::Name(NameError::TooLong(name)) if *name == quoted));
+    assert!(matches!(&error.kind, ErrorKind::Name(NameError::TooLong(name, _)) if *name == quoted));
     // A cut never splits a character: 20 three-byte characters fill 60
     // bytes, and a 21st leaves no room for the cut mark.
     let wide = "€".repeat(30);
     let error = only(&format!(r#"{{ "t": {{ "{wide}": "this" }} }}"#));
-    let ErrorKind::Name(NameError::TooLong(name)) = &error.kind else {
+    let ErrorKind::Name(NameError::TooLong(name, _)) = &error.kind else {
         panic!("expected a name too long, got {error}");
     };
     assert_eq!(*name, format!("{}...", "€".repeat(20)));
@@ -1039,12 +1067,14 @@ fn grammar_case(expression: &str) -> String {
     )
 }
 
+/// A union of at least one operand.
 fn union(operands: Vec<Rewrite<RelationName>>) -> Rewrite<RelationName> {
-    Union(operands)
+    Union(NonEmpty::new(operands).expect("at least one operand"))
 }
 
+/// An intersection of at least one operand.
 fn intersection(operands: Vec<Rewrite<RelationName>>) -> Rewrite<RelationName> {
-    Intersection(operands)
+    Intersection(NonEmpty::new(operands).expect("at least one operand"))
 }
 
 #[test]
@@ -1250,7 +1280,7 @@ fn every_invalid_form_is_refused_where_it_goes_wrong() {
 
 #[test]
 fn a_reserved_or_overlong_name_is_refused_where_it_appears() {
-    let long = "n".repeat(MAX_NAME_BYTES + 1);
+    let long = "n".repeat(MAX_RELATION_BYTES + 1);
     let fact_to_long = format!("a & (p, {long})");
     let cases = [
         ("THIS", 1),
@@ -1266,7 +1296,7 @@ fn a_reserved_or_overlong_name_is_refused_where_it_appears() {
         assert!(
             matches!(
                 error.kind,
-                ErrorKind::Name(NameError::Reserved(_) | NameError::TooLong(_))
+                ErrorKind::Name(NameError::Reserved(_) | NameError::TooLong(..))
             ),
             "{expression}: {error}"
         );

@@ -17,7 +17,7 @@ use sungma::{
     closure::Closure,
     decision::Decision,
     graph::Subject,
-    name::SubjectsetName,
+    name::{Identity, SubjectsetName},
     revision::Revision,
     store::{Dictionary, FactStore, NamespaceStore, StoreError},
 };
@@ -27,7 +27,7 @@ pub mod resolve;
 /// A subject named as a caller sends it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum SubjectName {
-    Identity(String),
+    Identity(Identity),
     Subjectset(SubjectsetName),
 }
 
@@ -51,8 +51,8 @@ pub struct RequestContext {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Verdict {
     Decided(Decision),
-    /// A name in the request was never interned, so no fact mentions it and
-    /// the request is denied without evaluation.
+    /// A namespace or relation name in the request was never interned, so no
+    /// fact mentions it and the request is denied without evaluation.
     Unknown,
     /// The request could not be decided.
     Failed(String),
@@ -151,7 +151,7 @@ where
         }
     }
 
-    /// `Ok(None)` when a name was never interned.
+    /// `Ok(None)` when a namespace or relation name was never interned.
     async fn try_decide(&self, request: &CheckRequest) -> Result<Option<Decision>, String> {
         let Some(set) = resolve::subjectset(self.dictionary, &request.set)
             .await
@@ -163,7 +163,7 @@ where
             return Ok(None);
         };
         let revision = self.revision(request.zookie).await?;
-        Closure::new(self.namespaces, self.facts, set, revision)
+        Closure::new(self.namespaces, self.facts, &set, revision)
             .decide(subject)
             .await
             .map(Some)
@@ -172,9 +172,7 @@ where
 
     async fn subject(&self, name: &SubjectName) -> Result<Option<Subject>, String> {
         let subject = match name {
-            SubjectName::Identity(identity) => resolve::identity(self.dictionary, identity)
-                .await
-                .map(|id| id.map(Subject::Identity)),
+            SubjectName::Identity(identity) => Ok(Some(Subject::Identity(identity.clone()))),
             SubjectName::Subjectset(set) => resolve::subjectset(self.dictionary, set)
                 .await
                 .map(|set| set.map(Subject::Subjectset)),
