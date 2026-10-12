@@ -11,11 +11,10 @@ use sungma::{
     id::{RelationId, TheoryId},
     revision::Revision,
     rewrite::Rewrite,
-    store::{
-        Dictionary, FactStore, FactWrite, FactWriter, NameStore, Pool, StoreError, TheoryStore,
-    },
+    store::{Dictionary, FactStore, Pool, StoreError, TheoryStore},
     theory::Theory,
 };
+use sungma_write::store::{FactWrite, FactWriter, NameStore};
 
 /// The ports take `&self` so a store can be shared across concurrent
 /// requests, so its contents sit behind a mutex. Setup code calls the
@@ -53,7 +52,7 @@ impl Names {
 
 /// A [`NameStore`]. Setup code mints through [`MemoryDictionary::intern`],
 /// one id at a time from the same counters the leases advance, so its ids
-/// never meet a [`sungma::intern::LeasingInterner`]'s.
+/// never meet a [`sungma_write::intern::LeasingInterner`]'s.
 #[derive(Debug, Default)]
 pub struct MemoryDictionary {
     pools: Mutex<HashMap<Pool, Names>>,

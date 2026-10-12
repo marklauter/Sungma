@@ -1,0 +1,13 @@
+[package]
+name = "sungma-write"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sungma.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+sungma-memory.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }

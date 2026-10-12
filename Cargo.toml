@@ -24,6 +24,7 @@ sungma-check = { version = "0.1.0", path = "crates/sungma-check" }
 sungma-clock = { version = "0.1.0", path = "crates/sungma-clock" }
 sungma-lang = { version = "0.1.0", path = "crates/sungma-lang" }
 sungma-memory = { version = "0.1.0", path = "crates/sungma-memory" }
+sungma-write = { version = "0.1.0", path = "crates/sungma-write" }
 thiserror = "2.0.21"
 tokio = "1.53.2"
 tower = "0.5.3"

@@ -1152,6 +1152,18 @@ version = "0.1.0"
 dependencies = [
  "proptest",
  "sungma",
+ "sungma-write",
+ "tokio",
+]
+
+[[package]]
+name = "sungma-write"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "sungma",
+ "sungma-memory",
+ "thiserror",
  "tokio",
 ]
 
