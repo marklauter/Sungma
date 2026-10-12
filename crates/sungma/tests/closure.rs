@@ -32,7 +32,7 @@ async fn check_at(
     };
     let subject = identity(who);
     agree(
-        &Closure::new(&world.namespaces, &world.facts, set, revision),
+        &Closure::new(&world.namespaces, &world.facts, &set, revision),
         subject,
     )
     .await
@@ -425,7 +425,7 @@ impl FactStore for Probe<'_> {
 async fn failing<'a>(
     world: &'a World,
     store: &'a mut Option<Probe<'a>>,
-    checked: &str,
+    checked: &'a Subjectset,
     failed: &str,
     read: Read,
 ) -> Closure<'a, Probe<'a>, Probe<'a>> {
@@ -434,7 +434,6 @@ async fn failing<'a>(
         failures: vec![(set, read)],
         ..Probe::new(world)
     });
-    let checked = subjectset(world, checked).await.unwrap();
     Closure::new(store, store, checked, head(world).await)
 }
 
@@ -447,8 +446,9 @@ async fn check_failing(
     read: Read,
 ) -> Result<bool, ClosureError> {
     let who = identity(who);
+    let checked = subjectset(world, checked).await.unwrap();
     let mut store = None;
-    let closure = failing(world, &mut store, checked, failed, read).await;
+    let closure = failing(world, &mut store, &checked, failed, read).await;
     agree(&closure, who).await
 }
 
@@ -610,8 +610,9 @@ async fn a_store_error_anywhere_in_the_tree_fails_expand() {
         ),
     ];
     for (checked, failed, read) in cases {
+        let checked_set = subjectset(&world, checked).await.unwrap();
         let mut store = None;
-        let closure = failing(&world, &mut store, checked, failed, read).await;
+        let closure = failing(&world, &mut store, &checked_set, failed, read).await;
         assert!(
             matches!(closure.expand().await, Err(ClosureError::Store(_))),
             "{checked} failing on {failed}"
@@ -623,7 +624,7 @@ async fn a_store_error_anywhere_in_the_tree_fails_expand() {
 async fn expand_of_an_undeclared_relation_is_none() {
     let world = world();
     let viewer = subjectset(&world, "group:eng#viewer").await.unwrap();
-    let expansion = Closure::new(&world.namespaces, &world.facts, viewer, head(&world).await)
+    let expansion = Closure::new(&world.namespaces, &world.facts, &viewer, head(&world).await)
         .expand()
         .await
         .unwrap();
@@ -660,10 +661,15 @@ fn empty_intersection_is_refused() {
 async fn expand_keeps_an_intersection() {
     let world = world();
     let auditor = subjectset(&world, "file:design.md#auditor").await.unwrap();
-    let expansion = Closure::new(&world.namespaces, &world.facts, auditor, head(&world).await)
-        .expand()
-        .await
-        .unwrap();
+    let expansion = Closure::new(
+        &world.namespaces,
+        &world.facts,
+        &auditor,
+        head(&world).await,
+    )
+    .expand()
+    .await
+    .unwrap();
     let alice = identity("alice");
     let dave = identity("dave");
     let viewer = subjectset(&world, "file:design.md#viewer").await.unwrap();
@@ -693,7 +699,7 @@ async fn expand_leaves_referenced_subjectsets_as_leaves() {
     let world = world();
     let set = |text| subjectset(&world, text);
     let viewer = set("file:design.md#viewer").await.unwrap();
-    let expansion = Closure::new(&world.namespaces, &world.facts, viewer, head(&world).await)
+    let expansion = Closure::new(&world.namespaces, &world.facts, &viewer, head(&world).await)
         .expand()
         .await
         .unwrap()
@@ -720,7 +726,7 @@ async fn expand_lists_direct_subjects_including_subjectsets() {
     let expansion = Closure::new(
         &world.namespaces,
         &world.facts,
-        root_viewer,
+        &root_viewer,
         head(&world).await,
     )
     .expand()
@@ -826,12 +832,9 @@ fn random_world(facts: &[String]) -> World {
 /// The verdict, `None` when the check fails.
 async fn verdict(probe: &Probe<'_>, set: &Subjectset, who: &Subject) -> Option<bool> {
     let revision = head(probe.world).await;
-    agree(
-        &Closure::new(probe, probe, set.clone(), revision),
-        who.clone(),
-    )
-    .await
-    .ok()
+    agree(&Closure::new(probe, probe, set, revision), who.clone())
+        .await
+        .ok()
 }
 
 async fn errors_follow_kleene_logic(

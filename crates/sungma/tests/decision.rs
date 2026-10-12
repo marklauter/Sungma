@@ -36,7 +36,7 @@ async fn member(world: &World, resource: &str) -> Subject {
 async fn decide(world: &World, set: &str, who: &str, revision: Revision) -> Decision {
     let set = subjectset(world, set).await.unwrap();
     let subject = identity(who);
-    Closure::new(&world.namespaces, &world.facts, set, revision)
+    Closure::new(&world.namespaces, &world.facts, &set, revision)
         .decide(subject)
         .await
         .unwrap()

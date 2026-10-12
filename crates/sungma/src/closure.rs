@@ -72,6 +72,27 @@ pub enum Expansion {
 /// steps return their futures boxed.
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+/// The subjectsets being evaluated, innermost first. Each step links to the
+/// one before it on the caller's stack, so a step costs no copy.
+struct Path<'a> {
+    set: Subjectset,
+    up: Option<&'a Path<'a>>,
+    depth: usize,
+}
+
+impl Path<'_> {
+    fn holds(&self, set: &Subjectset) -> bool {
+        let mut step = Some(self);
+        while let Some(at) = step {
+            if at.set == *set {
+                return true;
+            }
+            step = at.up;
+        }
+        false
+    }
+}
+
 /// What a membership check collects as it succeeds: the facts that
 /// establish it for [`Closure::decide`], or nothing for [`Closure::contains`].
 trait Proof: Send + Sized {
@@ -192,7 +213,7 @@ where
 pub struct Closure<'a, T, F> {
     namespaces: &'a T,
     facts: &'a F,
-    subjectset: Subjectset,
+    subjectset: &'a Subjectset,
     revision: Revision,
 }
 
@@ -200,7 +221,7 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
     pub fn new(
         namespaces: &'a T,
         facts: &'a F,
-        subjectset: Subjectset,
+        subjectset: &'a Subjectset,
         revision: Revision,
     ) -> Self {
         Self {
@@ -238,7 +259,7 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
     /// The proof of membership, `None` when there is none.
     async fn judge<P: Proof>(&self, subject: &Subject) -> Result<Option<P>, ClosureError> {
         match self
-            .contains_at(self.subjectset.clone(), subject, &[])
+            .contains_at(self.subjectset.clone(), subject, None)
             .await?
         {
             Holds(proof) => Ok(Some(proof)),
@@ -250,10 +271,10 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
     /// One level of the rewrite tree, with the facts read at the revision.
     /// `None` when the subjectset has no rewrite.
     pub async fn expand(&self) -> Result<Option<Expansion>, ClosureError> {
-        let Some(rewrite) = self.rewrite(&self.subjectset).await? else {
+        let Some(rewrite) = self.rewrite(self.subjectset).await? else {
             return Ok(None);
         };
-        Ok(Some(self.expand_node(&rewrite, &self.subjectset).await?))
+        Ok(Some(self.expand_node(&rewrite, self.subjectset).await?))
     }
 
     /// `None` when the namespace or the relation isn't declared.
@@ -270,13 +291,14 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
         &'b self,
         set: Subjectset,
         subject: &'b Subject,
-        path: &'b [Subjectset],
+        path: Option<&'b Path<'b>>,
     ) -> BoxFuture<'b, Walk<P>> {
         Box::pin(async move {
-            if path.contains(&set) {
+            if path.is_some_and(|path| path.holds(&set)) {
                 return Ok(Fails);
             }
-            if path.len() >= MAX_DEPTH {
+            let depth = path.map_or(0, |path| path.depth);
+            if depth >= MAX_DEPTH {
                 return Err(ClosureError::DepthExceeded(MAX_DEPTH));
             }
             let rewrite = match self.rewrite(&set).await {
@@ -284,10 +306,13 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
                 Ok(None) => return Ok(Fails),
                 Err(error) => return Ok(Unknown(error)),
             };
-            let mut path = path.to_vec();
-            path.push(set);
-            let (set, _) = path.split_last().expect("the set was just pushed");
-            self.contains_node(&rewrite, set, subject, &path).await
+            let path = Path {
+                set,
+                up: path,
+                depth: depth + 1,
+            };
+            self.contains_node(&rewrite, &path.set, subject, Some(&path))
+                .await
         })
     }
 
@@ -296,7 +321,7 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
         rewrite: &'b Rewrite,
         set: &'b Subjectset,
         subject: &'b Subject,
-        path: &'b [Subjectset],
+        path: Option<&'b Path<'b>>,
     ) -> BoxFuture<'b, Walk<P>> {
         Box::pin(async move {
             match rewrite {
@@ -309,12 +334,14 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
                     self.contains_at(computed, subject, path).await
                 }
                 Rewrite::FactTo { factset, computed } => {
-                    let (factset, targets) = match self.fact_targets(set, *factset, *computed).await
-                    {
+                    let factset = &Subjectset {
+                        resource: set.resource.clone(),
+                        relation: *factset,
+                    };
+                    let targets = match self.fact_targets(factset, *computed).await {
                         Ok(targets) => targets,
                         Err(error) => return Ok(Unknown(error)),
                     };
-                    let factset = &factset;
                     any(targets, move |(cited, target)| async move {
                         let found = self.contains_at(target, subject, path).await?;
                         Ok(found.map(|proof| {
@@ -366,7 +393,7 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
         &self,
         set: &Subjectset,
         subject: &Subject,
-        path: &[Subjectset],
+        path: Option<&Path<'_>>,
     ) -> Walk<P> {
         let direct = match self.facts.contains(set, subject, self.revision).await {
             Ok(true) => {
@@ -413,14 +440,19 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
                     resource: set.resource.clone(),
                     relation: *relation,
                 }),
-                Rewrite::FactTo { factset, computed } => Expansion::Union(
-                    self.fact_targets(set, *factset, *computed)
-                        .await?
-                        .1
-                        .into_iter()
-                        .map(|(_, target)| Expansion::Reference(target))
-                        .collect(),
-                ),
+                Rewrite::FactTo { factset, computed } => {
+                    let factset = Subjectset {
+                        resource: set.resource.clone(),
+                        relation: *factset,
+                    };
+                    Expansion::Union(
+                        self.fact_targets(&factset, *computed)
+                            .await?
+                            .into_iter()
+                            .map(|(_, target)| Expansion::Reference(target))
+                            .collect(),
+                    )
+                }
                 Rewrite::Union(operands) => Expansion::Union(self.expand_all(operands, set).await?),
                 Rewrite::Intersection(operands) => {
                     Expansion::Intersection(self.expand_all(operands, set).await?)
@@ -445,23 +477,17 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
         Ok(expanded)
     }
 
-    /// `(factset, computed)`: the factset, and each subject stored under it
-    /// that names a resource, paired with that resource's `computed`
-    /// subjectset. A resource member names its resource and a subjectset
-    /// names the resource it belongs to, as in Zanzibar; identities name no
-    /// resource and are skipped.
+    /// Each subject stored under `factset` that names a resource, paired with
+    /// that resource's `computed` subjectset. A resource member names its
+    /// resource and a subjectset names the resource it belongs to, as in
+    /// Zanzibar; identities name no resource and are skipped.
     async fn fact_targets(
         &self,
-        set: &Subjectset,
-        factset: RelationId,
+        factset: &Subjectset,
         computed: RelationId,
-    ) -> Result<(Subjectset, Vec<(Subject, Subjectset)>), StoreError> {
-        let factset = Subjectset {
-            resource: set.resource.clone(),
-            relation: factset,
-        };
-        let subjects = self.facts.subjects(&factset, self.revision).await?;
-        let targets = subjects
+    ) -> Result<Vec<(Subject, Subjectset)>, StoreError> {
+        let subjects = self.facts.subjects(factset, self.revision).await?;
+        Ok(subjects
             .into_iter()
             .filter_map(|subject| {
                 let resource = match &subject {
@@ -475,7 +501,6 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
                 };
                 Some((subject, target))
             })
-            .collect();
-        Ok((factset, targets))
+            .collect())
     }
 }

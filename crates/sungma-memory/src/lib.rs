@@ -138,12 +138,18 @@ impl Facts {
         for write in writes {
             match write {
                 FactWrite::Insert(fact) => {
-                    let spans = self
+                    // A key is cloned only when it is stored the first time.
+                    if !self.spans.contains_key(&fact.subjectset) {
+                        self.spans.insert(fact.subjectset.clone(), BTreeMap::new());
+                    }
+                    let subjects = self
                         .spans
-                        .entry(fact.subjectset.clone())
-                        .or_default()
-                        .entry(fact.subject.clone())
-                        .or_default();
+                        .get_mut(&fact.subjectset)
+                        .expect("inserted above");
+                    if !subjects.contains_key(&fact.subject) {
+                        subjects.insert(fact.subject.clone(), Vec::new());
+                    }
+                    let spans = subjects.get_mut(&fact.subject).expect("inserted above");
                     if spans.last().is_none_or(|span| span.deleted.is_some()) {
                         spans.push(Span {
                             written: revision,

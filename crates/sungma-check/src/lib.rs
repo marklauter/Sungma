@@ -163,7 +163,7 @@ where
             return Ok(None);
         };
         let revision = self.revision(request.zookie).await?;
-        Closure::new(self.namespaces, self.facts, set, revision)
+        Closure::new(self.namespaces, self.facts, &set, revision)
             .decide(subject)
             .await
             .map(Some)
