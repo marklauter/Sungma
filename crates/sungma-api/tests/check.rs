@@ -10,6 +10,7 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
+use sungma::name::MAX_IDENTITY_BYTES;
 use sungma_api::{AppState, router};
 use sungma_check::Verdict;
 use tower::ServiceExt;
@@ -154,6 +155,28 @@ async fn malformed_names_are_rejected() {
         assert!(reply["error"].as_str().unwrap().starts_with("malformed"));
     }
     assert!(state.audit.records().is_empty());
+}
+
+#[tokio::test]
+async fn an_identity_outside_its_rules_is_rejected() {
+    let state = state();
+    for (identity, error) in [
+        ("bob\u{1b}[31m".to_owned(), "other than printable ASCII"),
+        ("jos\u{e9}".to_owned(), "other than printable ASCII"),
+        ("a b".to_owned(), "other than printable ASCII"),
+        (String::new(), "an identity is empty"),
+        ("x".repeat(MAX_IDENTITY_BYTES + 1), "longer than 512 bytes"),
+    ] {
+        let body = json!({ "set": "file:design.md#viewer", "identity": identity });
+        let (status, reply) = check(&state, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{identity:?}");
+        let message = reply["error"].as_str().unwrap();
+        assert!(message.contains(error), "{identity:?}: {message}");
+    }
+    assert!(state.audit.records().is_empty());
+    let longest = "x".repeat(MAX_IDENTITY_BYTES);
+    let body = json!({ "set": "file:design.md#viewer", "identity": longest });
+    assert_eq!(check(&state, body).await.0, StatusCode::OK);
 }
 
 #[tokio::test]
