@@ -8,7 +8,7 @@ status: evolving
 
 Kingo (`D:\projects\kingo\kingo`, C#) is the legacy attempt at a ReBAC. Its source is about 1,200 lines of model, validation and namespace documents with no evaluator; its value is in `docs/` and in its tests of the namespace front end. Paths below that start `docs/`, `src/` or `tests/` are in Kingo; Sungma paths start `crates/`.
 
-Terminology: a Sungma theory is a Kingo namespace. A Kingo theory is a named bundle of namespaces and the unit of atomic change.
+Terminology: a Sungma namespace is a Kingo namespace. A Kingo theory, like a Sungma theory, is a set of namespaces. Kingo's was also named and was the unit of atomic change.
 
 Not a source: the `rewrite-interpreters` branch (checkout at `D:\projects\kingo\kingo-rewrite-interpreters`). `docs/todos/reconcile.md` records it as a dead end, rooted in treating late-bound relation names as URNs. The main checkout's `docs/todos/implement-contains-and-expand.md` is not part of that dead end; reconcile §3.4 keeps it and discards the branch's edits.
 
