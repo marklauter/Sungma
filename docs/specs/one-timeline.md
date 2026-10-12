@@ -41,7 +41,7 @@ Proposed. Every [[fact]] and every [[namespace]] version holds over a [[span]] o
 - Declaring the relation again moves its epoch, so orphaned facts stay dead and old grants don't resurrect.
 - A write of a fact whose current span opened before its relation's epoch opens a new span. Otherwise a grant asserted again after the relation returns would stay dead.
 - Every reader applies the same rule: decide, expand, read, watch and dumps.
-- An epoch is per relation, not per namespace version. New versions don't close fact spans, so facts under a relation the new version keeps still count. Only a relation that was dropped and declared again gets a new epoch.
+- An epoch is per relation, not per namespace version. New versions don't close fact spans, so facts under a relation the new version keeps still count. Only relations the new version adds or brings back get a new epoch.
 
 ## Retiring a namespace
 
@@ -66,7 +66,7 @@ The `file` namespace over time, and the facts under it:
 
 What a read at each revision counts:
 
-| Read at | `owner@carol` | `banned@bob` | `banned@erin` | Why |
+| Read at | `owner@carol` (12) | `banned@bob` (14, 60) | `banned@erin` (35) | Why |
 | --- | --- | --- | --- | --- |
 | 15 | counts | counts | | Version 1; both written at or after epoch 10. |
 | 25 | counts | dead | | Version 2 doesn't declare `banned`. `owner` keeps epoch 10. |
@@ -75,7 +75,7 @@ What a read at each revision counts:
 | 55 | dead | dead | dead | Version 4: every epoch is 50, and every fact is older. |
 | 65 | dead | counts | dead | Bob's fact, written again at 60, opened a new span after epoch 50. |
 
-Bob's ban doesn't come back at 35, and none of the three facts comes back at 55. Writing bob's fact again at 60 restores it deliberately: its old span opened before the epoch, so the write opens a new one. A replay at 15 still reads version 1 and finds bob banned.
+Bob's ban doesn't come back at 35, and none of the three facts comes back at 55. Writing Bob's fact again at 60 restores it deliberately: its old span opened before the epoch, so the write opens a new one. A replay at 15 still reads version 1 and finds Bob banned.
 
 ## What is accepted
 
