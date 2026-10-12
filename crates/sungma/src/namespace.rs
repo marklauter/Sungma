@@ -123,17 +123,28 @@ impl<R: Eq + Hash + Clone + Display> Namespace<R> {
     /// names are interned. Renaming doesn't change any rewrite's shape, so a
     /// one-to-one rename keeps the namespace valid. A rename that gives two
     /// relations one name is refused.
+    ///
+    /// `rename` is called once for each distinct name, and every reference
+    /// to a name gets the same result, so a rename that would answer
+    /// differently on a second call can't leave a reference dangling.
     pub fn map<S: Eq + Hash + Clone + Display>(
         &self,
         mut rename: impl FnMut(&R) -> S,
     ) -> Result<Namespace<S>, NamespaceError> {
+        let mut renamed = HashMap::new();
+        let mut name = |relation: &R| -> S {
+            renamed
+                .entry(relation.clone())
+                .or_insert_with(|| rename(relation))
+                .clone()
+        };
         let relations = self
             .relations
             .iter()
             .map(|(relation, rewrite)| {
-                let renamed = rename(relation);
-                let rewrite = (**rewrite).clone().map(&mut |name| rename(&name));
-                (renamed, Arc::new(rewrite))
+                let declared = name(relation);
+                let rewrite = (**rewrite).clone().map(&mut |reference| name(&reference));
+                (declared, Arc::new(rewrite))
             })
             .collect();
         Namespace::indexed(relations)
@@ -376,6 +387,23 @@ mod tests {
             Some(&Computed(12))
         );
         assert!(renamed.rewrite(&0).is_none());
+    }
+
+    #[test]
+    fn a_rename_is_asked_once_per_name() {
+        let namespace = Namespace::new(vec![(0, This), (1, Computed(0))]).unwrap();
+        let mut calls = 0;
+        let renamed = namespace
+            .map(|_| {
+                calls += 1;
+                calls
+            })
+            .unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(
+            renamed.rewrite(&2).map(|rewrite| &**rewrite),
+            Some(&Computed(1))
+        );
     }
 
     #[test]
