@@ -15,4 +15,4 @@ A model enforces every rule it can see on its own, in its constructor or its typ
 - **`Decision`** (`crates/sungma/src/decision.rs`): an allowed outcome's grounds are `NonEmpty`, since every membership rests on at least one fact.
 - **`Namespace::map`** (`crates/sungma/src/namespace.rs`): refuses a rename that gives two relations one name, and renames each name once, so references can't dangle.
 - **Names** (`crates/sungma/src/name.rs`): `new_unchecked` stays public. Choosing checked or unchecked is the caller's job.
-- **Ids** (`crates/sungma/src/id.rs`): the public `u32` fields of `NamespaceId` and `RelationId` stay. A made-up id names nothing, so it breaks nothing. Only namespace and relation names are interned; see [[interner]].
+- **Ids** (`crates/sungma/src/id.rs`): the public `u32` fields of `NamespaceId` and `RelationId` stay. A made-up id may match no name, or the id of another namespace or relation. Either way the caller gets answers about the wrong thing, but no model becomes invalid. Only namespace and relation names are interned; see [[interner]].
