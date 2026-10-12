@@ -30,7 +30,7 @@ use serde::{
 };
 use thiserror::Error;
 
-pub use sungma::name::{MAX_NAME_BYTES, MAX_QUOTE_BYTES};
+pub use sungma::name::{MAX_NAMESPACE_BYTES, MAX_QUOTE_BYTES, MAX_RELATION_BYTES};
 use sungma::{
     id::{NamespaceId, RelationId},
     name::{NameError, NamespaceName, RelationName, quote},

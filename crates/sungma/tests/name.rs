@@ -2,17 +2,17 @@
 
 use proptest::prelude::*;
 use sungma::name::{
-    Identity, MAX_IDENTITY_BYTES, MAX_NAME_BYTES, MAX_QUOTE_BYTES, MAX_RESOURCE_BYTES, NameError,
-    NamespaceName, RelationName, ResourceName, SubjectsetName, quote,
+    Identity, MAX_IDENTITY_BYTES, MAX_NAMESPACE_BYTES, MAX_QUOTE_BYTES, MAX_RESOURCE_ID_BYTES,
+    NameError, NamespaceName, RelationName, ResourceName, SubjectsetName, quote,
 };
 
 #[test]
-fn a_resource_name_is_at_most_max_resource_bytes() {
-    let name = |len: usize| format!("file:{}", "x".repeat(len - "file:".len()));
-    assert!(name(MAX_RESOURCE_BYTES).parse::<ResourceName>().is_ok());
+fn a_resource_id_is_at_most_max_resource_id_bytes() {
+    let name = |len: usize| format!("file:{}", "x".repeat(len));
+    assert!(name(MAX_RESOURCE_ID_BYTES).parse::<ResourceName>().is_ok());
     assert!(matches!(
-        name(MAX_RESOURCE_BYTES + 1).parse::<ResourceName>(),
-        Err(NameError::ResourceTooLong(_))
+        name(MAX_RESOURCE_ID_BYTES + 1).parse::<ResourceName>(),
+        Err(NameError::ResourceIdTooLong(_))
     ));
 }
 
@@ -134,11 +134,11 @@ fn the_namespace_and_relation_of_a_name_follow_the_grammar() {
     for (text, error) in cases {
         assert_eq!(text.parse::<SubjectsetName>(), Err(error), "{text}");
     }
-    let long = "n".repeat(MAX_NAME_BYTES + 1);
-    assert!(matches!(
+    let long = "n".repeat(MAX_NAMESPACE_BYTES + 1);
+    assert_eq!(
         format!("{long}:a").parse::<ResourceName>(),
-        Err(NameError::TooLong(_))
-    ));
+        Err(NameError::TooLong(quote(&long), MAX_NAMESPACE_BYTES))
+    );
 }
 
 #[test]
@@ -157,9 +157,12 @@ fn a_name_has_checked_and_unchecked_constructors() {
 
 #[test]
 fn a_name_error_quotes_a_bounded_and_escaped_cut_of_the_text() {
-    let long = format!("{}{}", "x".repeat(100), char::from_u32(0x202e).unwrap());
+    let long = format!("{}{}", "x".repeat(300), char::from_u32(0x202e).unwrap());
     let error = format!("{long}:a").parse::<ResourceName>().unwrap_err();
-    assert_eq!(error, NameError::TooLong(format!("{}...", "x".repeat(61))));
+    assert_eq!(
+        error,
+        NameError::TooLong(format!("{}...", "x".repeat(61)), MAX_NAMESPACE_BYTES)
+    );
     let hidden = format!("a{}b:x", char::from_u32(0x202e).unwrap());
     let error = hidden.parse::<ResourceName>().unwrap_err().to_string();
     assert!(error.contains("a\\u{202e}b"), "{error}");

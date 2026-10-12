@@ -59,7 +59,8 @@ A document is refused if it breaks any of these limits:
 - A document is at most 4 MiB. The other limits allow about 2.1 MB of compact JSON; the rest is room for whitespace.
 - A single namespace.
 - A namespace declares at most 500 relations.
-- A namespace or relation name is at most 64 bytes.
+- A namespace name is at most 256 bytes.
+- A relation name is at most 64 bytes.
 - An expression is at most 4 KiB (4,096 bytes).
 
 The rewrite depth limit is under [Checks](#checks).
@@ -243,8 +244,8 @@ The cases each class covers, at minimum.
 
 #### Limits
 
-1. Each limit is tested at its value and one past it: a 64-byte name and a 65-byte one, a 4,096-byte expression and a 4,097-byte one, 500 relations and 501, a document of exactly the maximum size and one byte more, 100 levels of nesting and 101, and 100 grouping parentheses and 101.
-2. A dotted namespace name of exactly 64 bytes is accepted.
+1. Each limit is tested at its value and one past it: a 256-byte namespace name and a 257-byte one, a 64-byte relation name and a 65-byte one, a 4,096-byte expression and a 4,097-byte one, 500 relations and 501, a document of exactly the maximum size and one byte more, 100 levels of nesting and 101, and 100 grouping parentheses and 101.
+2. A dotted namespace name of exactly 256 bytes is accepted.
 
 #### Printing
 

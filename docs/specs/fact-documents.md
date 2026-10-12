@@ -83,9 +83,12 @@ Sungma's other interfaces, such as the check API and error messages, write a res
 
 A fact is refused if it breaks any of these limits:
 
-- A namespace name and its resource, written `namespace:resource`, are at most 256 bytes.
+- A namespace name is at most 256 bytes.
+- A resource id is at most 512 bytes, room enough for a path.
+- A relation name is at most 64 bytes.
 - An identity is at most 512 bytes.
-- A namespace or relation name is at most 64 bytes.
+
+Each part guards its own limit. A resource, the pair of a namespace and a resource id, has no limit of its own.
 
 ## Errors
 
@@ -146,9 +149,10 @@ The cases each class covers, at minimum.
 
 #### Limits
 
-1. `namespace:resource` of 256 bytes loads and of 257 is refused.
-2. An identity of 512 bytes loads and of 513 is refused.
-3. A namespace or relation name of 64 bytes loads and of 65 is refused.
+1. A namespace name of 256 bytes loads and of 257 is refused.
+2. A resource id of 512 bytes loads and of 513 is refused.
+3. A relation name of 64 bytes loads and of 65 is refused.
+4. An identity of 512 bytes loads and of 513 is refused.
 
 #### Errors
 

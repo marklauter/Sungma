@@ -15,4 +15,4 @@ A model enforces every rule it can see on its own, in its constructor or its typ
 - **Names** (`crates/sungma/src/name.rs`): `new_unchecked` is public, so any caller skips validation, not only storage.
 - **`Rewrite`** (`crates/sungma/src/rewrite.rs`): a public enum, so `Union(vec![])` and `Intersection(vec![])` can be built anywhere; only `Namespace::new` refuses them. A non-empty operand type would make them unexpressible.
 - **`Decision`** (`crates/sungma/src/decision.rs`): public fields allow `Outcome::Allowed { grounds: vec![] }`, though every membership rests on at least one fact.
-- **Ids** (`crates/sungma/src/id.rs`): public `u32` fields, so any caller mints an id. `ResourceId`, `IdentityId`, `Pool::Resources` and `Pool::Identities` go, since only namespace and relation names are interned; see [[interner]].
+- **Ids** (`crates/sungma/src/id.rs`): `NamespaceId` and `RelationId` have public `u32` fields, so any caller mints an id. Only namespace and relation names are interned; see [[interner]].

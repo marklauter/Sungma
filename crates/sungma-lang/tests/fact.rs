@@ -7,7 +7,10 @@ use proptest::prelude::*;
 use serde_json::{Value, json};
 use sungma::{
     graph::Subject,
-    name::{MAX_IDENTITY_BYTES, MAX_NAME_BYTES, MAX_RESOURCE_BYTES, ResourceName, SubjectsetName},
+    name::{
+        MAX_IDENTITY_BYTES, MAX_NAMESPACE_BYTES, MAX_RELATION_BYTES, MAX_RESOURCE_ID_BYTES,
+        ResourceName, SubjectsetName,
+    },
     store::{FactStore, Pool},
 };
 use sungma_check::resolve;
@@ -262,7 +265,7 @@ fn loaded(json: &str) -> (MemoryDictionary, MemoryFactStore) {
 }
 
 fn set_name(namespace: &str, resource: &str, relation: &str) -> SubjectsetName {
-    let resource = ResourceName::new(namespace.parse().unwrap(), resource).unwrap();
+    let resource = ResourceName::new(namespace.parse().unwrap(), resource.parse().unwrap());
     SubjectsetName::new(resource, relation.parse().unwrap())
 }
 
@@ -280,7 +283,7 @@ async fn holds(
     let subject = match subject {
         Who::Identity(identity) => Some(Subject::Identity(identity.parse().unwrap())),
         Who::Resource(namespace, resource) => {
-            let name = ResourceName::new(namespace.parse().unwrap(), resource).unwrap();
+            let name = ResourceName::new(namespace.parse().unwrap(), resource.parse().unwrap());
             resolve::resource(dictionary, &name)
                 .await
                 .unwrap()
@@ -409,25 +412,25 @@ async fn case_is_kept() {
 }
 
 #[test]
-fn a_resource_is_at_most_max_resource_bytes() {
-    let resource = |len: usize| "x".repeat(len - "file:".len());
+fn a_resource_id_is_at_most_max_resource_id_bytes() {
+    let resource = |len: usize| "x".repeat(len);
     let fact = fact_json(
         "file",
-        &resource(MAX_RESOURCE_BYTES),
+        &resource(MAX_RESOURCE_ID_BYTES),
         "owner",
         &identity("x"),
     );
     loaded(&json!([fact]).to_string());
-    let too_long = format!("longer than {MAX_RESOURCE_BYTES} bytes");
+    let too_long = format!("longer than {MAX_RESOURCE_ID_BYTES} bytes");
     let fact = fact_json(
         "file",
-        &resource(MAX_RESOURCE_BYTES + 1),
+        &resource(MAX_RESOURCE_ID_BYTES + 1),
         "owner",
         &identity("x"),
     );
     let error = refused(&json!([fact]).to_string());
     assert!(error.contains(&too_long), "{error}");
-    let subject = Who::Resource("file".into(), resource(MAX_RESOURCE_BYTES + 1));
+    let subject = Who::Resource("file".into(), resource(MAX_RESOURCE_ID_BYTES + 1));
     let error = refused(&json!([fact_json("file", "a", "parent", &subject)]).to_string());
     assert!(error.contains(&too_long), "{error}");
 }
@@ -455,17 +458,23 @@ fn an_identity_is_at_most_max_identity_bytes() {
 }
 
 #[test]
-fn a_name_is_at_most_max_name_bytes() {
-    let longest = format!("n{}", "x".repeat(MAX_NAME_BYTES - 1));
-    let longer = format!("{longest}x");
-    loaded(&json!([fact_json(&longest, "a", &longest, &identity("x"))]).to_string());
-    for fact in [
-        fact_json(&longer, "a", "owner", &identity("x")),
-        fact_json("file", "a", &longer, &identity("x")),
+fn a_name_is_at_most_its_limit() {
+    let name = |bytes: usize| "n".repeat(bytes);
+    let (namespace, relation) = (name(MAX_NAMESPACE_BYTES), name(MAX_RELATION_BYTES));
+    loaded(&json!([fact_json(&namespace, "a", &relation, &identity("x"))]).to_string());
+    for (fact, max) in [
+        (
+            fact_json(&name(MAX_NAMESPACE_BYTES + 1), "a", "owner", &identity("x")),
+            MAX_NAMESPACE_BYTES,
+        ),
+        (
+            fact_json("file", "a", &name(MAX_RELATION_BYTES + 1), &identity("x")),
+            MAX_RELATION_BYTES,
+        ),
     ] {
         let error = refused(&json!([fact]).to_string());
         assert!(
-            error.contains(&format!("longer than {MAX_NAME_BYTES} bytes")),
+            error.contains(&format!("longer than {max} bytes")),
             "{error}"
         );
     }

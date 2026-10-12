@@ -63,7 +63,7 @@ const SUBJECT_SHAPES: &str =
 struct Keys {
     identity: Option<Identity>,
     namespace: Option<NamespaceName>,
-    resource: Option<String>,
+    resource: Option<ResourceId>,
     relation: Option<RelationName>,
     subject: Option<SubjectDto>,
 }
@@ -95,11 +95,7 @@ impl Keys {
             match key {
                 "identity" => keys.identity = Some(named(map.next_value()?)?),
                 "namespace" => keys.namespace = Some(named(map.next_value()?)?),
-                "resource" => {
-                    let id: String = map.next_value()?;
-                    id.parse::<ResourceId>().map_err(de::Error::custom)?;
-                    keys.resource = Some(id);
-                }
+                "resource" => keys.resource = Some(named(map.next_value()?)?),
                 "relation" => keys.relation = Some(named(map.next_value()?)?),
                 _ => keys.subject = Some(map.next_value()?),
             }
@@ -112,10 +108,6 @@ impl Keys {
 /// line and column.
 fn named<T: FromStr<Err = NameError>, E: de::Error>(text: String) -> Result<T, E> {
     text.parse().map_err(E::custom)
-}
-
-fn resource<E: de::Error>(namespace: NamespaceName, id: &str) -> Result<ResourceName, E> {
-    ResourceName::new(namespace, id).map_err(E::custom)
 }
 
 struct FactVisitor;
@@ -142,7 +134,7 @@ impl<'de> Visitor<'de> for FactVisitor {
             .subject
             .ok_or_else(|| de::Error::missing_field("subject"))?;
         Ok(FactDto {
-            set: SubjectsetName::new(resource(namespace, &id)?, relation),
+            set: SubjectsetName::new(ResourceName::new(namespace, id), relation),
             subject,
         })
     }
@@ -168,10 +160,10 @@ impl<'de> Visitor<'de> for SubjectVisitor {
         match (keys.identity, keys.namespace, keys.resource, keys.relation) {
             (Some(identity), None, None, None) => Ok(SubjectDto::Identity(identity)),
             (None, Some(namespace), Some(id), None) => {
-                Ok(SubjectDto::Resource(resource(namespace, &id)?))
+                Ok(SubjectDto::Resource(ResourceName::new(namespace, id)))
             }
             (None, Some(namespace), Some(id), Some(relation)) => Ok(SubjectDto::Subjectset(
-                SubjectsetName::new(resource(namespace, &id)?, relation),
+                SubjectsetName::new(ResourceName::new(namespace, id), relation),
             )),
             _ => Err(de::Error::custom(format!("a subject is {SUBJECT_SHAPES}"))),
         }

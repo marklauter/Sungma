@@ -13,7 +13,7 @@ use sungma::{
 };
 use sungma_lang::namespace::{
     self, DocumentError, ErrorKind, MAX_DOCUMENT_BYTES, MAX_ERRORS, MAX_EXPRESSION_BYTES,
-    MAX_NAME_BYTES, MAX_QUOTE_BYTES, MAX_RELATIONS, NamespaceDocument,
+    MAX_NAMESPACE_BYTES, MAX_QUOTE_BYTES, MAX_RELATION_BYTES, MAX_RELATIONS, NamespaceDocument,
 };
 
 fn parsed(json: &str) -> NamespaceDocument {
@@ -293,18 +293,22 @@ fn names_follow_the_grammar() {
             "{json}"
         );
     }
-    let long = "n".repeat(65);
+    let namespace = "n".repeat(MAX_NAMESPACE_BYTES + 1);
+    let relation = "n".repeat(MAX_RELATION_BYTES + 1);
     for json in [
-        format!(r#"{{ "t": {{ "{long}": "this" }} }}"#),
-        format!(r#"{{ "{long}": {{ "a": "this" }} }}"#),
+        format!(r#"{{ "t": {{ "{relation}": "this" }} }}"#),
+        format!(r#"{{ "{namespace}": {{ "a": "this" }} }}"#),
     ] {
         assert!(
-            matches!(only(&json).kind, ErrorKind::Name(NameError::TooLong(_))),
+            matches!(only(&json).kind, ErrorKind::Name(NameError::TooLong(..))),
             "{json}"
         );
     }
-    let longest = "n".repeat(64);
-    parsed(&format!(r#"{{ "{longest}": {{ "{longest}": "this" }} }}"#));
+    let namespace = "n".repeat(MAX_NAMESPACE_BYTES);
+    let relation = "n".repeat(MAX_RELATION_BYTES);
+    parsed(&format!(
+        r#"{{ "{namespace}": {{ "{relation}": "this" }} }}"#
+    ));
 }
 
 #[test]
@@ -585,20 +589,36 @@ fn closed_groups_leave_the_nesting_depth() {
 
 #[test]
 fn each_limit_holds_at_its_value_and_breaks_one_past_it() {
-    let at = "n".repeat(MAX_NAME_BYTES);
-    let past = "n".repeat(MAX_NAME_BYTES + 1);
-    parsed(&format!(r#"{{ "{at}": {{ "{at}": "this" }} }}"#));
-    for json in [
-        format!(r#"{{ "t": {{ "{past}": "this" }} }}"#),
-        format!(r#"{{ "{past}": {{ "a": "this" }} }}"#),
+    let namespace = |bytes: usize| "n".repeat(bytes);
+    let relation = |bytes: usize| "r".repeat(bytes);
+    parsed(&format!(
+        r#"{{ "{}": {{ "{}": "this" }} }}"#,
+        namespace(MAX_NAMESPACE_BYTES),
+        relation(MAX_RELATION_BYTES)
+    ));
+    for (json, max) in [
+        (
+            format!(
+                r#"{{ "t": {{ "{}": "this" }} }}"#,
+                relation(MAX_RELATION_BYTES + 1)
+            ),
+            MAX_RELATION_BYTES,
+        ),
+        (
+            format!(
+                r#"{{ "{}": {{ "a": "this" }} }}"#,
+                namespace(MAX_NAMESPACE_BYTES + 1)
+            ),
+            MAX_NAMESPACE_BYTES,
+        ),
     ] {
         assert!(
-            matches!(only(&json).kind, ErrorKind::Name(NameError::TooLong(_))),
+            matches!(only(&json).kind, ErrorKind::Name(NameError::TooLong(_, at)) if at == max),
             "{json}"
         );
     }
-    let dotted = format!("{}.{}", "a".repeat(31), "b".repeat(32));
-    assert_eq!(dotted.len(), MAX_NAME_BYTES);
+    let dotted = format!("{}.{}", "a".repeat(127), "b".repeat(128));
+    assert_eq!(dotted.len(), MAX_NAMESPACE_BYTES);
     parsed(&format!(r#"{{ "{dotted}": {{ "a": "this" }} }}"#));
 
     let expression = |bytes: usize| format!("this{}", " ".repeat(bytes - 4));
@@ -970,12 +990,12 @@ fn an_error_quotes_at_most_a_bounded_cut_of_the_input() {
     let error = only(&format!(r#"{{ "t": {{ "{long}": "this" }} }}"#));
     let quoted = format!("{}...", "n".repeat(MAX_QUOTE_BYTES - 3));
     assert_eq!(error.relation.as_deref(), Some(quoted.as_str()));
-    assert!(matches!(&error.kind, ErrorKind::Name(NameError::TooLong(name)) if *name == quoted));
+    assert!(matches!(&error.kind, ErrorKind::Name(NameError::TooLong(name, _)) if *name == quoted));
     // A cut never splits a character: 20 three-byte characters fill 60
     // bytes, and a 21st leaves no room for the cut mark.
     let wide = "€".repeat(30);
     let error = only(&format!(r#"{{ "t": {{ "{wide}": "this" }} }}"#));
-    let ErrorKind::Name(NameError::TooLong(name)) = &error.kind else {
+    let ErrorKind::Name(NameError::TooLong(name, _)) = &error.kind else {
         panic!("expected a name too long, got {error}");
     };
     assert_eq!(*name, format!("{}...", "€".repeat(20)));
@@ -1250,7 +1270,7 @@ fn every_invalid_form_is_refused_where_it_goes_wrong() {
 
 #[test]
 fn a_reserved_or_overlong_name_is_refused_where_it_appears() {
-    let long = "n".repeat(MAX_NAME_BYTES + 1);
+    let long = "n".repeat(MAX_RELATION_BYTES + 1);
     let fact_to_long = format!("a & (p, {long})");
     let cases = [
         ("THIS", 1),
@@ -1266,7 +1286,7 @@ fn a_reserved_or_overlong_name_is_refused_where_it_appears() {
         assert!(
             matches!(
                 error.kind,
-                ErrorKind::Name(NameError::Reserved(_) | NameError::TooLong(_))
+                ErrorKind::Name(NameError::Reserved(_) | NameError::TooLong(..))
             ),
             "{expression}: {error}"
         );
