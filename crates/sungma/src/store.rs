@@ -15,7 +15,7 @@ use thiserror::Error;
 
 use crate::{
     graph::{Subject, Subjectset},
-    id::{RelationId, TheoryId},
+    id::{NamespaceId, RelationId},
     revision::Revision,
     rewrite::Rewrite,
 };
@@ -28,13 +28,13 @@ pub struct StoreError(pub String);
 /// names different strings in different pools.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Pool {
-    Theories,
-    /// One pool for every theory's relations: `(parent, viewer)` evaluates
-    /// `viewer` under whichever theory a parent fact names, so a relation id
-    /// means the same name in every theory.
+    Namespaces,
+    /// One pool for every namespace's relations: `(parent, viewer)` evaluates
+    /// `viewer` under whichever namespace a parent fact names, so a relation id
+    /// means the same name in every namespace.
     Relations,
-    /// The resource ids of one theory.
-    Resources(TheoryId),
+    /// The resource ids of one namespace.
+    Resources(NamespaceId),
     Identities,
 }
 
@@ -87,14 +87,14 @@ pub trait FactStore {
     ) -> impl Future<Output = Result<Vec<Subject>, StoreError>> + Send;
 }
 
-/// The rewrite of each declared relation, by theory. Not versioned yet:
-/// every read sees the current theories. A rewrite is shared, so a cache
+/// The rewrite of each declared relation, by namespace. Not versioned yet:
+/// every read sees the current namespaces. A rewrite is shared, so a cache
 /// can evict it while a check still walks it.
-pub trait TheoryStore {
-    /// `None` when the theory or the relation isn't declared.
+pub trait NamespaceStore {
+    /// `None` when the namespace or the relation isn't declared.
     fn rewrite(
         &self,
-        theory: TheoryId,
+        namespace: NamespaceId,
         relation: RelationId,
     ) -> impl Future<Output = Result<Option<Arc<Rewrite>>, StoreError>> + Send;
 }

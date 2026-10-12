@@ -1,4 +1,4 @@
-# Tokens of a theory document, for libFuzzer's -dict.
+# Tokens of a namespace document, for libFuzzer's -dict.
 "{"
 "}"
 "\""

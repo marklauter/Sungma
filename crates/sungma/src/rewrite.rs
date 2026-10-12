@@ -6,8 +6,8 @@ use crate::id::RelationId;
 ///
 /// Generic over how relations are named: the core uses interned
 /// [`RelationId`]s, and tests write `Rewrite<&str>` and intern it with
-/// [`Rewrite::map`]. A theory document writes one as an expression, as
-/// `sungma_lang::theory` describes.
+/// [`Rewrite::map`]. A namespace document writes one as an expression, as
+/// `sungma_lang::namespace` describes.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Rewrite<R = RelationId> {
     /// The subjects of the facts stored under the subjectset in hand.

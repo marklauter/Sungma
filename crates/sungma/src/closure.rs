@@ -1,5 +1,5 @@
 //! The closure of a subjectset: the set of subjects derivable for it from
-//! the facts under the theories, fixed at one revision.
+//! the facts under the namespaces, fixed at one revision.
 //!
 //! A closure is never built. [`Closure::decide`] judges one membership,
 //! answering at each rewrite node and stopping as soon as the answer is
@@ -8,7 +8,7 @@
 //! [`Closure::expand`] materializes one level of the rewrite tree, leaving
 //! referenced subjectsets as leaves.
 //!
-//! A subjectset whose theory or relation isn't declared has no rewrite, and
+//! A subjectset whose namespace or relation isn't declared has no rewrite, and
 //! its closure is empty.
 //!
 //! Cycles end without an error. A membership check that reaches a
@@ -40,7 +40,7 @@ use crate::{
     id::RelationId,
     revision::Revision,
     rewrite::Rewrite,
-    store::{FactStore, StoreError, TheoryStore},
+    store::{FactStore, NamespaceStore, StoreError},
 };
 
 /// How many subjectsets one membership check may pass through without
@@ -188,16 +188,21 @@ where
 }
 
 pub struct Closure<'a, T, F> {
-    theories: &'a T,
+    namespaces: &'a T,
     facts: &'a F,
     subjectset: Subjectset,
     revision: Revision,
 }
 
-impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
-    pub fn new(theories: &'a T, facts: &'a F, subjectset: Subjectset, revision: Revision) -> Self {
+impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
+    pub fn new(
+        namespaces: &'a T,
+        facts: &'a F,
+        subjectset: Subjectset,
+        revision: Revision,
+    ) -> Self {
         Self {
-            theories,
+            namespaces,
             facts,
             subjectset,
             revision,
@@ -246,10 +251,10 @@ impl<'a, T: TheoryStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
         Ok(Some(self.expand_node(&rewrite, self.subjectset).await?))
     }
 
-    /// `None` when the theory or the relation isn't declared.
+    /// `None` when the namespace or the relation isn't declared.
     async fn rewrite(&self, set: Subjectset) -> Result<Option<Arc<Rewrite>>, StoreError> {
-        self.theories
-            .rewrite(set.resource.theory, set.relation)
+        self.namespaces
+            .rewrite(set.resource.namespace, set.relation)
             .await
     }
 

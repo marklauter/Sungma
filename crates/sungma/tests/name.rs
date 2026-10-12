@@ -3,7 +3,7 @@
 use proptest::prelude::*;
 use sungma::name::{
     Identity, MAX_IDENTITY_BYTES, MAX_NAME_BYTES, MAX_QUOTE_BYTES, MAX_RESOURCE_BYTES, NameError,
-    RelationName, ResourceName, SubjectsetName, TheoryName, quote,
+    NamespaceName, RelationName, ResourceName, SubjectsetName, quote,
 };
 
 #[test]
@@ -55,7 +55,7 @@ fn an_identity_is_at_most_max_identity_bytes() {
 #[test]
 fn a_subjectset_name_splits_at_the_first_colon_and_the_last_hash() {
     let name: SubjectsetName = "file:a:b#c#viewer".parse().unwrap();
-    assert_eq!(name.resource().theory().as_str(), "file");
+    assert_eq!(name.resource().namespace().as_str(), "file");
     assert_eq!(name.resource().id(), "a:b#c");
     assert_eq!(name.relation().as_str(), "viewer");
     assert_eq!(name.to_string(), "file:a:b#c#viewer");
@@ -64,7 +64,7 @@ fn a_subjectset_name_splits_at_the_first_colon_and_the_last_hash() {
 #[test]
 fn a_resource_name_splits_at_the_first_colon() {
     let name: ResourceName = "folder:a:b".parse().unwrap();
-    assert_eq!(name.theory().as_str(), "folder");
+    assert_eq!(name.namespace().as_str(), "folder");
     assert_eq!(name.id(), "a:b");
     assert_eq!(name.to_string(), "folder:a:b");
 }
@@ -79,7 +79,7 @@ fn a_malformed_resource_name_is_refused() {
     }
     assert_eq!(
         "folder".parse::<ResourceName>().unwrap_err().to_string(),
-        "malformed resource 'folder', expected theory:id"
+        "malformed resource 'folder', expected namespace:id"
     );
 }
 
@@ -102,7 +102,7 @@ fn a_malformed_subjectset_name_is_refused() {
             .parse::<SubjectsetName>()
             .unwrap_err()
             .to_string(),
-        "malformed subjectset 'file#viewer', expected theory:id#relation"
+        "malformed subjectset 'file#viewer', expected namespace:id#relation"
     );
 }
 
@@ -119,12 +119,12 @@ fn a_resource_itself_is_not_a_subjectset() {
     );
 }
 
-/// Theory and relation names of the grammar, within the length limit.
-const THEORY: &str = "[a-zA-Z_][a-zA-Z0-9_]{0,20}(\\.[a-zA-Z_][a-zA-Z0-9_]{0,20}){0,1}";
+/// Namespace and relation names of the grammar, within the length limit.
+const NAMESPACE: &str = "[a-zA-Z_][a-zA-Z0-9_]{0,20}(\\.[a-zA-Z_][a-zA-Z0-9_]{0,20}){0,1}";
 const RELATION: &str = "[a-zA-Z_][a-zA-Z0-9_]{0,40}";
 
 #[test]
-fn the_theory_and_relation_of_a_name_follow_the_grammar() {
+fn the_namespace_and_relation_of_a_name_follow_the_grammar() {
     let cases = [
         ("fi le:a#viewer", NameError::Invalid("fi le".to_owned())),
         ("file:a#view er", NameError::Invalid("view er".to_owned())),
@@ -144,7 +144,7 @@ fn the_theory_and_relation_of_a_name_follow_the_grammar() {
 #[test]
 fn a_name_has_checked_and_unchecked_constructors() {
     assert_eq!(
-        TheoryName::try_from("drive.file").map(|name| name.to_string()),
+        NamespaceName::try_from("drive.file").map(|name| name.to_string()),
         Ok("drive.file".to_owned())
     );
     assert_eq!(
@@ -152,7 +152,7 @@ fn a_name_has_checked_and_unchecked_constructors() {
         Err(NameError::Reserved("this".to_owned()))
     );
     assert_eq!(RelationName::new_unchecked("this").as_ref(), "this");
-    assert!(TheoryName::new_unchecked("a b") < TheoryName::new_unchecked("b"));
+    assert!(NamespaceName::new_unchecked("a b") < NamespaceName::new_unchecked("b"));
 }
 
 #[test]
@@ -166,28 +166,28 @@ fn a_name_error_quotes_a_bounded_and_escaped_cut_of_the_text() {
 }
 
 proptest! {
-    /// A theory name, any id without whitespace, and a relation name make a
+    /// A namespace name, any id without whitespace, and a relation name make a
     /// subjectset name that parses back into its parts.
     #[test]
     fn a_subjectset_name_parses_into_its_parts(
-        theory in THEORY,
+        namespace in NAMESPACE,
         id in "[!-~]{1,64}",
         relation in RELATION,
     ) {
         prop_assume!(!relation.eq_ignore_ascii_case("this"));
-        let text = format!("{theory}:{id}#{relation}");
+        let text = format!("{namespace}:{id}#{relation}");
         let name: SubjectsetName = text.parse().unwrap();
-        prop_assert_eq!(name.resource().theory().as_str(), &theory);
+        prop_assert_eq!(name.resource().namespace().as_str(), &namespace);
         prop_assert_eq!(name.resource().id(), &id);
         prop_assert_eq!(name.relation().as_str(), &relation);
         prop_assert_eq!(name.to_string(), text);
     }
 
     #[test]
-    fn a_resource_name_parses_into_its_parts(theory in THEORY, id in "[!-~]{1,64}") {
-        let text = format!("{theory}:{id}");
+    fn a_resource_name_parses_into_its_parts(namespace in NAMESPACE, id in "[!-~]{1,64}") {
+        let text = format!("{namespace}:{id}");
         let name: ResourceName = text.parse().unwrap();
-        prop_assert_eq!(name.theory().as_str(), &theory);
+        prop_assert_eq!(name.namespace().as_str(), &namespace);
         prop_assert_eq!(name.id(), &id);
         prop_assert_eq!(name.to_string(), text);
     }

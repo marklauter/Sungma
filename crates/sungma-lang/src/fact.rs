@@ -3,12 +3,12 @@
 //!
 //! ```json
 //! [
-//!   { "theory": "file", "resource": "readme", "relation": "owner",
+//!   { "namespace": "file", "resource": "readme", "relation": "owner",
 //!     "subject": { "identity": "alice" } },
-//!   { "theory": "folder", "resource": "root", "relation": "viewer",
-//!     "subject": { "theory": "group", "resource": "eng", "relation": "member" } },
-//!   { "theory": "file", "resource": "readme", "relation": "parent",
-//!     "subject": { "theory": "folder", "resource": "root" } }
+//!   { "namespace": "folder", "resource": "root", "relation": "viewer",
+//!     "subject": { "namespace": "group", "resource": "eng", "relation": "member" } },
+//!   { "namespace": "file", "resource": "readme", "relation": "parent",
+//!     "subject": { "namespace": "folder", "resource": "root" } }
 //! ]
 //! ```
 //!
@@ -26,9 +26,9 @@ use thiserror::Error;
 
 use sungma::{
     graph::{Fact, Resource, Subject, Subjectset},
-    id::{IdentityId, RelationId, ResourceId, TheoryId},
+    id::{IdentityId, NamespaceId, RelationId, ResourceId},
     name::{
-        Identity, NameError, RelationName, ResourceName, SubjectsetName, TheoryName,
+        Identity, NameError, NamespaceName, RelationName, ResourceName, SubjectsetName,
         check_resource_id,
     },
     store::Pool,
@@ -52,18 +52,18 @@ enum SubjectDto {
     Subjectset(SubjectsetName),
 }
 
-const FACT_KEYS: &[&str] = &["theory", "resource", "relation", "subject"];
+const FACT_KEYS: &[&str] = &["namespace", "resource", "relation", "subject"];
 
-const SUBJECT_KEYS: &[&str] = &["identity", "theory", "resource", "relation"];
+const SUBJECT_KEYS: &[&str] = &["identity", "namespace", "resource", "relation"];
 
 const SUBJECT_SHAPES: &str =
-    "an identity, a theory and resource, or a theory, resource and relation";
+    "an identity, a namespace and resource, or a namespace, resource and relation";
 
 /// The keys of a fact or a subject, each read at most once.
 #[derive(Default)]
 struct Keys {
     identity: Option<Identity>,
-    theory: Option<TheoryName>,
+    namespace: Option<NamespaceName>,
     resource: Option<String>,
     relation: Option<RelationName>,
     subject: Option<SubjectDto>,
@@ -83,7 +83,7 @@ impl Keys {
             };
             let seen = match key {
                 "identity" => keys.identity.is_some(),
-                "theory" => keys.theory.is_some(),
+                "namespace" => keys.namespace.is_some(),
                 "resource" => keys.resource.is_some(),
                 "relation" => keys.relation.is_some(),
                 _ => keys.subject.is_some(),
@@ -95,7 +95,7 @@ impl Keys {
             // value's line and column.
             match key {
                 "identity" => keys.identity = Some(named(map.next_value()?)?),
-                "theory" => keys.theory = Some(named(map.next_value()?)?),
+                "namespace" => keys.namespace = Some(named(map.next_value()?)?),
                 "resource" => {
                     let id: String = map.next_value()?;
                     check_resource_id(&id).map_err(de::Error::custom)?;
@@ -115,8 +115,8 @@ fn named<T: FromStr<Err = NameError>, E: de::Error>(text: String) -> Result<T, E
     text.parse().map_err(E::custom)
 }
 
-fn resource<E: de::Error>(theory: TheoryName, id: &str) -> Result<ResourceName, E> {
-    ResourceName::new(theory, id).map_err(E::custom)
+fn resource<E: de::Error>(namespace: NamespaceName, id: &str) -> Result<ResourceName, E> {
+    ResourceName::new(namespace, id).map_err(E::custom)
 }
 
 struct FactVisitor;
@@ -125,14 +125,14 @@ impl<'de> Visitor<'de> for FactVisitor {
     type Value = FactDto;
 
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("a fact: a theory, resource, relation and subject")
+        f.write_str("a fact: a namespace, resource, relation and subject")
     }
 
     fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
         let keys = Keys::read(map, FACT_KEYS)?;
-        let theory = keys
-            .theory
-            .ok_or_else(|| de::Error::missing_field("theory"))?;
+        let namespace = keys
+            .namespace
+            .ok_or_else(|| de::Error::missing_field("namespace"))?;
         let id = keys
             .resource
             .ok_or_else(|| de::Error::missing_field("resource"))?;
@@ -143,7 +143,7 @@ impl<'de> Visitor<'de> for FactVisitor {
             .subject
             .ok_or_else(|| de::Error::missing_field("subject"))?;
         Ok(FactDto {
-            set: SubjectsetName::new(resource(theory, &id)?, relation),
+            set: SubjectsetName::new(resource(namespace, &id)?, relation),
             subject,
         })
     }
@@ -166,13 +166,13 @@ impl<'de> Visitor<'de> for SubjectVisitor {
 
     fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
         let keys = Keys::read(map, SUBJECT_KEYS)?;
-        match (keys.identity, keys.theory, keys.resource, keys.relation) {
+        match (keys.identity, keys.namespace, keys.resource, keys.relation) {
             (Some(identity), None, None, None) => Ok(SubjectDto::Identity(identity)),
-            (None, Some(theory), Some(id), None) => {
-                Ok(SubjectDto::Resource(resource(theory, &id)?))
+            (None, Some(namespace), Some(id), None) => {
+                Ok(SubjectDto::Resource(resource(namespace, &id)?))
             }
-            (None, Some(theory), Some(id), Some(relation)) => Ok(SubjectDto::Subjectset(
-                SubjectsetName::new(resource(theory, &id)?, relation),
+            (None, Some(namespace), Some(id), Some(relation)) => Ok(SubjectDto::Subjectset(
+                SubjectsetName::new(resource(namespace, &id)?, relation),
             )),
             _ => Err(de::Error::custom(format!("a subject is {SUBJECT_SHAPES}"))),
         }
@@ -211,10 +211,10 @@ pub fn load_facts(
 }
 
 fn intern_resource(dictionary: &MemoryDictionary, name: &ResourceName) -> Resource {
-    let theory = TheoryId(dictionary.intern(Pool::Theories, name.theory().as_str()));
+    let namespace = NamespaceId(dictionary.intern(Pool::Namespaces, name.namespace().as_str()));
     Resource {
-        theory,
-        id: ResourceId(dictionary.intern(Pool::Resources(theory), name.id())),
+        namespace,
+        id: ResourceId(dictionary.intern(Pool::Resources(namespace), name.id())),
     }
 }
 

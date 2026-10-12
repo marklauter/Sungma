@@ -18,7 +18,7 @@ fn stderr(output: &Output) -> String {
 }
 
 #[test]
-fn the_server_needs_facts_and_at_least_one_theory() {
+fn the_server_needs_facts_and_at_least_one_namespace() {
     let facts = format!("{FIXTURES}/docs.facts.json");
     for args in [vec![], vec![facts.as_str()]] {
         let output = run(&args);
@@ -30,8 +30,8 @@ fn the_server_needs_facts_and_at_least_one_theory() {
 #[test]
 fn the_server_loads_its_files_before_it_binds() {
     let facts = format!("{FIXTURES}/docs.facts.json");
-    let theory = format!("{FIXTURES}/theories/file.json");
-    let output = run(&[&facts, &theory]);
+    let namespace = format!("{FIXTURES}/namespaces/file.json");
+    let output = run(&[&facts, &namespace]);
     assert!(!output.status.success());
     let stderr = stderr(&output);
     assert!(!stderr.contains("usage"), "{stderr}");

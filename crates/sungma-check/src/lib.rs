@@ -19,7 +19,7 @@ use sungma::{
     graph::Subject,
     name::SubjectsetName,
     revision::Revision,
-    store::{Dictionary, FactStore, StoreError, TheoryStore},
+    store::{Dictionary, FactStore, NamespaceStore, StoreError},
 };
 
 pub mod resolve;
@@ -103,7 +103,7 @@ impl AuditLog for MemoryAuditLog {
 
 pub struct CheckService<'a, D, T, F, A> {
     dictionary: &'a D,
-    theories: &'a T,
+    namespaces: &'a T,
     facts: &'a F,
     audit: &'a A,
 }
@@ -111,14 +111,14 @@ pub struct CheckService<'a, D, T, F, A> {
 impl<'a, D, T, F, A> CheckService<'a, D, T, F, A>
 where
     D: Dictionary + Sync,
-    T: TheoryStore + Sync,
+    T: NamespaceStore + Sync,
     F: FactStore + Sync,
     A: AuditLog + Sync,
 {
-    pub fn new(dictionary: &'a D, theories: &'a T, facts: &'a F, audit: &'a A) -> Self {
+    pub fn new(dictionary: &'a D, namespaces: &'a T, facts: &'a F, audit: &'a A) -> Self {
         Self {
             dictionary,
-            theories,
+            namespaces,
             facts,
             audit,
         }
@@ -163,7 +163,7 @@ where
             return Ok(None);
         };
         let revision = self.revision(request.zookie).await?;
-        Closure::new(self.theories, self.facts, set, revision)
+        Closure::new(self.namespaces, self.facts, set, revision)
             .decide(subject)
             .await
             .map(Some)

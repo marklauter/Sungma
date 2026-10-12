@@ -8,31 +8,31 @@ Sungma is a ReBAC. WIP.
 
 ## Architecture
 
-Sungma is a Zanzibar-style authorization service. It answers one question: is subject S in set `resource#relation` at revision R? It has three crates: `sungma`, a pure core library; `sungma-lang`, which reads theories and facts from text; and `sungma-api`, a thin HTTP shell around them. Below is how it fits together, from bottom to top.
+Sungma is a Zanzibar-style authorization service. It answers one question: is subject S in set `resource#relation` at revision R? It has three crates: `sungma`, a pure core library; `sungma-lang`, which reads namespaces and facts from text; and `sungma-api`, a thin HTTP shell around them. Below is how it fits together, from bottom to top.
 
 **The model** (`model.rs`)
 - A **fact** binds a subject to a subjectset, for example `carol` to `file:design.md#owner`. The subject is one of three things:
   - an identity (`carol`);
   - another subjectset (`group:eng#member`);
   - a resource itself (`folder:root`), which is how parent links are written.
-- Every string is interned to a `u32` newtype such as `TheoryId` or `RelationId`. These are like C# `readonly record struct TheoryId(uint Value)`. Past the edge, the core never handles a string.
+- Every string is interned to a `u32` newtype such as `NamespaceId` or `RelationId`. These are like C# `readonly record struct NamespaceId(uint Value)`. Past the edge, the core never handles a string.
 - Each write bumps a global `Revision`, and every read is "as of" a revision.
 
-**Theories** (`theory.rs`, `rewrite.rs`)
-- A theory declares the relations for one kind of resource. Each relation has a **rewrite**, a small expression tree. `Rewrite` is a Rust enum, which is a closed discriminated union; in C# it would be an abstract record with sealed subclasses. Its cases are:
+**Namespaces** (`namespace.rs`, `rewrite.rs`)
+- A namespace declares the relations for one kind of resource. Each relation has a **rewrite**, a small expression tree. `Rewrite` is a Rust enum, which is a closed discriminated union; in C# it would be an abstract record with sealed subclasses. Its cases are:
   - `this`: the stored facts;
   - computed: another relation on the same resource;
   - fact-to-subjectset: follow a fact, such as `parent`, then evaluate a relation on the resource it names;
   - union, intersection and exclusion.
-- `Theory::new` checks a theory whole when it is built, and refuses it with every problem it finds: duplicates, empty operators, nesting deeper than 100 levels, undeclared names and computed cycles. So every `Theory` is valid, and any theory that gets stored is guaranteed to evaluate.
+- `Namespace::new` checks a namespace whole when it is built, and refuses it with every problem it finds: duplicates, empty operators, nesting deeper than 100 levels, undeclared names and computed cycles. So every `Namespace` is valid, and any namespace that gets stored is guaranteed to evaluate.
 
 **Storage ports** (`store.rs`, `memory.rs`, `intern.rs`)
 - The ports are async traits, which play the role of C# interfaces. Reads and writes are separate:
   - `Dictionary`: name to id, and back;
   - `FactStore`: keyed like a wide-column store, with the subjectset as partition key and the subject as sort key;
-  - `TheoryStore`: the rewrite for a theory and relation;
+  - `NamespaceStore`: the rewrite for a namespace and relation;
   - `FactWriter`: a batch of inserts and deletes, applied atomically at the next revision;
-  - `Interner`: mints ids for new names, each in its pool: theory names, relation names, the resource ids of each theory, and identities. Relations share one pool because `(parent, viewer)` means `viewer` in whichever theory the parent fact names.
+  - `Interner`: mints ids for new names, each in its pool: namespace names, relation names, the resource ids of each namespace, and identities. Relations share one pool because `(parent, viewer)` means `viewer` in whichever namespace the parent fact names.
 - Where a guarantee spans nodes, Sungma runs the protocol and a store supplies primitives. A fact keeps the revision that wrote it and the one that deleted it, so reads at any revision work on any store. `LeasingInterner` mints ids over a `NameStore`: each node leases a block of ids from a shared counter, and a conditional insert makes the first node to store a name win. [docs/interner.md](docs/interner.md) has the sequence.
 - `memory.rs` has in-memory fakes of the stores. There is no real database yet.
 
@@ -47,22 +47,22 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
 **Decisions and replay** (`decision.rs`, `replay.rs`)
 - A `Decision` records the question, the revision, the `SEMANTICS` version and the outcome with its grounds.
 - `replay` re-judges a recorded decision at its revision and reports one of four results: `Matches`, `Regrounded` (the same verdict on other grounds), `Differs`, or `SemanticsChanged` (the evaluation rules have changed since). This is the audit story.
-- One limitation: theories aren't versioned yet, so replay reads the current theories.
+- One limitation: namespaces aren't versioned yet, so replay reads the current namespaces.
 
 **The edge** (`name.rs`, `resolve.rs`, `check.rs`)
-- `name.rs` parses `theory:id#relation` once, splitting at the first `:` and the last `#`.
+- `name.rs` parses `namespace:id#relation` once, splitting at the first `:` and the last `#`.
 - `resolve.rs` maps names to ids. A name that was never interned is denied without touching the fact store.
 - `check.rs` has `CheckService`, which does three things: resolve, decide, then append an `AuditRecord` to an `AuditLog` (in memory for now).
 
 **Languages and the API**
-- `sungma-lang`'s `theory.rs` parses and prints theory documents: one theory per JSON object, each relation's rewrite an expression such as `"(this | editor) ! banned"`. [docs/specs/theory-documents.md](docs/specs/theory-documents.md) specifies them.
-- `sungma-lang`'s `theory.rs` loads theory documents, and its `fact.rs` loads fact documents, from the files under `crates/sungma/tests/fixtures`.
+- `sungma-lang`'s `namespace.rs` parses and prints namespace documents: one namespace per JSON object, each relation's rewrite an expression such as `"(this | editor) ! banned"`. [docs/specs/namespace-documents.md](docs/specs/namespace-documents.md) specifies them.
+- `sungma-lang`'s `namespace.rs` loads namespace documents, and its `fact.rs` loads fact documents, from the files under `crates/sungma/tests/fixtures`.
 - `sungma-api` is an axum app with one route, `POST /check`. It loads the fixtures at startup and returns `{request_id, verdict, zookie}`. Errors are always JSON.
 
 **Not built yet**
 - Writes over the API (facts are only loaded from fixtures).
 - A real store.
-- Theory versioning.
+- Namespace versioning.
 - RFC 9457 error bodies.
 - Expand over HTTP.
 - Authentication.
@@ -77,7 +77,7 @@ The [Sample](#sample) below (files, folders, groups) and its trace for "is alice
 git config core.hooksPath .githooks
 ```
 
-`fuzz/` holds `cargo-fuzz` targets for the theory and fact document parsers. CI runs each for a minute; locally they need the nightly toolchain:
+`fuzz/` holds `cargo-fuzz` targets for the namespace and fact document parsers. CI runs each for a minute; locally they need the nightly toolchain:
 
 ```sh
 cargo +nightly fuzz run document
@@ -88,7 +88,7 @@ cargo +nightly fuzz run fact
 
 ```sh
 F=crates/sungma/tests/fixtures
-cargo run -p sungma-api -- $F/docs.facts.json $F/theories/*.json
+cargo run -p sungma-api -- $F/docs.facts.json $F/namespaces/*.json
 
 curl -d '{"set": "file:design.md#viewer", "identity": "alice"}'   -H 'content-type: application/json' localhost:8080/check
 # {"request_id":"sungma-1","verdict":"allowed","zookie":{"revision":16}}
@@ -104,24 +104,24 @@ A fact binds a subject to a subjectset. A fact document is a JSON array of facts
 
 ```json
 [
-  { "theory": "file", "resource": "readme", "relation": "owner",
+  { "namespace": "file", "resource": "readme", "relation": "owner",
     "subject": { "identity": "anne@example.com" } },
-  { "theory": "folder", "resource": "root", "relation": "viewer",
-    "subject": { "theory": "group", "resource": "eng", "relation": "member" } },
-  { "theory": "file", "resource": "readme", "relation": "parent",
-    "subject": { "theory": "folder", "resource": "root" } }
+  { "namespace": "folder", "resource": "root", "relation": "viewer",
+    "subject": { "namespace": "group", "resource": "eng", "relation": "member" } },
+  { "namespace": "file", "resource": "readme", "relation": "parent",
+    "subject": { "namespace": "folder", "resource": "root" } }
 ]
 ```
 
-- `theory`, `resource` and `relation` name the subjectset, and `subject` holds the subject.
-- A subject's keys say which kind it is: `identity` alone is an identity, `theory` and `resource` are a resource, and `theory`, `resource` and `relation` are a subjectset.
+- `namespace`, `resource` and `relation` name the subjectset, and `subject` holds the subject.
+- A subject's keys say which kind it is: `identity` alone is an identity, `namespace` and `resource` are a resource, and `namespace`, `resource` and `relation` are a subjectset.
 - Resources and identities are owned by external systems, such as emails, paths or URIs. Any character but whitespace is allowed.
 
 [docs/specs/fact-documents.md](docs/specs/fact-documents.md) specifies fact documents.
 
 ## Rewrites
 
-A relation's rewrite is an expression over the relations of its theory.
+A relation's rewrite is an expression over the relations of its namespace.
 
 ```ebnf
 ⟨rewrite⟩             ::= ⟨union⟩
@@ -151,15 +151,15 @@ Each term names a set of subjects:
 
 - `this` is the subjects of the facts stored under the subjectset in hand.
 - A computed subjectset is a relation evaluated on the resource in hand.
-- A fact-to-subjectset reads the facts under the factset, then evaluates the computed subjectset on each resource those facts name, under that resource's theory.
+- A fact-to-subjectset reads the facts under the factset, then evaluates the computed subjectset on each resource those facts name, under that resource's namespace.
 
-A relation that takes only the facts bound to it is written `this`. A relation the theory doesn't declare, such as one reached through a fact-to-subjectset whose target theory lacks it, names the empty set.
+A relation that takes only the facts bound to it is written `this`. A relation the namespace doesn't declare, such as one reached through a fact-to-subjectset whose target namespace lacks it, names the empty set.
 
-A theory is checked whole when it is declared. It is refused if a relation is declared twice, a union or intersection is empty, a rewrite nests more than 100 levels deep, a computed subjectset or factset names a relation the theory doesn't declare, or computed subjectsets form a cycle, such as `viewer: this ! viewer`. A cycle through a fact-to-subjectset, like folders inside folders, reads a fact at each step and is allowed.
+A namespace is checked whole when it is declared. It is refused if a relation is declared twice, a union or intersection is empty, a rewrite nests more than 100 levels deep, a computed subjectset or factset names a relation the namespace doesn't declare, or computed subjectsets form a cycle, such as `viewer: this ! viewer`. A cycle through a fact-to-subjectset, like folders inside folders, reads a fact at each step and is allowed.
 
 ## Sample
 
-Three theories for documents: files sit in folders, folders sit in folders, and groups hold members. Each is a theory document:
+Three namespaces for documents: files sit in folders, folders sit in folders, and groups hold members. Each is a namespace document:
 
 ```json
 {
@@ -193,20 +193,20 @@ Some facts under it, as a fact document (`crates/sungma/tests/fixtures/docs.fact
 
 ```json
 [
-  { "theory": "group", "resource": "eng", "relation": "member", "subject": { "identity": "alice" } },
-  { "theory": "group", "resource": "eng", "relation": "member", "subject": { "identity": "bob" } },
-  { "theory": "folder", "resource": "root", "relation": "viewer",
-    "subject": { "theory": "group", "resource": "eng", "relation": "member" } },
-  { "theory": "folder", "resource": "root", "relation": "viewer", "subject": { "identity": "erin" } },
-  { "theory": "folder", "resource": "specs", "relation": "parent",
-    "subject": { "theory": "folder", "resource": "root" } },
-  { "theory": "folder", "resource": "specs", "relation": "banned", "subject": { "identity": "erin" } },
-  { "theory": "file", "resource": "design.md", "relation": "parent",
-    "subject": { "theory": "folder", "resource": "specs" } },
-  { "theory": "file", "resource": "design.md", "relation": "owner", "subject": { "identity": "carol" } },
-  { "theory": "file", "resource": "design.md", "relation": "banned", "subject": { "identity": "bob" } },
-  { "theory": "file", "resource": "design.md", "relation": "auditor", "subject": { "identity": "alice" } },
-  { "theory": "file", "resource": "design.md", "relation": "auditor", "subject": { "identity": "dave" } }
+  { "namespace": "group", "resource": "eng", "relation": "member", "subject": { "identity": "alice" } },
+  { "namespace": "group", "resource": "eng", "relation": "member", "subject": { "identity": "bob" } },
+  { "namespace": "folder", "resource": "root", "relation": "viewer",
+    "subject": { "namespace": "group", "resource": "eng", "relation": "member" } },
+  { "namespace": "folder", "resource": "root", "relation": "viewer", "subject": { "identity": "erin" } },
+  { "namespace": "folder", "resource": "specs", "relation": "parent",
+    "subject": { "namespace": "folder", "resource": "root" } },
+  { "namespace": "folder", "resource": "specs", "relation": "banned", "subject": { "identity": "erin" } },
+  { "namespace": "file", "resource": "design.md", "relation": "parent",
+    "subject": { "namespace": "folder", "resource": "specs" } },
+  { "namespace": "file", "resource": "design.md", "relation": "owner", "subject": { "identity": "carol" } },
+  { "namespace": "file", "resource": "design.md", "relation": "banned", "subject": { "identity": "bob" } },
+  { "namespace": "file", "resource": "design.md", "relation": "auditor", "subject": { "identity": "alice" } },
+  { "namespace": "file", "resource": "design.md", "relation": "auditor", "subject": { "identity": "dave" } }
 ]
 ```
 

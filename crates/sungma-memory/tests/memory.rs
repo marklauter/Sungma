@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use proptest::{collection::vec, prelude::*, test_runner::TestCaseError};
 use sungma::{
     graph::{Fact, Resource, Subject, Subjectset},
-    id::{IdentityId, RelationId, ResourceId, TheoryId},
+    id::{IdentityId, NamespaceId, RelationId, ResourceId},
     revision::Revision,
     store::FactStore,
 };
@@ -18,7 +18,7 @@ use sungma_write::store::{
 
 const SET: Subjectset = Subjectset {
     resource: Resource {
-        theory: TheoryId(0),
+        namespace: NamespaceId(0),
         id: ResourceId(1),
     },
     relation: RelationId(2),

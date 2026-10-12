@@ -1,4 +1,4 @@
-//! `POST /check` against the docs theories and facts from the core's
+//! `POST /check` against the docs namespaces and facts from the core's
 //! fixtures.
 
 use std::sync::Arc;
@@ -14,15 +14,15 @@ use sungma_api::{AppState, router};
 use sungma_check::Verdict;
 use tower::ServiceExt;
 
-const THEORIES: [&str; 3] = [
-    include_str!("../../sungma/tests/fixtures/theories/file.json"),
-    include_str!("../../sungma/tests/fixtures/theories/folder.json"),
-    include_str!("../../sungma/tests/fixtures/theories/group.json"),
+const NAMESPACES: [&str; 3] = [
+    include_str!("../../sungma/tests/fixtures/namespaces/file.json"),
+    include_str!("../../sungma/tests/fixtures/namespaces/folder.json"),
+    include_str!("../../sungma/tests/fixtures/namespaces/group.json"),
 ];
 const FACTS: &str = include_str!("../../sungma/tests/fixtures/docs.facts.json");
 
 fn state() -> Arc<AppState> {
-    Arc::new(AppState::load(&THEORIES, FACTS).unwrap())
+    Arc::new(AppState::load(&NAMESPACES, FACTS).unwrap())
 }
 
 async fn post(app: Router, body: Value, headers: &[(&str, &str)]) -> (StatusCode, Value) {
@@ -172,7 +172,7 @@ async fn a_resource_is_not_a_subject() {
 #[test]
 fn load_reports_bad_json() {
     assert!(AppState::load(&["{"], FACTS).is_err());
-    assert!(AppState::load(&THEORIES, "[{}]").is_err());
+    assert!(AppState::load(&NAMESPACES, "[{}]").is_err());
 }
 
 #[tokio::test]

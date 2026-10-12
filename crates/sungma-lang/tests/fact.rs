@@ -27,7 +27,7 @@ fn refused(json: &str) -> String {
 /// A one-fact document whose subject is `subject`.
 fn with_subject(subject: &str) -> String {
     format!(
-        r#"[{{ "theory": "file", "resource": "a", "relation": "owner", "subject": {subject} }}]"#
+        r#"[{{ "namespace": "file", "resource": "a", "relation": "owner", "subject": {subject} }}]"#
     )
 }
 
@@ -36,12 +36,12 @@ async fn a_subject_is_read_by_its_keys() {
     let dictionary = MemoryDictionary::default();
     let facts = MemoryFactStore::default();
     let json = r#"[
-        { "theory": "file", "resource": "a", "relation": "owner",
+        { "namespace": "file", "resource": "a", "relation": "owner",
           "subject": { "identity": "anne@example.com" } },
-        { "theory": "file", "resource": "a", "relation": "parent",
-          "subject": { "theory": "folder", "resource": "root" } },
-        { "theory": "file", "resource": "a", "relation": "viewer",
-          "subject": { "theory": "group", "resource": "eng", "relation": "member" } }
+        { "namespace": "file", "resource": "a", "relation": "parent",
+          "subject": { "namespace": "folder", "resource": "root" } },
+        { "namespace": "file", "resource": "a", "relation": "viewer",
+          "subject": { "namespace": "group", "resource": "eng", "relation": "member" } }
     ]"#;
     fact::load_facts(json, &dictionary, &facts).unwrap();
     assert_eq!(facts.head().await.unwrap().0, 3);
@@ -55,10 +55,10 @@ async fn a_subject_is_read_by_its_keys() {
 fn a_subject_of_no_known_shape_is_refused() {
     for subject in [
         r#"{}"#,
-        r#"{ "identity": "alice", "theory": "folder", "resource": "root" }"#,
-        r#"{ "theory": "folder" }"#,
+        r#"{ "identity": "alice", "namespace": "folder", "resource": "root" }"#,
+        r#"{ "namespace": "folder" }"#,
         r#"{ "resource": "root" }"#,
-        r#"{ "theory": "group", "relation": "member" }"#,
+        r#"{ "namespace": "group", "relation": "member" }"#,
         r#"{ "identity": "alice", "relation": "member" }"#,
         r#"{ "relation": "member" }"#,
     ] {
@@ -75,18 +75,18 @@ fn a_fact_needs_every_part() {
     for (json, missing) in [
         (
             r#"[{ "resource": "a", "relation": "owner", "subject": { "identity": "x" } }]"#,
-            "theory",
+            "namespace",
         ),
         (
-            r#"[{ "theory": "file", "relation": "owner", "subject": { "identity": "x" } }]"#,
+            r#"[{ "namespace": "file", "relation": "owner", "subject": { "identity": "x" } }]"#,
             "resource",
         ),
         (
-            r#"[{ "theory": "file", "resource": "a", "subject": { "identity": "x" } }]"#,
+            r#"[{ "namespace": "file", "resource": "a", "subject": { "identity": "x" } }]"#,
             "relation",
         ),
         (
-            r#"[{ "theory": "file", "resource": "a", "relation": "owner" }]"#,
+            r#"[{ "namespace": "file", "resource": "a", "relation": "owner" }]"#,
             "subject",
         ),
     ] {
@@ -101,7 +101,7 @@ fn a_fact_needs_every_part() {
 #[test]
 fn an_unknown_key_is_refused() {
     let error = refused(
-        r#"[{ "theory": "file", "resource": "a", "relation": "owner", "subject": { "identity": "x" }, "note": "x" }]"#,
+        r#"[{ "namespace": "file", "resource": "a", "relation": "owner", "subject": { "identity": "x" }, "note": "x" }]"#,
     );
     assert!(error.contains("unknown field `note`"), "{error}");
     let error = refused(&with_subject(r#"{ "identity": "x", "subject": "y" }"#));
@@ -111,15 +111,15 @@ fn an_unknown_key_is_refused() {
 #[test]
 fn a_key_written_twice_is_refused() {
     let error = refused(
-        r#"[{ "theory": "file", "theory": "file", "resource": "a", "relation": "owner", "subject": { "identity": "x" } }]"#,
+        r#"[{ "namespace": "file", "namespace": "file", "resource": "a", "relation": "owner", "subject": { "identity": "x" } }]"#,
     );
-    assert!(error.contains("duplicate field `theory`"), "{error}");
+    assert!(error.contains("duplicate field `namespace`"), "{error}");
     let error = refused(&with_subject(r#"{ "identity": "x", "identity": "y" }"#));
     assert!(error.contains("duplicate field `identity`"), "{error}");
     let error = refused(
-        r#"[{ "theory": "file", "theory": "fi le", "resource": "a", "relation": "owner", "subject": { "identity": "x" } }]"#,
+        r#"[{ "namespace": "file", "namespace": "fi le", "resource": "a", "relation": "owner", "subject": { "identity": "x" } }]"#,
     );
-    assert!(error.contains("duplicate field `theory`"), "{error}");
+    assert!(error.contains("duplicate field `namespace`"), "{error}");
     for (key, value) in [
         ("resource", r#""a""#),
         ("relation", r#""owner""#),
@@ -128,16 +128,16 @@ fn a_key_written_twice_is_refused() {
         // The repeated key comes before every other, so no other key has
         // been read when it repeats.
         let error = refused(&format!(
-            r#"[{{ "{key}": {value}, "{key}": {value}, "theory": "file", "resource": "a", "relation": "owner", "subject": {{ "identity": "x" }} }}]"#
+            r#"[{{ "{key}": {value}, "{key}": {value}, "namespace": "file", "resource": "a", "relation": "owner", "subject": {{ "identity": "x" }} }}]"#
         ));
         assert!(
             error.contains(&format!("duplicate field `{key}`")),
             "{error}"
         );
     }
-    for key in ["theory", "resource", "relation"] {
+    for key in ["namespace", "resource", "relation"] {
         let error = refused(&with_subject(&format!(
-            r#"{{ "{key}": "x", "{key}": "x", "theory": "g", "resource": "e", "relation": "m" }}"#
+            r#"{{ "{key}": "x", "{key}": "x", "namespace": "g", "resource": "e", "relation": "m" }}"#
         )));
         assert!(
             error.contains(&format!("duplicate field `{key}`")),
@@ -149,11 +149,11 @@ fn a_key_written_twice_is_refused() {
 #[test]
 fn a_name_outside_the_grammar_is_refused() {
     let error = refused(
-        r#"[{ "theory": "fi le", "resource": "a", "relation": "owner", "subject": { "identity": "x" } }]"#,
+        r#"[{ "namespace": "fi le", "resource": "a", "relation": "owner", "subject": { "identity": "x" } }]"#,
     );
     assert!(error.contains("is not a valid name"), "{error}");
     let error = refused(&with_subject(
-        r#"{ "theory": "group", "resource": "eng", "relation": "this" }"#,
+        r#"{ "namespace": "group", "resource": "eng", "relation": "this" }"#,
     ));
     assert!(error.contains("is reserved"), "{error}");
 }
@@ -161,10 +161,10 @@ fn a_name_outside_the_grammar_is_refused() {
 #[test]
 fn whitespace_in_a_resource_or_identity_is_refused() {
     for json in [
-        r#"[{ "theory": "file", "resource": "a b", "relation": "owner", "subject": { "identity": "x" } }]"#.to_owned(),
+        r#"[{ "namespace": "file", "resource": "a b", "relation": "owner", "subject": { "identity": "x" } }]"#.to_owned(),
         with_subject(r#"{ "identity": "al ice" }"#),
-        with_subject(r#"{ "theory": "folder", "resource": "r oot" }"#),
-        with_subject(r#"{ "theory": "group", "resource": "e ng", "relation": "member" }"#),
+        with_subject(r#"{ "namespace": "folder", "resource": "r oot" }"#),
+        with_subject(r#"{ "namespace": "group", "resource": "e ng", "relation": "member" }"#),
     ] {
         let error = refused(&json);
         assert!(error.contains("holds whitespace"), "{error}");
@@ -174,7 +174,7 @@ fn whitespace_in_a_resource_or_identity_is_refused() {
 
 #[test]
 fn an_error_carries_the_line_and_column_of_the_bad_value() {
-    let json = "[{ \"theory\": \"file\",
+    let json = "[{ \"namespace\": \"file\",
   \"resource\": \"a b\",
   \"relation\": \"owner\",
   \"subject\": { \"identity\": \"x\" } }]";
@@ -186,7 +186,9 @@ fn an_error_carries_the_line_and_column_of_the_bad_value() {
 fn an_empty_resource_or_identity_is_refused() {
     let error = refused(&with_subject(r#"{ "identity": "" }"#));
     assert!(error.contains("an identity is empty"), "{error}");
-    let error = refused(&with_subject(r#"{ "theory": "folder", "resource": "" }"#));
+    let error = refused(&with_subject(
+        r#"{ "namespace": "folder", "resource": "" }"#,
+    ));
     assert!(error.contains("a resource is empty"), "{error}");
 }
 
@@ -195,10 +197,10 @@ async fn a_refused_document_declares_no_facts() {
     let dictionary = MemoryDictionary::default();
     let facts = MemoryFactStore::default();
     let json = r#"[
-        { "theory": "file", "resource": "a", "relation": "owner",
+        { "namespace": "file", "resource": "a", "relation": "owner",
           "subject": { "identity": "alice" } },
-        { "theory": "file", "resource": "a", "relation": "owner",
-          "subject": { "identity": "bob", "theory": "folder", "resource": "root" } }
+        { "namespace": "file", "resource": "a", "relation": "owner",
+          "subject": { "identity": "bob", "namespace": "folder", "resource": "root" } }
     ]"#;
     assert!(fact::load_facts(json, &dictionary, &facts).is_err());
     assert_eq!(facts.head().await.unwrap().0, 0);
@@ -217,15 +219,15 @@ fn a_fact_and_a_subject_must_be_objects() {
 }
 
 #[tokio::test]
-async fn resource_ids_are_pooled_per_theory() {
+async fn resource_ids_are_pooled_per_namespace() {
     let dictionary = MemoryDictionary::default();
     let facts = MemoryFactStore::default();
-    let json = r#"[{ "theory": "file", "resource": "a", "relation": "owner",
+    let json = r#"[{ "namespace": "file", "resource": "a", "relation": "owner",
         "subject": { "identity": "alice" } }]"#;
     fact::load_facts(json, &dictionary, &facts).unwrap();
     let file = resolve::resource(&dictionary, &"file:a".parse().unwrap()).await;
     assert!(file.unwrap().is_some());
-    dictionary.intern(Pool::Theories, "folder");
+    dictionary.intern(Pool::Namespaces, "folder");
     let folder = resolve::resource(&dictionary, &"folder:a".parse().unwrap()).await;
     assert_eq!(folder.unwrap(), None);
 }
@@ -242,16 +244,18 @@ impl Who {
     fn json(&self) -> Value {
         match self {
             Self::Identity(identity) => json!({ "identity": identity }),
-            Self::Resource(theory, resource) => json!({ "theory": theory, "resource": resource }),
-            Self::Subjectset(theory, resource, relation) => {
-                json!({ "theory": theory, "resource": resource, "relation": relation })
+            Self::Resource(namespace, resource) => {
+                json!({ "namespace": namespace, "resource": resource })
+            }
+            Self::Subjectset(namespace, resource, relation) => {
+                json!({ "namespace": namespace, "resource": resource, "relation": relation })
             }
         }
     }
 }
 
-fn fact_json(theory: &str, resource: &str, relation: &str, subject: &Who) -> Value {
-    json!({ "theory": theory, "resource": resource, "relation": relation, "subject": subject.json() })
+fn fact_json(namespace: &str, resource: &str, relation: &str, subject: &Who) -> Value {
+    json!({ "namespace": namespace, "resource": resource, "relation": relation, "subject": subject.json() })
 }
 
 fn loaded(json: &str) -> (MemoryDictionary, MemoryFactStore) {
@@ -263,8 +267,8 @@ fn loaded(json: &str) -> (MemoryDictionary, MemoryFactStore) {
     (dictionary, facts)
 }
 
-fn set_name(theory: &str, resource: &str, relation: &str) -> SubjectsetName {
-    let resource = ResourceName::new(theory.parse().unwrap(), resource).unwrap();
+fn set_name(namespace: &str, resource: &str, relation: &str) -> SubjectsetName {
+    let resource = ResourceName::new(namespace.parse().unwrap(), resource).unwrap();
     SubjectsetName::new(resource, relation.parse().unwrap())
 }
 
@@ -272,10 +276,10 @@ fn set_name(theory: &str, resource: &str, relation: &str) -> SubjectsetName {
 /// with.
 async fn holds(
     (dictionary, facts): &(MemoryDictionary, MemoryFactStore),
-    (theory, resource, relation): (&str, &str, &str),
+    (namespace, resource, relation): (&str, &str, &str),
     subject: &Who,
 ) -> bool {
-    let set = set_name(theory, resource, relation);
+    let set = set_name(namespace, resource, relation);
     let Some(set) = resolve::subjectset(dictionary, &set).await.unwrap() else {
         return false;
     };
@@ -284,15 +288,15 @@ async fn holds(
             .await
             .unwrap()
             .map(Subject::Identity),
-        Who::Resource(theory, resource) => {
-            let name = ResourceName::new(theory.parse().unwrap(), resource).unwrap();
+        Who::Resource(namespace, resource) => {
+            let name = ResourceName::new(namespace.parse().unwrap(), resource).unwrap();
             resolve::resource(dictionary, &name)
                 .await
                 .unwrap()
                 .map(Subject::ResourceMember)
         }
-        Who::Subjectset(theory, resource, relation) => {
-            resolve::subjectset(dictionary, &set_name(theory, resource, relation))
+        Who::Subjectset(namespace, resource, relation) => {
+            resolve::subjectset(dictionary, &set_name(namespace, resource, relation))
                 .await
                 .unwrap()
                 .map(Subject::Subjectset)
@@ -326,12 +330,12 @@ fn a_document_must_be_an_array() {
 #[test]
 fn a_name_must_be_a_string() {
     for json in [
-        r#"[{ "theory": 5, "resource": "a", "relation": "owner", "subject": { "identity": "x" } }]"#
+        r#"[{ "namespace": 5, "resource": "a", "relation": "owner", "subject": { "identity": "x" } }]"#
             .to_owned(),
-        r#"[{ "theory": "file", "resource": null, "relation": "owner", "subject": { "identity": "x" } }]"#
+        r#"[{ "namespace": "file", "resource": null, "relation": "owner", "subject": { "identity": "x" } }]"#
             .to_owned(),
         with_subject(r#"{ "identity": ["x"] }"#),
-        with_subject(r#"{ "theory": "folder", "resource": {} }"#),
+        with_subject(r#"{ "namespace": "folder", "resource": {} }"#),
     ] {
         let error = refused(&json);
         assert!(error.contains("invalid type"), "{json}: {error}");
@@ -498,7 +502,7 @@ fn a_deeply_nested_value_is_refused_without_a_crash() {
         with_subject(&deep("[", "]")),
         with_subject(&format!(r#"{{ "identity": {} }}"#, deep("[", "]"))),
         with_subject(&deep(r#"{ "identity": "#, "}")),
-        format!(r#"[{{ "theory": {} }}]"#, deep(r#"{"a":"#, "}")),
+        format!(r#"[{{ "namespace": {} }}]"#, deep(r#"{"a":"#, "}")),
         deep("[", "]"),
     ] {
         refused(&json);
@@ -554,9 +558,10 @@ fn name() -> impl Strategy<Value = String> {
 fn who() -> impl Strategy<Value = Who> {
     prop_oneof![
         r"\S{1,20}".prop_map(Who::Identity),
-        (name(), r"\S{1,20}").prop_map(|(theory, resource)| Who::Resource(theory, resource)),
-        (name(), r"\S{1,20}", name())
-            .prop_map(|(theory, resource, relation)| Who::Subjectset(theory, resource, relation)),
+        (name(), r"\S{1,20}").prop_map(|(namespace, resource)| Who::Resource(namespace, resource)),
+        (name(), r"\S{1,20}", name()).prop_map(|(namespace, resource, relation)| Who::Subjectset(
+            namespace, resource, relation
+        )),
     ]
 }
 
@@ -568,13 +573,13 @@ proptest! {
     ) {
         let documents: Vec<Value> = facts
             .iter()
-            .map(|(theory, resource, relation, subject)| fact_json(theory, resource, relation, subject))
+            .map(|(namespace, resource, relation, subject)| fact_json(namespace, resource, relation, subject))
             .collect();
         let world = loaded(&json!(documents).to_string());
         let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
-        for (theory, resource, relation, subject) in &facts {
-            let found = runtime.block_on(holds(&world, (theory, resource, relation), subject));
-            prop_assert!(found, "{theory}:{resource}#{relation} {subject:?}");
+        for (namespace, resource, relation, subject) in &facts {
+            let found = runtime.block_on(holds(&world, (namespace, resource, relation), subject));
+            prop_assert!(found, "{namespace}:{resource}#{relation} {subject:?}");
         }
     }
 
@@ -585,7 +590,7 @@ proptest! {
         text in prop_oneof![
             any::<String>(),
             r#"[\[\]{}":, a-z0-9#@\\]{0,64}"#,
-            r#"\[\{ "(theory|resource|relation|subject|identity)": ("[a-z :]{0,4}"|\{\}|[0-9])[,}\]]{0,3}"#,
+            r#"\[\{ "(namespace|resource|relation|subject|identity)": ("[a-z :]{0,4}"|\{\}|[0-9])[,}\]]{0,3}"#,
         ],
     ) {
         let dictionary = MemoryDictionary::default();

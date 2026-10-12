@@ -6,7 +6,7 @@
 //! { "set": "file:design.md#viewer", "identity": "alice", "zookie": { "revision": 12 } }
 //! ```
 //!
-//! The subject is an `identity` or a `subjectset` (`theory:id#relation`).
+//! The subject is an `identity` or a `subjectset` (`namespace:id#relation`).
 //! The zookie is optional, and is plain JSON for now so it stays readable.
 //! The reply names the verdict and, once decided, the zookie of the
 //! revision it was decided at:
@@ -48,16 +48,16 @@ use sungma_check::{
 };
 use sungma_lang::{
     fact::{self, FactError},
-    theory::{self, Refusal},
+    namespace::{self, Refusal},
 };
-use sungma_memory::{MemoryDictionary, MemoryFactStore, MemoryTheoryStore};
+use sungma_memory::{MemoryDictionary, MemoryFactStore, MemoryNamespaceStore};
 use thiserror::Error;
 
 /// Why the state didn't load.
 #[derive(Debug, Error)]
 pub enum LoadError {
     #[error(transparent)]
-    Theory(#[from] Refusal),
+    Namespace(#[from] Refusal),
     #[error(transparent)]
     Fact(#[from] FactError),
 }
@@ -66,7 +66,7 @@ pub enum LoadError {
 #[derive(Debug, Default)]
 pub struct AppState {
     pub dictionary: MemoryDictionary,
-    pub theories: MemoryTheoryStore,
+    pub namespaces: MemoryNamespaceStore,
     pub facts: MemoryFactStore,
     pub audit: MemoryAuditLog,
     /// Numbers requests that arrive without an `x-request-id`.
@@ -74,11 +74,11 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Loads theory documents and fact JSON in the [`theory`] and [`fact`]
+    /// Loads namespace documents and fact JSON in the [`namespace`] and [`fact`]
     /// forms.
-    pub fn load(theories: &[&str], facts: &str) -> Result<Self, LoadError> {
+    pub fn load(namespaces: &[&str], facts: &str) -> Result<Self, LoadError> {
         let mut state = Self::default();
-        theory::load_theories(theories, &state.dictionary, &mut state.theories)?;
+        namespace::load_namespaces(namespaces, &state.dictionary, &mut state.namespaces)?;
         fact::load_facts(facts, &state.dictionary, &state.facts)?;
         Ok(state)
     }
@@ -158,7 +158,7 @@ async fn check(
     };
     let service = CheckService::new(
         &state.dictionary,
-        &state.theories,
+        &state.namespaces,
         &state.facts,
         &state.audit,
     );

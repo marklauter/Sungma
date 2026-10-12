@@ -2,9 +2,9 @@
 
 use std::fmt;
 
-/// An interned theory name.
+/// An interned namespace name.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct TheoryId(pub u32);
+pub struct NamespaceId(pub u32);
 
 /// An interned relation name.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]

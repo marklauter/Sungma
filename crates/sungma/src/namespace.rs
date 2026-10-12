@@ -1,14 +1,14 @@
-//! A theory: the declared relations of one kind of resource, and their
+//! A namespace: the declared relations of one kind of resource, and their
 //! rewrites.
 //!
-//! A theory checks itself whole when it is built, so every [`Theory`] is
-//! valid and a stored one always evaluates. [`Theory::new`] refuses, with
+//! A namespace checks itself whole when it is built, so every [`Namespace`] is
+//! valid and a stored one always evaluates. [`Namespace::new`] refuses, with
 //! every problem it finds:
 //!
 //! - a relation declared twice;
 //! - an empty union or intersection;
 //! - a rewrite tree deeper than [`MAX_REWRITE_DEPTH`];
-//! - a computed subjectset or factset naming a relation the theory doesn't
+//! - a computed subjectset or factset naming a relation the namespace doesn't
 //!   declare;
 //! - a cycle of computed subjectsets, such as `viewer: editor` with
 //!   `editor: viewer`, or `viewer: this ! viewer`. Relations that reach
@@ -19,7 +19,7 @@
 //! can never establish a membership. A cycle through a fact-to-subjectset
 //! reads a fact at each step, as with folders inside folders, and is left
 //! to evaluation. The relation a fact-to-subjectset computes belongs to the
-//! theory of the resource the fact names, so it isn't checked here.
+//! namespace of the resource the fact names, so it isn't checked here.
 
 use std::{
     collections::{HashMap, HashSet, VecDeque, hash_map::Entry},
@@ -39,14 +39,14 @@ pub const MAX_REWRITE_DEPTH: usize = 100;
 pub const MAX_CYCLE_NAMES: usize = 8;
 
 #[derive(Debug, Error, PartialEq, Eq)]
-pub enum TheoryError {
+pub enum NamespaceError {
     #[error("an empty {0} has no operands")]
     EmptyOperator(&'static str),
     #[error("a rewrite tree deeper than {MAX_REWRITE_DEPTH} levels is refused")]
     TooDeep,
     #[error("relation '{0}' is declared more than once")]
     DuplicateRelation(String),
-    #[error("relation '{relation}' references '{target}', which the theory doesn't declare")]
+    #[error("relation '{relation}' references '{target}', which the namespace doesn't declare")]
     DanglingReference { relation: String, target: String },
     /// A path from a relation back to itself, naming at most
     /// [`MAX_CYCLE_NAMES`] relations on the way and counting the rest.
@@ -63,25 +63,25 @@ fn cycle(path: &[String], omitted: usize) -> String {
     }
 }
 
-/// A problem with a theory, at the position of the relation it was found
+/// A problem with a namespace, at the position of the relation it was found
 /// at, counting from 0 in declaration order.
 #[derive(Debug, Error, PartialEq, Eq)]
 #[error("{error}")]
 pub struct Problem {
     pub at: usize,
-    pub error: TheoryError,
+    pub error: NamespaceError,
 }
 
-/// A valid theory. Generic over how relations are named: storage holds
-/// interned [`RelationId`]s, and a theory document names its relations.
+/// A valid namespace. Generic over how relations are named: storage holds
+/// interned [`RelationId`]s, and a namespace document names its relations.
 #[derive(Debug)]
-pub struct Theory<R = RelationId> {
+pub struct Namespace<R = RelationId> {
     /// In declaration order.
     relations: Vec<(R, Arc<Rewrite<R>>)>,
     index: HashMap<R, usize>,
 }
 
-impl<R: Eq + Hash + Clone + Display> Theory<R> {
+impl<R: Eq + Hash + Clone + Display> Namespace<R> {
     /// The relations, or every problem with them, in declaration order.
     pub fn new(relations: Vec<(R, Rewrite<R>)>) -> Result<Self, Vec<Problem>> {
         let problems = problems(&relations);
@@ -104,7 +104,7 @@ impl<R: Eq + Hash + Clone + Display> Theory<R> {
         Self { relations, index }
     }
 
-    /// `None` when the theory doesn't declare the relation.
+    /// `None` when the namespace doesn't declare the relation.
     pub fn rewrite(&self, relation: &R) -> Option<&Arc<Rewrite<R>>> {
         self.index.get(relation).map(|&at| &self.relations[at].1)
     }
@@ -116,9 +116,9 @@ impl<R: Eq + Hash + Clone + Display> Theory<R> {
             .map(|(relation, rewrite)| (relation, &**rewrite))
     }
 
-    /// The same theory with every relation renamed by `rename`, as when its
+    /// The same namespace with every relation renamed by `rename`, as when its
     /// names are interned. Renaming changes no rewrite's shape, so the
-    /// theory stays valid without being checked again.
+    /// namespace stays valid without being checked again.
     ///
     /// # Panics
     ///
@@ -126,7 +126,7 @@ impl<R: Eq + Hash + Clone + Display> Theory<R> {
     pub fn map<S: Eq + Hash + Clone + Display>(
         &self,
         mut rename: impl FnMut(&R) -> S,
-    ) -> Theory<S> {
+    ) -> Namespace<S> {
         let relations = self
             .relations
             .iter()
@@ -136,11 +136,11 @@ impl<R: Eq + Hash + Clone + Display> Theory<R> {
                 (renamed, Arc::new(rewrite))
             })
             .collect();
-        Theory::indexed(relations)
+        Namespace::indexed(relations)
     }
 }
 
-/// Every problem in a whole theory, as the [module](self) describes, in
+/// Every problem in a whole namespace, as the [module](self) describes, in
 /// declaration order. A relation's dangling targets are each reported once,
 /// and a cycle at the relation of its component the check meets first.
 fn problems<R: Eq + Hash + Display>(relations: &[(R, Rewrite<R>)]) -> Vec<Problem> {
@@ -149,7 +149,7 @@ fn problems<R: Eq + Hash + Display>(relations: &[(R, Rewrite<R>)]) -> Vec<Proble
     let mut declared = HashMap::new();
     for (at, (relation, _)) in relations.iter().enumerate() {
         if declared.contains_key(relation) {
-            problem(at, TheoryError::DuplicateRelation(relation.to_string()));
+            problem(at, NamespaceError::DuplicateRelation(relation.to_string()));
         } else {
             declared.insert(relation, at);
         }
@@ -170,7 +170,7 @@ fn problems<R: Eq + Hash + Display>(relations: &[(R, Rewrite<R>)]) -> Vec<Proble
             if !declared.contains_key(*target) && dangling.insert(*target) {
                 problem(
                     at,
-                    TheoryError::DanglingReference {
+                    NamespaceError::DanglingReference {
                         relation: relation.to_string(),
                         target: target.to_string(),
                     },
@@ -198,7 +198,7 @@ fn problems<R: Eq + Hash + Display>(relations: &[(R, Rewrite<R>)]) -> Vec<Proble
         path.push(relations[cycle[0]].0.to_string());
         problem(
             cycle[0],
-            TheoryError::RewriteCycle {
+            NamespaceError::RewriteCycle {
                 path,
                 omitted: named - shown,
             },
@@ -210,15 +210,17 @@ fn problems<R: Eq + Hash + Display>(relations: &[(R, Rewrite<R>)]) -> Vec<Proble
 
 /// Refuses empty operators and nesting past [`MAX_REWRITE_DEPTH`].
 /// `level` is the depth of `rewrite`, the root being 1.
-fn check_tree<R>(rewrite: &Rewrite<R>, level: usize) -> Result<(), TheoryError> {
+fn check_tree<R>(rewrite: &Rewrite<R>, level: usize) -> Result<(), NamespaceError> {
     if level > MAX_REWRITE_DEPTH {
-        return Err(TheoryError::TooDeep);
+        return Err(NamespaceError::TooDeep);
     }
     match rewrite {
         Rewrite::This | Rewrite::Computed(_) | Rewrite::FactTo { .. } => Ok(()),
-        Rewrite::Union(operands) if operands.is_empty() => Err(TheoryError::EmptyOperator("union")),
+        Rewrite::Union(operands) if operands.is_empty() => {
+            Err(NamespaceError::EmptyOperator("union"))
+        }
         Rewrite::Intersection(operands) if operands.is_empty() => {
-            Err(TheoryError::EmptyOperator("intersection"))
+            Err(NamespaceError::EmptyOperator("intersection"))
         }
         Rewrite::Union(operands) | Rewrite::Intersection(operands) => operands
             .iter()
@@ -230,7 +232,7 @@ fn check_tree<R>(rewrite: &Rewrite<R>, level: usize) -> Result<(), TheoryError> 
     }
 }
 
-/// The relations of its own theory that `rewrite` names: computed
+/// The relations of its own namespace that `rewrite` names: computed
 /// subjectsets into `computed`, and factsets into `factsets`.
 fn named<'r, R>(rewrite: &'r Rewrite<R>, computed: &mut Vec<&'r R>, factsets: &mut Vec<&'r R>) {
     match rewrite {
@@ -371,8 +373,8 @@ mod tests {
 
     #[test]
     fn renaming_keeps_order_and_rewrites() {
-        let theory = Theory::new(vec![(2, This), (0, Computed(2)), (1, This)]).unwrap();
-        let renamed = theory.map(|relation| relation + 10);
+        let namespace = Namespace::new(vec![(2, This), (0, Computed(2)), (1, This)]).unwrap();
+        let renamed = namespace.map(|relation| relation + 10);
         let order: Vec<_> = renamed.relations().map(|(relation, _)| *relation).collect();
         assert_eq!(order, [12, 10, 11]);
         assert_eq!(
@@ -385,7 +387,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "two relations named '0'")]
     fn renaming_two_relations_alike_is_a_defect() {
-        let theory = Theory::new(vec![(0, This), (1, This)]).unwrap();
-        theory.map(|_| 0);
+        let namespace = Namespace::new(vec![(0, This), (1, This)]).unwrap();
+        namespace.map(|_| 0);
     }
 }

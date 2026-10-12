@@ -1,4 +1,4 @@
-//! Contains and Expand against the theories in [`common`].
+//! Contains and Expand against the namespaces in [`common`].
 
 mod common;
 
@@ -12,15 +12,15 @@ use proptest::{prelude::*, sample::subsequence, test_runner::TestCaseError};
 use sungma::{
     closure::{Closure, ClosureError, Expansion, MAX_DEPTH},
     graph::{Subject, Subjectset},
-    id::{RelationId, TheoryId},
+    id::{NamespaceId, RelationId},
+    namespace::NamespaceError,
     revision::Revision,
     rewrite::Rewrite::{self, Computed, Exclusion, Intersection, This, Union},
-    store::{Dictionary, FactStore, Pool, StoreError, TheoryStore},
-    theory::TheoryError,
+    store::{Dictionary, FactStore, NamespaceStore, Pool, StoreError},
 };
 use sungma_lang::fact::load_facts;
 
-/// Whether an identity is in the closure of `theory:id#relation` at `revision`.
+/// Whether an identity is in the closure of `namespace:id#relation` at `revision`.
 async fn check_at(
     world: &World,
     set: &str,
@@ -32,7 +32,7 @@ async fn check_at(
         return Ok(false);
     };
     agree(
-        &Closure::new(&world.theories, &world.facts, set, revision),
+        &Closure::new(&world.namespaces, &world.facts, set, revision),
         subject,
     )
     .await
@@ -40,7 +40,7 @@ async fn check_at(
 
 /// [`Closure::contains`], checked against [`Closure::decide`]: the same
 /// verdict, or both fail.
-async fn agree<T: TheoryStore + Sync, F: FactStore + Sync>(
+async fn agree<T: NamespaceStore + Sync, F: FactStore + Sync>(
     closure: &Closure<'_, T, F>,
     subject: Subject,
 ) -> Result<bool, ClosureError> {
@@ -157,16 +157,16 @@ async fn unknown_names_are_denied() {
 fn ringed_world() -> World {
     let world = world();
     let facts = r#"[
-        { "theory": "group", "resource": "ring_a", "relation": "member", "subject": { "theory": "group", "resource": "ring_b", "relation": "member" } },
-        { "theory": "group", "resource": "ring_b", "relation": "member", "subject": { "theory": "group", "resource": "ring_a", "relation": "member" } },
-        { "theory": "group", "resource": "cyc_a", "relation": "member", "subject": { "theory": "group", "resource": "cyc_b", "relation": "member" } },
-        { "theory": "group", "resource": "cyc_b", "relation": "member", "subject": { "theory": "group", "resource": "cyc_a", "relation": "member" } },
-        { "theory": "group", "resource": "cyc_a", "relation": "member", "subject": { "theory": "group", "resource": "cyc_c", "relation": "member" } },
-        { "theory": "group", "resource": "cyc_c", "relation": "member", "subject": { "identity": "alice" } },
-        { "theory": "folder", "resource": "open", "relation": "viewer", "subject": { "identity": "alice" } },
-        { "theory": "folder", "resource": "open", "relation": "banned", "subject": { "theory": "group", "resource": "ring_a", "relation": "member" } },
-        { "theory": "file", "resource": "ring.md", "relation": "viewer", "subject": { "theory": "group", "resource": "ring_a", "relation": "member" } },
-        { "theory": "file", "resource": "ring.md", "relation": "owner", "subject": { "identity": "alice" } }
+        { "namespace": "group", "resource": "ring_a", "relation": "member", "subject": { "namespace": "group", "resource": "ring_b", "relation": "member" } },
+        { "namespace": "group", "resource": "ring_b", "relation": "member", "subject": { "namespace": "group", "resource": "ring_a", "relation": "member" } },
+        { "namespace": "group", "resource": "cyc_a", "relation": "member", "subject": { "namespace": "group", "resource": "cyc_b", "relation": "member" } },
+        { "namespace": "group", "resource": "cyc_b", "relation": "member", "subject": { "namespace": "group", "resource": "cyc_a", "relation": "member" } },
+        { "namespace": "group", "resource": "cyc_a", "relation": "member", "subject": { "namespace": "group", "resource": "cyc_c", "relation": "member" } },
+        { "namespace": "group", "resource": "cyc_c", "relation": "member", "subject": { "identity": "alice" } },
+        { "namespace": "folder", "resource": "open", "relation": "viewer", "subject": { "identity": "alice" } },
+        { "namespace": "folder", "resource": "open", "relation": "banned", "subject": { "namespace": "group", "resource": "ring_a", "relation": "member" } },
+        { "namespace": "file", "resource": "ring.md", "relation": "viewer", "subject": { "namespace": "group", "resource": "ring_a", "relation": "member" } },
+        { "namespace": "file", "resource": "ring.md", "relation": "owner", "subject": { "identity": "alice" } }
     ]"#;
     load_facts(facts, &world.dictionary, &world.facts).unwrap();
     world
@@ -213,7 +213,7 @@ async fn chain(length: usize, more: &[&str]) -> Result<bool, ClosureError> {
     let mut facts: Vec<String> = (1..length)
         .map(|i| {
             format!(
-                r#"{{ "theory": "group", "resource": "g{}", "relation": "member", "subject": {{ "theory": "group", "resource": "g{i}", "relation": "member" }} }}"#,
+                r#"{{ "namespace": "group", "resource": "g{}", "relation": "member", "subject": {{ "namespace": "group", "resource": "g{i}", "relation": "member" }} }}"#,
                 i - 1
             )
         })
@@ -243,8 +243,8 @@ async fn passing_the_depth_limit_ends_the_check() {
     // g1 is interned before `holds`, so the chain is walked first, and
     // `holds` would find alice after it.
     let holds = [
-        r#"{ "theory": "group", "resource": "g0", "relation": "member", "subject": { "theory": "group", "resource": "holds", "relation": "member" } }"#,
-        r#"{ "theory": "group", "resource": "holds", "relation": "member", "subject": { "identity": "alice" } }"#,
+        r#"{ "namespace": "group", "resource": "g0", "relation": "member", "subject": { "namespace": "group", "resource": "holds", "relation": "member" } }"#,
+        r#"{ "namespace": "group", "resource": "holds", "relation": "member", "subject": { "identity": "alice" } }"#,
     ];
     let result = chain(MAX_DEPTH + 1, &holds).await;
     assert!(matches!(
@@ -265,9 +265,9 @@ async fn late_bound_relation_missing_on_target_is_empty() {
 }
 
 #[tokio::test]
-async fn a_parent_of_an_undeclared_theory_is_empty() {
+async fn a_parent_of_an_undeclared_namespace_is_empty() {
     let world = world();
-    let fact = r#"[{ "theory": "file", "resource": "haunted.md", "relation": "parent", "subject": { "theory": "ghost", "resource": "attic" } }]"#;
+    let fact = r#"[{ "namespace": "file", "resource": "haunted.md", "relation": "parent", "subject": { "namespace": "ghost", "resource": "attic" } }]"#;
     load_facts(fact, &world.dictionary, &world.facts).unwrap();
     assert!(
         !check(&world, "file:haunted.md#viewer", "alice")
@@ -281,11 +281,11 @@ enum Read {
     Contains,
     Subjectsets,
     Subjects,
-    /// The rewrite of the subjectset's theory and relation, for any resource.
+    /// The rewrite of the subjectset's namespace and relation, for any resource.
     Rewrite,
 }
 
-/// The docs theory and fact stores, failing the listed reads. With a seed,
+/// The docs namespace and fact stores, failing the listed reads. With a seed,
 /// the operands of every union and intersection and the subjects of every
 /// read come back shuffled.
 struct Probe<'a> {
@@ -355,22 +355,22 @@ fn shuffled(rewrite: &Rewrite, seed: &mut u64) -> Rewrite {
     }
 }
 
-impl TheoryStore for Probe<'_> {
+impl NamespaceStore for Probe<'_> {
     async fn rewrite(
         &self,
-        theory: TheoryId,
+        namespace: NamespaceId,
         relation: RelationId,
     ) -> Result<Option<Arc<Rewrite>>, StoreError> {
         let failed = self.failures.iter().any(|&(set, read)| {
-            read == Read::Rewrite && (set.resource.theory, set.relation) == (theory, relation)
+            read == Read::Rewrite && (set.resource.namespace, set.relation) == (namespace, relation)
         });
         if failed {
             return Err(StoreError("injected".to_owned()));
         }
-        let rewrite = self.world.theories.rewrite(theory, relation).await?;
+        let rewrite = self.world.namespaces.rewrite(namespace, relation).await?;
         Ok(match self.shuffle {
             Some(seed) => {
-                let mut seed = seed_for(seed, (theory, relation));
+                let mut seed = seed_for(seed, (namespace, relation));
                 rewrite.map(|rewrite| Arc::new(shuffled(&rewrite, &mut seed)))
             }
             None => rewrite,
@@ -499,9 +499,9 @@ async fn a_store_error_that_nothing_outweighs_fails_the_check() {
 async fn an_operand_that_settles_the_check_outweighs_a_store_error() {
     let world = world();
     let facts = r#"[
-        { "theory": "file", "resource": "twin.md", "relation": "parent", "subject": { "theory": "folder", "resource": "specs" } },
-        { "theory": "file", "resource": "twin.md", "relation": "parent", "subject": { "theory": "folder", "resource": "shared" } },
-        { "theory": "folder", "resource": "shared", "relation": "viewer", "subject": { "identity": "alice" } }
+        { "namespace": "file", "resource": "twin.md", "relation": "parent", "subject": { "namespace": "folder", "resource": "specs" } },
+        { "namespace": "file", "resource": "twin.md", "relation": "parent", "subject": { "namespace": "folder", "resource": "shared" } },
+        { "namespace": "folder", "resource": "shared", "relation": "viewer", "subject": { "identity": "alice" } }
     ]"#;
     load_facts(facts, &world.dictionary, &world.facts).unwrap();
     let cases = [
@@ -566,11 +566,11 @@ async fn an_operand_that_settles_the_check_outweighs_a_store_error() {
 #[tokio::test]
 async fn a_store_error_anywhere_in_the_tree_fails_expand() {
     let mut world = world();
-    // The docs theories exclude only computed subjectsets, which expand
+    // The docs namespaces exclude only computed subjectsets, which expand
     // leaves as references without a read.
     let unowned = Exclusion(Box::new(Computed("owner")), Box::new(This));
     declare(
-        &mut world.theories,
+        &mut world.namespaces,
         &world.dictionary,
         "file",
         "unowned",
@@ -618,7 +618,7 @@ async fn a_store_error_anywhere_in_the_tree_fails_expand() {
 async fn expand_of_an_undeclared_relation_is_none() {
     let world = world();
     let viewer = subjectset(&world, "group:eng#viewer").await.unwrap();
-    let expansion = Closure::new(&world.theories, &world.facts, viewer, head(&world).await)
+    let expansion = Closure::new(&world.namespaces, &world.facts, viewer, head(&world).await)
         .expand()
         .await
         .unwrap();
@@ -629,33 +629,33 @@ async fn expand_of_an_undeclared_relation_is_none() {
 fn empty_union_is_refused() {
     let mut world = world();
     let result = declare(
-        &mut world.theories,
+        &mut world.namespaces,
         &world.dictionary,
         "file",
         "odd",
         Union(vec![]),
     );
-    assert_eq!(result, Err(TheoryError::EmptyOperator("union")));
+    assert_eq!(result, Err(NamespaceError::EmptyOperator("union")));
 }
 
 #[test]
 fn empty_intersection_is_refused() {
     let mut world = world();
     let result = declare(
-        &mut world.theories,
+        &mut world.namespaces,
         &world.dictionary,
         "file",
         "odd",
         Intersection(vec![]),
     );
-    assert_eq!(result, Err(TheoryError::EmptyOperator("intersection")));
+    assert_eq!(result, Err(NamespaceError::EmptyOperator("intersection")));
 }
 
 #[tokio::test]
 async fn expand_keeps_an_intersection() {
     let world = world();
     let auditor = subjectset(&world, "file:design.md#auditor").await.unwrap();
-    let expansion = Closure::new(&world.theories, &world.facts, auditor, head(&world).await)
+    let expansion = Closure::new(&world.namespaces, &world.facts, auditor, head(&world).await)
         .expand()
         .await
         .unwrap();
@@ -673,7 +673,7 @@ async fn expand_keeps_an_intersection() {
 async fn facts_written_after_the_revision_are_not_visible() {
     let world = world();
     let before = head(&world).await;
-    let fact = r#"[{ "theory": "file", "resource": "design.md", "relation": "viewer", "subject": { "identity": "zed" } }]"#;
+    let fact = r#"[{ "namespace": "file", "resource": "design.md", "relation": "viewer", "subject": { "identity": "zed" } }]"#;
     load_facts(fact, &world.dictionary, &world.facts).unwrap();
     assert!(
         !check_at(&world, "file:design.md#viewer", "zed", before)
@@ -688,7 +688,7 @@ async fn expand_leaves_referenced_subjectsets_as_leaves() {
     let world = world();
     let set = |text| subjectset(&world, text);
     let viewer = set("file:design.md#viewer").await.unwrap();
-    let expansion = Closure::new(&world.theories, &world.facts, viewer, head(&world).await)
+    let expansion = Closure::new(&world.namespaces, &world.facts, viewer, head(&world).await)
         .expand()
         .await
         .unwrap()
@@ -713,7 +713,7 @@ async fn expand_lists_direct_subjects_including_subjectsets() {
     let world = world();
     let root_viewer = subjectset(&world, "folder:root#viewer").await.unwrap();
     let expansion = Closure::new(
-        &world.theories,
+        &world.namespaces,
         &world.facts,
         root_viewer,
         head(&world).await,
@@ -763,15 +763,15 @@ fn random_sets() -> Vec<String> {
 fn candidate_facts() -> Vec<String> {
     let people = PEOPLE.map(|who| format!(r#"{{ "identity": "{who}" }}"#));
     let groups = GROUPS.map(|group| {
-        format!(r#"{{ "theory": "group", "resource": "{group}", "relation": "member" }}"#)
+        format!(r#"{{ "namespace": "group", "resource": "{group}", "relation": "member" }}"#)
     });
     let folders =
-        FOLDERS.map(|folder| format!(r#"{{ "theory": "folder", "resource": "{folder}" }}"#));
+        FOLDERS.map(|folder| format!(r#"{{ "namespace": "folder", "resource": "{folder}" }}"#));
     let mut facts = Vec::new();
-    let mut add = |theory: &str, resource: &str, relation: &str, subjects: &[String]| {
+    let mut add = |namespace: &str, resource: &str, relation: &str, subjects: &[String]| {
         for subject in subjects {
             facts.push(format!(
-                r#"{{ "theory": "{theory}", "resource": "{resource}", "relation": "{relation}", "subject": {subject} }}"#
+                r#"{{ "namespace": "{namespace}", "resource": "{resource}", "relation": "{relation}", "subject": {subject} }}"#
             ));
         }
     };
@@ -813,11 +813,11 @@ fn candidate_failures() -> Vec<(String, Read)> {
 /// The docs world plus `facts`, with every random name interned.
 async fn random_world(facts: &[String]) -> World {
     let world = world();
-    for (theory, ids) in [("file", FILES), ("folder", FOLDERS), ("group", GROUPS)] {
-        let theory = world.dictionary.lookup(Pool::Theories, theory).await;
-        let theory = TheoryId(theory.unwrap().unwrap());
+    for (namespace, ids) in [("file", FILES), ("folder", FOLDERS), ("group", GROUPS)] {
+        let namespace = world.dictionary.lookup(Pool::Namespaces, namespace).await;
+        let namespace = NamespaceId(namespace.unwrap().unwrap());
         for id in ids {
-            world.dictionary.intern(Pool::Resources(theory), id);
+            world.dictionary.intern(Pool::Resources(namespace), id);
         }
     }
     for who in PEOPLE {

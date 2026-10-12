@@ -1,4 +1,4 @@
-//! Theories are checked whole when declared.
+//! Namespaces are checked whole when declared.
 
 mod common;
 
@@ -6,31 +6,31 @@ use std::time::{Duration, Instant};
 
 use sungma::{
     id::RelationId,
+    namespace::{MAX_CYCLE_NAMES, MAX_REWRITE_DEPTH, Namespace, NamespaceError, Problem},
     rewrite::Rewrite::{self, Computed, Exclusion, This, Union},
-    theory::{MAX_CYCLE_NAMES, MAX_REWRITE_DEPTH, Problem, Theory, TheoryError},
 };
-use sungma_lang::theory::{ErrorKind, Refusal, load_theories, parse};
-use sungma_memory::{MemoryDictionary, MemoryTheoryStore};
+use sungma_lang::namespace::{ErrorKind, Refusal, load_namespaces, parse};
+use sungma_memory::{MemoryDictionary, MemoryNamespaceStore};
 
 fn load(json: &str) -> Result<(), Refusal> {
     let dictionary = MemoryDictionary::default();
-    let mut theories = MemoryTheoryStore::default();
-    load_theories(&[json], &dictionary, &mut theories)
+    let mut namespaces = MemoryNamespaceStore::default();
+    load_namespaces(&[json], &dictionary, &mut namespaces)
 }
 
-/// The one theory error a document is refused with.
-fn refused(json: &str) -> TheoryError {
+/// The one namespace error a document is refused with.
+fn refused(json: &str) -> NamespaceError {
     match parse(json) {
         Err(mut errors) if errors.len() == 1 => match errors.remove(0).kind {
-            ErrorKind::Theory(error) => error,
-            other => panic!("expected a theory error, got {other:?}"),
+            ErrorKind::Namespace(error) => error,
+            other => panic!("expected a namespace error, got {other:?}"),
         },
         other => panic!("expected one error, got {other:?}"),
     }
 }
 
-fn names(cycle: &[&str]) -> TheoryError {
-    TheoryError::RewriteCycle {
+fn names(cycle: &[&str]) -> NamespaceError {
+    NamespaceError::RewriteCycle {
         path: cycle.iter().map(|name| (*name).to_owned()).collect(),
         omitted: 0,
     }
@@ -48,7 +48,7 @@ fn a_cycle_through_a_fact_is_left_to_evaluation() {
 #[test]
 fn a_relation_declared_twice_is_refused() {
     let error = refused(r#"{ "file": { "owner": "this", "owner": "this" } }"#);
-    assert_eq!(error, TheoryError::DuplicateRelation("owner".to_owned()));
+    assert_eq!(error, NamespaceError::DuplicateRelation("owner".to_owned()));
     assert_eq!(
         error.to_string(),
         "relation 'owner' is declared more than once"
@@ -56,14 +56,14 @@ fn a_relation_declared_twice_is_refused() {
 }
 
 #[test]
-fn a_theory_document_is_refused_as_a_whole() {
+fn a_namespace_document_is_refused_as_a_whole() {
     let result = load(r#"{ "file": { "owner": "this", "viewer": "editor" } }"#);
     let Err(error) = result else {
         panic!("expected a refused document, got {result:?}");
     };
     assert_eq!(
         error.to_string(),
-        "relation 'viewer': relation 'viewer' references 'editor', which the theory doesn't declare"
+        "relation 'viewer': relation 'viewer' references 'editor', which the namespace doesn't declare"
     );
 }
 
@@ -72,7 +72,7 @@ fn a_computed_subjectset_must_be_declared() {
     let error = refused(r#"{ "file": { "viewer": "owner" } }"#);
     assert_eq!(
         error.to_string(),
-        "relation 'viewer' references 'owner', which the theory doesn't declare"
+        "relation 'viewer' references 'owner', which the namespace doesn't declare"
     );
 }
 
@@ -83,7 +83,7 @@ fn a_factset_must_be_declared() {
     } }"#;
     assert_eq!(
         refused(json),
-        TheoryError::DanglingReference {
+        NamespaceError::DanglingReference {
             relation: "viewer".to_owned(),
             target: "parent".to_owned(),
         }
@@ -152,10 +152,10 @@ fn nested_in(
     (1..levels).fold(This, |rewrite, _| wrap(rewrite))
 }
 
-fn declare(rewrite: Rewrite<&str>) -> Result<(), TheoryError> {
+fn declare(rewrite: Rewrite<&str>) -> Result<(), NamespaceError> {
     let dictionary = MemoryDictionary::default();
-    let mut theories = MemoryTheoryStore::default();
-    common::declare(&mut theories, &dictionary, "file", "deep", rewrite)
+    let mut namespaces = MemoryNamespaceStore::default();
+    common::declare(&mut namespaces, &dictionary, "file", "deep", rewrite)
 }
 
 #[test]
@@ -166,7 +166,7 @@ fn a_rewrite_tree_may_be_max_depth_deep() {
 #[test]
 fn a_deeper_rewrite_tree_is_refused() {
     let error = declare(nested(MAX_REWRITE_DEPTH + 1)).unwrap_err();
-    assert_eq!(error, TheoryError::TooDeep);
+    assert_eq!(error, NamespaceError::TooDeep);
     assert_eq!(
         error.to_string(),
         "a rewrite tree deeper than 100 levels is refused"
@@ -178,7 +178,7 @@ fn a_deeper_exclusion_base_is_refused() {
     let base = nested_in(MAX_REWRITE_DEPTH + 1, |rewrite| {
         Exclusion(Box::new(rewrite), Box::new(This))
     });
-    assert_eq!(declare(base), Err(TheoryError::TooDeep));
+    assert_eq!(declare(base), Err(NamespaceError::TooDeep));
 }
 
 #[test]
@@ -186,15 +186,16 @@ fn a_deeper_excluded_operand_is_refused() {
     let excluded = nested_in(MAX_REWRITE_DEPTH + 1, |rewrite| {
         Exclusion(Box::new(This), Box::new(rewrite))
     });
-    assert_eq!(declare(excluded), Err(TheoryError::TooDeep));
+    assert_eq!(declare(excluded), Err(NamespaceError::TooDeep));
 }
 
 #[test]
-fn redeclaring_a_relation_checks_the_whole_theory_by_id() {
+fn redeclaring_a_relation_checks_the_whole_namespace_by_id() {
     let dictionary = MemoryDictionary::default();
-    let mut theories = MemoryTheoryStore::default();
-    let mut declare =
-        |relation, rewrite| common::declare(&mut theories, &dictionary, "file", relation, rewrite);
+    let mut namespaces = MemoryNamespaceStore::default();
+    let mut declare = |relation, rewrite| {
+        common::declare(&mut namespaces, &dictionary, "file", relation, rewrite)
+    };
     declare("owner", This).unwrap();
     declare("editor", Computed("owner")).unwrap();
     // Relations have their own pool, so owner is 0 and editor is 1. The
@@ -205,13 +206,13 @@ fn redeclaring_a_relation_checks_the_whole_theory_by_id() {
 }
 
 #[test]
-fn a_theory_built_with_a_relation_twice_is_refused() {
-    let result = Theory::new(vec![(RelationId(0), This), (RelationId(0), This)]);
+fn a_namespace_built_with_a_relation_twice_is_refused() {
+    let result = Namespace::new(vec![(RelationId(0), This), (RelationId(0), This)]);
     assert_eq!(
         result.err(),
         Some(vec![Problem {
             at: 1,
-            error: TheoryError::DuplicateRelation("0".to_owned()),
+            error: NamespaceError::DuplicateRelation("0".to_owned()),
         }])
     );
 }
@@ -223,7 +224,7 @@ fn quick(start: Instant) -> bool {
     cfg!(debug_assertions) || start.elapsed() < Duration::from_secs(5)
 }
 
-/// A theory built in code bypasses the document limits, so its checks must
+/// A namespace built in code bypasses the document limits, so its checks must
 /// hold up at any size: a chain far longer than a document allows.
 #[test]
 fn a_long_chain_built_in_code_is_checked_without_a_crash() {
@@ -239,7 +240,7 @@ fn a_long_chain_built_in_code_is_checked_without_a_crash() {
         })
         .collect();
     let start = Instant::now();
-    assert!(Theory::new(chain).is_ok());
+    assert!(Namespace::new(chain).is_ok());
     assert!(quick(start));
 }
 
@@ -248,12 +249,12 @@ fn a_large_cycle_built_in_code_is_one_problem() {
     let count = 100_000;
     let ring: Vec<_> = (0..count).map(|i| (i, Computed((i + 1) % count))).collect();
     let start = Instant::now();
-    let problems = Theory::new(ring).unwrap_err();
+    let problems = Namespace::new(ring).unwrap_err();
     assert!(quick(start));
     let [
         Problem {
             at: 0,
-            error: TheoryError::RewriteCycle { path, omitted },
+            error: NamespaceError::RewriteCycle { path, omitted },
         },
     ] = problems.as_slice()
     else {
@@ -266,7 +267,7 @@ fn a_large_cycle_built_in_code_is_one_problem() {
 
 #[test]
 fn every_problem_is_returned_in_declaration_order() {
-    let problems = Theory::new(vec![
+    let problems = Namespace::new(vec![
         (0, Computed(9)),
         (1, Union(vec![])),
         (2, Computed(3)),
@@ -280,7 +281,7 @@ fn every_problem_is_returned_in_declaration_order() {
 
 #[test]
 fn a_cycle_error_names_a_bounded_path() {
-    let error = TheoryError::RewriteCycle {
+    let error = NamespaceError::RewriteCycle {
         path: vec!["a".to_owned(), "b".to_owned(), "a".to_owned()],
         omitted: 3,
     };
@@ -291,16 +292,19 @@ fn a_cycle_error_names_a_bounded_path() {
 }
 
 #[test]
-fn a_theory_keeps_its_declaration_order() {
-    let theory = Theory::new(vec![(2, This), (0, Computed(2)), (1, This)]).unwrap();
-    let order: Vec<_> = theory.relations().map(|(relation, _)| *relation).collect();
+fn a_namespace_keeps_its_declaration_order() {
+    let namespace = Namespace::new(vec![(2, This), (0, Computed(2)), (1, This)]).unwrap();
+    let order: Vec<_> = namespace
+        .relations()
+        .map(|(relation, _)| *relation)
+        .collect();
     assert_eq!(order, [2, 0, 1]);
 }
 
 #[test]
 fn a_cycle_path_stays_within_its_relations() {
     // a and b reach each other; b also leads out to c, which leads nowhere back.
-    let problems = Theory::new(vec![
+    let problems = Namespace::new(vec![
         (0, Computed(1)),
         (1, Union(vec![Computed(2), Computed(0)])),
         (2, This),

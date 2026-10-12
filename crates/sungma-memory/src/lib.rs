@@ -8,11 +8,11 @@ use std::{
 
 use sungma::{
     graph::{Fact, Subject, Subjectset},
-    id::{RelationId, TheoryId},
+    id::{NamespaceId, RelationId},
+    namespace::Namespace,
     revision::Revision,
     rewrite::Rewrite,
-    store::{Dictionary, FactStore, Pool, StoreError, TheoryStore},
-    theory::Theory,
+    store::{Dictionary, FactStore, NamespaceStore, Pool, StoreError},
 };
 use sungma_write::store::{FactWrite, FactWriter, NameStore};
 
@@ -246,31 +246,33 @@ impl FactWriter for MemoryFactStore {
     }
 }
 
-/// Every theory, by id.
+/// Every namespace, by id.
 #[derive(Debug, Default)]
-pub struct MemoryTheoryStore {
-    theories: HashMap<TheoryId, Theory>,
+pub struct MemoryNamespaceStore {
+    namespaces: HashMap<NamespaceId, Namespace>,
 }
 
-impl MemoryTheoryStore {
-    /// Declares a theory whole, replacing any earlier declaration.
-    pub fn declare(&mut self, id: TheoryId, theory: Theory) {
-        self.theories.insert(id, theory);
+impl MemoryNamespaceStore {
+    /// Declares a namespace whole, replacing any earlier declaration.
+    pub fn declare(&mut self, id: NamespaceId, namespace: Namespace) {
+        self.namespaces.insert(id, namespace);
     }
 
-    /// The theory as declared, `None` when it never was.
-    pub fn theory(&self, id: TheoryId) -> Option<&Theory> {
-        self.theories.get(&id)
+    /// The namespace as declared, `None` when it never was.
+    pub fn namespace(&self, id: NamespaceId) -> Option<&Namespace> {
+        self.namespaces.get(&id)
     }
 }
 
-impl TheoryStore for MemoryTheoryStore {
+impl NamespaceStore for MemoryNamespaceStore {
     async fn rewrite(
         &self,
-        theory: TheoryId,
+        namespace: NamespaceId,
         relation: RelationId,
     ) -> Result<Option<Arc<Rewrite>>, StoreError> {
-        let theory = self.theories.get(&theory);
-        Ok(theory.and_then(|theory| theory.rewrite(&relation)).cloned())
+        let namespace = self.namespaces.get(&namespace);
+        Ok(namespace
+            .and_then(|namespace| namespace.rewrite(&relation))
+            .cloned())
     }
 }

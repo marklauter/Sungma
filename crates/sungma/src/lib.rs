@@ -1,5 +1,5 @@
 //! Sungma core: the model every service shares. Names, ids and revisions,
-//! the fact graph, theories and their rewrite trees, the storage ports, the
+//! the fact graph, namespaces and their rewrite trees, the storage ports, the
 //! closure of a subjectset, which answers Contains and Expand, and the
 //! decisions Check records for audit and replay.
 //!
@@ -11,8 +11,8 @@ pub mod decision;
 pub mod graph;
 pub mod id;
 pub mod name;
+pub mod namespace;
 pub mod replay;
 pub mod revision;
 pub mod rewrite;
 pub mod store;
-pub mod theory;
