@@ -41,6 +41,39 @@ Proposed. Every [[fact]] and every [[namespace]] version holds over a [[span]] o
 - Declaring the relation again moves its epoch, so orphaned facts stay dead and old grants don't resurrect.
 - A write of a fact whose current span opened before its relation's epoch opens a new span. Otherwise a grant asserted again after the relation returns would stay dead.
 - Every reader applies the same rule: decide, expand, read, watch and dumps.
+- An epoch is per relation, not per namespace version. A new version closes no fact's span, so the facts under a relation it keeps go on counting; only a relation dropped and declared again needs a new cutoff.
+
+## Retiring a namespace
+
+- Retiring a namespace closes its current version's span and opens no new one. From then on no version declares its relations, so every fact under it is orphaned.
+- Writing the namespace again after it was retired declares each of its relations again. Each gets the new version's revision as its epoch, so facts from before the retirement don't resurrect.
+
+## Sample
+
+The `file` namespace over time, and three facts under it:
+
+| Revision | Write | Epochs after it |
+| --- | --- | --- |
+| 10 | Version 1 declares `owner` and `banned`. | `owner` 10, `banned` 10 |
+| 12 | Fact `file:a#owner@carol`. | |
+| 14 | Fact `file:a#banned@bob`. | |
+| 20 | Version 2 drops `banned`. | `owner` 10 |
+| 30 | Version 3 declares `banned` again. | `owner` 10, `banned` 30 |
+| 35 | Fact `file:a#banned@erin`. | |
+| 40 | `file` is retired. | none |
+| 50 | Version 4 declares `owner` and `banned`. | `owner` 50, `banned` 50 |
+
+What a read at each revision counts:
+
+| Read at | `owner@carol` (12) | `banned@bob` (14) | `banned@erin` (35) | Why |
+| --- | --- | --- | --- | --- |
+| 15 | counts | counts | | Version 1; both written at or after epoch 10. |
+| 25 | counts | dead | | Version 2 doesn't declare `banned`. `owner` keeps epoch 10. |
+| 35 | counts | dead | counts | Version 3: `banned` has epoch 30, and 14 is before it; 35 isn't. |
+| 45 | dead | dead | dead | Retired: no version declares anything. |
+| 55 | dead | dead | dead | Version 4: every epoch is 50, and every fact is older. |
+
+Bob's ban doesn't come back at 35, and none of the three facts comes back at 55. A replay at 15 still reads version 1 and finds bob banned.
 
 ## What is accepted
 
