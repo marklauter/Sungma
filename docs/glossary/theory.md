@@ -1,17 +1,17 @@
 ---
 title: theory
 type: definition
-summary: "A named set of relations."
-status: locked
-has-a: "[[relation]]"
+summary: "A set of namespaces that together model authorization for one domain."
+status: evolving
+has-a: "[[namespace]]"
 ---
 
-A named set of relations.
+A set of namespaces that together model authorization for one domain.
 
 ## Examples
 
-- `file`, with the relations `owner`, `editor`, `viewer` and `parent`.
+- A document theory: the `file` and `folder` namespaces, where a file's viewers include its folder's viewers.
 
 ## Rationale
 
-A theory is Zanzibar's namespace: the relations of one kind of resource. Kingo's theory was a named set of namespaces. There is no namespace term.
+A theory in the logician's sense: a set of sentences that, together with the facts, settles every question asked of it. It sits between namespace and catalog: a catalog may hold several theories, and a namespace belongs to one. It names an idea, not a mechanism. No type holds a theory, and a check never reads one. Kingo's theory was likewise a set of namespaces.

@@ -10,4 +10,4 @@ A named rewrite.
 
 ## Examples
 
-- `viewer` in the `file` theory.
+- `viewer` in the `file` namespace.

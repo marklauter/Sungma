@@ -1,15 +1,15 @@
 ---
 title: span
 type: definition
-summary: "An interval of revisions over which a fact or a theory version holds."
+summary: "An interval of revisions over which a fact or a namespace version holds."
 status: evolving
 bounded-by: "[[revision]]"
 has-a:
   - "[[fact]]"
-  - "[[theory]]"
+  - "[[namespace]]"
 ---
 
-An interval of revisions over which a fact or a theory version holds.
+An interval of revisions over which a fact or a namespace version holds.
 
 ## Examples
 
