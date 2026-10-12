@@ -8,13 +8,13 @@ use sungma::{
     graph::{Fact, Resource, Subject, Subjectset},
     id::{IdentityId, RelationId, ResourceId, TheoryId},
     revision::Revision,
-    store::{
-        FactStore,
-        FactWrite::{self, *},
-        FactWriter,
-    },
+    store::FactStore,
 };
 use sungma_memory::MemoryFactStore;
+use sungma_write::store::{
+    FactWrite::{self, *},
+    FactWriter,
+};
 
 const SET: Subjectset = Subjectset {
     resource: Resource {

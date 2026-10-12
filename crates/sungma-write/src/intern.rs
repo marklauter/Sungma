@@ -15,7 +15,9 @@ use std::{
     sync::{Mutex, MutexGuard, PoisonError},
 };
 
-use crate::store::{Dictionary, InternError, Interner, NameStore, Pool, StoreError};
+use sungma::store::{Dictionary, Pool, StoreError};
+
+use crate::store::{InternError, Interner, NameStore};
 
 /// An [`Interner`] over a [`NameStore`], minting from a leased block per
 /// pool.

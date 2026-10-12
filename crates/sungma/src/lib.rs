@@ -10,7 +10,6 @@ pub mod closure;
 pub mod decision;
 pub mod graph;
 pub mod id;
-pub mod intern;
 pub mod name;
 pub mod replay;
 pub mod revision;

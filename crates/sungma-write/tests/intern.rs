@@ -10,14 +10,17 @@ use std::{
 use proptest::{collection::vec, prelude::*, test_runner::TestCaseError};
 use sungma::{
     id::TheoryId,
-    intern::LeasingInterner,
     store::{
-        Dictionary, InternError, Interner, NameStore,
+        Dictionary,
         Pool::{self, Identities},
         StoreError,
     },
 };
 use sungma_memory::MemoryDictionary;
+use sungma_write::{
+    intern::LeasingInterner,
+    store::{InternError, Interner, NameStore},
+};
 
 /// One node's view of a shared store. A stale node never finds a name, as
 /// if another node's insert hadn't reached it; an exhausted node finds no
