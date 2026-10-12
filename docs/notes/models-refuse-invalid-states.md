@@ -11,7 +11,7 @@ A model enforces every rule it can see on its own, in its constructor or its typ
 
 ## Gaps
 
-- **`Namespace`** (`crates/sungma/src/namespace.rs`): `Namespace::new` accepts a namespace with no relations, and `print` in `crates/sungma-lang/src/namespace.rs` prints one. `Namespace::map` panics when two relations rename to one name instead of refusing; see [[namespace-map-is-public-and-panics-on-a-colliding-rename]].
+- **`Namespace`** (`crates/sungma/src/namespace.rs`): `Namespace::map` panics when two relations rename to one name instead of refusing; see [[namespace-map-is-public-and-panics-on-a-colliding-rename]].
 - **Names** (`crates/sungma/src/name.rs`): `new_unchecked` is public, so any caller skips validation, not only storage.
 - **`Rewrite`** (`crates/sungma/src/rewrite.rs`): a public enum, so `Union(vec![])` and `Intersection(vec![])` can be built anywhere; only `Namespace::new` refuses them. A non-empty operand type would make them unexpressible.
 - **`Decision`** (`crates/sungma/src/decision.rs`): public fields allow `Outcome::Allowed { grounds: vec![] }`, though every membership rests on at least one fact.

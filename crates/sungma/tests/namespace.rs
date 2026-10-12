@@ -211,7 +211,7 @@ fn a_namespace_built_with_a_relation_twice_is_refused() {
     assert_eq!(
         result.err(),
         Some(vec![Problem {
-            at: 1,
+            at: Some(1),
             error: NamespaceError::DuplicateRelation("0".to_owned()),
         }])
     );
@@ -253,7 +253,7 @@ fn a_large_cycle_built_in_code_is_one_problem() {
     assert!(quick(start));
     let [
         Problem {
-            at: 0,
+            at: Some(0),
             error: NamespaceError::RewriteCycle { path, omitted },
         },
     ] = problems.as_slice()
@@ -276,7 +276,7 @@ fn every_problem_is_returned_in_declaration_order() {
     ])
     .unwrap_err();
     let found: Vec<_> = problems.iter().map(|problem| problem.at).collect();
-    assert_eq!(found, [0, 1, 2, 4]);
+    assert_eq!(found, [Some(0), Some(1), Some(2), Some(4)]);
 }
 
 #[test]
@@ -310,7 +310,7 @@ fn a_cycle_path_stays_within_its_relations() {
         (2, This),
     ])
     .unwrap_err();
-    let [Problem { at: 0, error }] = problems.as_slice() else {
+    let [Problem { at: Some(0), error }] = problems.as_slice() else {
         panic!("expected one cycle, got {problems:?}");
     };
     assert_eq!(*error, names(&["0", "1", "0"]));
