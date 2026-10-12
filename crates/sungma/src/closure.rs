@@ -38,6 +38,7 @@ use crate::{
     decision::{Decision, Outcome, SEMANTICS},
     graph::{Fact, Subject, Subjectset},
     id::RelationId,
+    non_empty::NonEmpty,
     revision::Revision,
     rewrite::Rewrite,
     store::{FactStore, NamespaceStore, StoreError},
@@ -96,7 +97,6 @@ impl Path<'_> {
 /// What a membership check collects as it succeeds: the facts that
 /// establish it for [`Closure::decide`], or nothing for [`Closure::contains`].
 trait Proof: Send + Sized {
-    fn empty() -> Self;
     /// A fact stored under the subjectset in hand, built only when the
     /// proof keeps it.
     fn fact(fact: impl FnOnce() -> Fact) -> Self;
@@ -107,30 +107,23 @@ trait Proof: Send + Sized {
     fn join(&mut self, proof: Self);
 }
 
-impl Proof for Vec<Fact> {
-    fn empty() -> Self {
-        Vec::new()
-    }
-
+impl Proof for NonEmpty<Fact> {
     fn fact(fact: impl FnOnce() -> Fact) -> Self {
-        vec![fact()]
+        NonEmpty::one(fact())
     }
 
     fn cite(fact: impl FnOnce() -> Fact, proof: Self) -> Self {
-        let mut cited = Vec::with_capacity(proof.len() + 1);
-        cited.push(fact());
-        cited.extend(proof);
+        let mut cited = NonEmpty::one(fact());
+        cited.append(proof);
         cited
     }
 
     fn join(&mut self, proof: Self) {
-        self.extend(proof);
+        self.append(proof);
     }
 }
 
 impl Proof for () {
-    fn empty() -> Self {}
-
     fn fact(_: impl FnOnce() -> Fact) -> Self {}
 
     fn cite(_: impl FnOnce() -> Fact, _: Self) -> Self {}
@@ -363,13 +356,14 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
                     .await
                 }
                 Rewrite::Intersection(operands) => {
-                    let mut answer = Holds(P::empty());
-                    for operand in operands {
-                        let found = self.contains_node(operand, set, subject, path).await?;
-                        answer = answer.and(found);
+                    let (first, rest) = operands.first_and_rest();
+                    let mut answer = self.contains_node(first, set, subject, path).await?;
+                    for operand in rest {
                         if let Fails = answer {
                             break;
                         }
+                        let found = self.contains_node(operand, set, subject, path).await?;
+                        answer = answer.and(found);
                     }
                     Ok(answer)
                 }

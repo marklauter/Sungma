@@ -6,7 +6,6 @@
 //! every problem it finds:
 //!
 //! - a relation declared twice;
-//! - an empty union or intersection;
 //! - a rewrite tree deeper than [`MAX_REWRITE_DEPTH`];
 //! - a computed subjectset or factset naming a relation the namespace doesn't
 //!   declare;
@@ -40,8 +39,6 @@ pub const MAX_CYCLE_NAMES: usize = 8;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum NamespaceError {
-    #[error("an empty {0} has no operands")]
-    EmptyOperator(&'static str),
     #[error("a rewrite tree deeper than {MAX_REWRITE_DEPTH} levels is refused")]
     TooDeep,
     #[error("relation '{0}' is declared more than once")]
@@ -96,16 +93,18 @@ impl<R: Eq + Hash + Clone + Display> Namespace<R> {
             .into_iter()
             .map(|(relation, rewrite)| (relation, Arc::new(rewrite)))
             .collect();
-        Ok(Self::indexed(relations))
+        Ok(Self::indexed(relations).expect("duplicate relations were refused above"))
     }
 
-    fn indexed(relations: Vec<(R, Arc<Rewrite<R>>)>) -> Self {
+    /// Refuses a relation named twice.
+    fn indexed(relations: Vec<(R, Arc<Rewrite<R>>)>) -> Result<Self, NamespaceError> {
         let mut index = HashMap::new();
         for (at, (relation, _)) in relations.iter().enumerate() {
-            let earlier = index.insert(relation.clone(), at);
-            assert!(earlier.is_none(), "two relations named '{relation}'");
+            if index.insert(relation.clone(), at).is_some() {
+                return Err(NamespaceError::DuplicateRelation(relation.to_string()));
+            }
         }
-        Self { relations, index }
+        Ok(Self { relations, index })
     }
 
     /// `None` when the namespace doesn't declare the relation.
@@ -121,16 +120,13 @@ impl<R: Eq + Hash + Clone + Display> Namespace<R> {
     }
 
     /// The same namespace with every relation renamed by `rename`, as when its
-    /// names are interned. Renaming changes no rewrite's shape, so the
-    /// namespace stays valid without being checked again.
-    ///
-    /// # Panics
-    ///
-    /// If `rename` gives two relations one name.
+    /// names are interned. Renaming doesn't change any rewrite's shape, so a
+    /// one-to-one rename keeps the namespace valid. A rename that gives two
+    /// relations one name is refused.
     pub fn map<S: Eq + Hash + Clone + Display>(
         &self,
         mut rename: impl FnMut(&R) -> S,
-    ) -> Namespace<S> {
+    ) -> Result<Namespace<S>, NamespaceError> {
         let relations = self
             .relations
             .iter()
@@ -212,7 +208,7 @@ fn problems<R: Eq + Hash + Display>(relations: &[(R, Rewrite<R>)]) -> Vec<Proble
     problems
 }
 
-/// Refuses empty operators and nesting past [`MAX_REWRITE_DEPTH`].
+/// Refuses nesting past [`MAX_REWRITE_DEPTH`].
 /// `level` is the depth of `rewrite`, the root being 1.
 fn check_tree<R>(rewrite: &Rewrite<R>, level: usize) -> Result<(), NamespaceError> {
     if level > MAX_REWRITE_DEPTH {
@@ -220,12 +216,6 @@ fn check_tree<R>(rewrite: &Rewrite<R>, level: usize) -> Result<(), NamespaceErro
     }
     match rewrite {
         Rewrite::This | Rewrite::Computed(_) | Rewrite::FactTo { .. } => Ok(()),
-        Rewrite::Union(operands) if operands.is_empty() => {
-            Err(NamespaceError::EmptyOperator("union"))
-        }
-        Rewrite::Intersection(operands) if operands.is_empty() => {
-            Err(NamespaceError::EmptyOperator("intersection"))
-        }
         Rewrite::Union(operands) | Rewrite::Intersection(operands) => operands
             .iter()
             .try_for_each(|operand| check_tree(operand, level + 1)),
@@ -378,7 +368,7 @@ mod tests {
     #[test]
     fn renaming_keeps_order_and_rewrites() {
         let namespace = Namespace::new(vec![(2, This), (0, Computed(2)), (1, This)]).unwrap();
-        let renamed = namespace.map(|relation| relation + 10);
+        let renamed = namespace.map(|relation| relation + 10).unwrap();
         let order: Vec<_> = renamed.relations().map(|(relation, _)| *relation).collect();
         assert_eq!(order, [12, 10, 11]);
         assert_eq!(
@@ -389,9 +379,11 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "two relations named '0'")]
-    fn renaming_two_relations_alike_is_a_defect() {
+    fn renaming_two_relations_alike_is_refused() {
         let namespace = Namespace::new(vec![(0, This), (1, This)]).unwrap();
-        namespace.map(|_| 0);
+        assert_eq!(
+            namespace.map(|_| 0).unwrap_err(),
+            NamespaceError::DuplicateRelation("0".to_owned())
+        );
     }
 }

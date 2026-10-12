@@ -12,6 +12,7 @@ pub mod graph;
 pub mod id;
 pub mod name;
 pub mod namespace;
+pub mod non_empty;
 pub mod replay;
 pub mod revision;
 pub mod rewrite;

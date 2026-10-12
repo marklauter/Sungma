@@ -9,6 +9,8 @@ use proptest::{collection::vec, prelude::*};
 use sungma::{
     name::{NameError, NamespaceName, RelationName},
     namespace::{MAX_REWRITE_DEPTH, Namespace, NamespaceError},
+    non_empty::NonEmpty,
+    nonempty,
     rewrite::Rewrite::{self, Computed, Exclusion, FactTo, Intersection, This, Union},
 };
 use sungma_lang::namespace::{
@@ -141,7 +143,7 @@ fn the_sample_parses() {
     assert_eq!(
         **viewer,
         exclusion(
-            Union(vec![This, name("editor"), fact_to("parent", "viewer")]),
+            Union(nonempty![This, name("editor"), fact_to("parent", "viewer")]),
             name("banned")
         )
     );
@@ -162,9 +164,9 @@ fn relations_keep_document_order() {
 fn exclusion_binds_tightest_then_intersection() {
     assert_eq!(
         rewrite("a | b & c ! p"),
-        Union(vec![
+        Union(nonempty![
             name("a"),
-            Intersection(vec![name("b"), exclusion(name("c"), name("p"))])
+            Intersection(nonempty![name("b"), exclusion(name("c"), name("p"))])
         ])
     );
 }
@@ -181,11 +183,11 @@ fn exclusion_reads_left_to_right() {
 fn a_run_of_one_operator_is_one_node() {
     assert_eq!(
         rewrite("a | b | c"),
-        Union(vec![name("a"), name("b"), name("c")])
+        Union(nonempty![name("a"), name("b"), name("c")])
     );
     assert_eq!(
         rewrite("a & b & c"),
-        Intersection(vec![name("a"), name("b"), name("c")])
+        Intersection(nonempty![name("a"), name("b"), name("c")])
     );
 }
 
@@ -193,7 +195,7 @@ fn a_run_of_one_operator_is_one_node() {
 fn parentheses_are_kept_as_structure() {
     assert_eq!(
         rewrite("(a | b) | c"),
-        Union(vec![Union(vec![name("a"), name("b")]), name("c")])
+        Union(nonempty![Union(nonempty![name("a"), name("b")]), name("c")])
     );
     assert_eq!(rewrite("((a))"), name("a"));
 }
@@ -201,7 +203,10 @@ fn parentheses_are_kept_as_structure() {
 #[test]
 fn whitespace_only_separates_tokens() {
     assert_eq!(rewrite("(p,a)|this"), rewrite(" ( p , a )  |  this "));
-    assert_eq!(rewrite("(p,a)|this"), Union(vec![fact_to("p", "a"), This]));
+    assert_eq!(
+        rewrite("(p,a)|this"),
+        Union(nonempty![fact_to("p", "a"), This])
+    );
 }
 
 #[test]
@@ -499,7 +504,7 @@ fn the_printer_writes_the_canonical_form() {
         (
             "viewer",
             exclusion(
-                Union(vec![
+                Union(nonempty![
                     This,
                     Computed("editor"),
                     FactTo {
@@ -510,11 +515,11 @@ fn the_printer_writes_the_canonical_form() {
                 Computed("banned"),
             ),
         ),
-        ("editor", Union(vec![This, Computed("owner")])),
+        ("editor", Union(nonempty![This, Computed("owner")])),
         ("owner", This),
         ("parent", This),
         ("banned", This),
-        ("auditor", Intersection(vec![This, Computed("viewer")])),
+        ("auditor", Intersection(nonempty![This, Computed("viewer")])),
     ];
     assert_eq!(
         print("file", &relations),
@@ -527,33 +532,33 @@ fn the_printer_writes_the_canonical_form() {
 fn the_printer_adds_only_the_parentheses_the_grammar_needs() {
     let cases = [
         (
-            Union(vec![Union(vec![name("a"), name("b")]), name("c")]),
+            Union(nonempty![Union(nonempty![name("a"), name("b")]), name("c")]),
             "(a | b) | c",
         ),
         (
-            Union(vec![
-                Intersection(vec![name("a"), name("b")]),
+            Union(nonempty![
+                Intersection(nonempty![name("a"), name("b")]),
                 exclusion(name("a"), name("b")),
             ]),
             "a & b | a ! b",
         ),
         (
-            Intersection(vec![
-                Union(vec![name("a"), name("b")]),
-                Intersection(vec![name("a"), name("b")]),
+            Intersection(nonempty![
+                Union(nonempty![name("a"), name("b")]),
+                Intersection(nonempty![name("a"), name("b")]),
             ]),
             "(a | b) & (a & b)",
         ),
         (
             exclusion(
                 exclusion(name("a"), name("b")),
-                Intersection(vec![name("a"), name("b")]),
+                Intersection(nonempty![name("a"), name("b")]),
             ),
             "a ! b ! (a & b)",
         ),
         (
             exclusion(
-                Union(vec![name("a"), name("b")]),
+                Union(nonempty![name("a"), name("b")]),
                 exclusion(name("a"), name("b")),
             ),
             "(a | b) ! (a ! b)",
@@ -581,7 +586,7 @@ fn closed_groups_leave_the_nesting_depth() {
     let groups = vec!["(a)"; MAX_REWRITE_DEPTH + 1].join(" | ");
     assert_eq!(
         rewrite(&groups),
-        Union(vec![name("a"); MAX_REWRITE_DEPTH + 1])
+        Union(nonempty![name("a"); MAX_REWRITE_DEPTH + 1])
     );
 }
 
@@ -734,9 +739,12 @@ fn the_printer_refuses_caller_defects() {
                 ),
             ],
         ),
-        ("t", vec![("r", Union(vec![This]))]),
-        ("t", vec![("r", Intersection(vec![This]))]),
-        ("t", vec![("r", exclusion(This, Intersection(vec![This])))]),
+        ("t", vec![("r", Union(nonempty![This]))]),
+        ("t", vec![("r", Intersection(nonempty![This]))]),
+        (
+            "t",
+            vec![("r", exclusion(This, Intersection(nonempty![This])))],
+        ),
         ("t", vec![("r-s", This)]),
         ("t", vec![("a b", This), ("r", Computed("a b"))]),
         ("t.", vec![("r", This)]),
@@ -771,8 +779,8 @@ fn small(at: usize) -> BoxedStrategy<Rewrite<RelationName>> {
     leaf(at)
         .prop_recursive(4, 24, 3, |inner| {
             prop_oneof![
-                vec(inner.clone(), 2..4).prop_map(Union),
-                vec(inner.clone(), 2..4).prop_map(Intersection),
+                vec(inner.clone(), 2..4).prop_map(union),
+                vec(inner.clone(), 2..4).prop_map(intersection),
                 (inner.clone(), inner).prop_map(|(base, excluded)| exclusion(base, excluded)),
             ]
         })
@@ -790,8 +798,8 @@ fn deep(at: usize) -> BoxedStrategy<Rewrite<RelationName>> {
                 spine
                     .into_iter()
                     .fold(first.clone(), |inner, (kind, beside)| match kind {
-                        0 => Union(vec![inner, beside]),
-                        1 => Intersection(vec![inner, beside]),
+                        0 => Union(nonempty![inner, beside]),
+                        1 => Intersection(nonempty![inner, beside]),
                         2 => exclusion(inner, beside),
                         _ => exclusion(beside, inner),
                     })
@@ -805,9 +813,9 @@ fn wide(at: usize) -> BoxedStrategy<Rewrite<RelationName>> {
     (any::<bool>(), vec(leaf(at), 2..300))
         .prop_map(|(union, operands)| {
             if union {
-                Union(operands)
+                self::union(operands)
             } else {
-                Intersection(operands)
+                intersection(operands)
             }
         })
         .boxed()
@@ -1059,12 +1067,14 @@ fn grammar_case(expression: &str) -> String {
     )
 }
 
+/// A union of at least one operand.
 fn union(operands: Vec<Rewrite<RelationName>>) -> Rewrite<RelationName> {
-    Union(operands)
+    Union(NonEmpty::new(operands).expect("at least one operand"))
 }
 
+/// An intersection of at least one operand.
 fn intersection(operands: Vec<Rewrite<RelationName>>) -> Rewrite<RelationName> {
-    Intersection(operands)
+    Intersection(NonEmpty::new(operands).expect("at least one operand"))
 }
 
 #[test]

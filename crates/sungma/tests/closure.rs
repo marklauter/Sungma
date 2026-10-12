@@ -13,7 +13,7 @@ use sungma::{
     closure::{Closure, ClosureError, Expansion, MAX_DEPTH},
     graph::{Subject, Subjectset},
     id::{NamespaceId, RelationId},
-    namespace::NamespaceError,
+    non_empty::NonEmpty,
     revision::Revision,
     rewrite::Rewrite::{self, Computed, Exclusion, Intersection, This, Union},
     store::{FactStore, NamespaceStore, StoreError},
@@ -346,7 +346,7 @@ fn shuffled(rewrite: &Rewrite, seed: &mut u64) -> Rewrite {
     let mut operands = |operands: &[Rewrite]| {
         let mut operands: Vec<Rewrite> = operands.iter().map(|op| shuffled(op, seed)).collect();
         permute(&mut operands, seed);
-        operands
+        NonEmpty::new(operands).expect("a permutation keeps every operand")
     };
     match rewrite {
         Union(ops) => Union(operands(ops)),
@@ -629,32 +629,6 @@ async fn expand_of_an_undeclared_relation_is_none() {
         .await
         .unwrap();
     assert_eq!(expansion, None);
-}
-
-#[test]
-fn empty_union_is_refused() {
-    let mut world = world();
-    let result = declare(
-        &mut world.namespaces,
-        &world.dictionary,
-        "file",
-        "odd",
-        Union(vec![]),
-    );
-    assert_eq!(result, Err(NamespaceError::EmptyOperator("union")));
-}
-
-#[test]
-fn empty_intersection_is_refused() {
-    let mut world = world();
-    let result = declare(
-        &mut world.namespaces,
-        &world.dictionary,
-        "file",
-        "odd",
-        Intersection(vec![]),
-    );
-    assert_eq!(result, Err(NamespaceError::EmptyOperator("intersection")));
 }
 
 #[tokio::test]

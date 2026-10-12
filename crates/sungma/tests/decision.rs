@@ -10,6 +10,7 @@ use sungma::{
     closure::Closure,
     decision::{Decision, Outcome, SEMANTICS, Semantics},
     graph::{Fact, Subject},
+    non_empty::NonEmpty,
     replay::{Replay, replay},
     revision::Revision,
     rewrite::Rewrite::This,
@@ -164,7 +165,7 @@ async fn replay_reports_the_same_verdict_on_other_grounds() {
     // As if a failed read had sent the walk down another path.
     let mut decision = healthy.clone();
     decision.outcome = Outcome::Allowed {
-        grounds: grounds(&healthy)[1..].to_vec(),
+        grounds: NonEmpty::new(grounds(&healthy)[1..].to_vec()).unwrap(),
     };
     let replayed = replay(&decision, &world.namespaces, &world.facts).await;
     assert_eq!(replayed.unwrap(), Replay::Regrounded { now: healthy });

@@ -35,6 +35,7 @@ use sungma::{
     id::{NamespaceId, RelationId},
     name::{NameError, NamespaceName, RelationName, quote},
     namespace::{MAX_REWRITE_DEPTH, Namespace, NamespaceError, Problem},
+    non_empty::NonEmpty,
     rewrite::Rewrite,
     store::Pool,
 };
@@ -223,9 +224,11 @@ pub fn load_namespaces(
     for document in documents {
         let document = parse(document).map_err(Refusal)?;
         let id = NamespaceId(dictionary.intern(Pool::Namespaces, document.namespace.as_str()));
+        // The interner gives each name its own id, so no rename collides.
         let relations = document
             .relations
-            .map(|name| RelationId(dictionary.intern(Pool::Relations, name.as_str())));
+            .map(|name| RelationId(dictionary.intern(Pool::Relations, name.as_str())))
+            .map_err(|kind| Refusal(vec![error(None, None, ErrorKind::Namespace(kind))]))?;
         namespaces.declare(id, relations);
     }
     Ok(())
@@ -573,18 +576,18 @@ impl<'a> Parser<'a> {
         &mut self,
         operator: Token,
         operand: fn(&mut Self) -> Result<Node, Failure>,
-        node: fn(Vec<Rewrite<RelationName>>) -> Rewrite<RelationName>,
+        node: fn(NonEmpty<Rewrite<RelationName>>) -> Rewrite<RelationName>,
     ) -> Result<Node, Failure> {
         let first = operand(self)?;
         if self.peek().token != operator {
             return Ok(first);
         }
-        let mut operands = vec![first];
+        let mut rest = Vec::new();
         while self.peek().token == operator {
             self.next();
-            operands.push(operand(self)?);
+            rest.push(operand(self)?);
         }
-        Ok(node(operands))
+        Ok(node(NonEmpty::with_rest(first, rest)))
     }
 
     fn exclusion(&mut self) -> Result<Node, Failure> {
