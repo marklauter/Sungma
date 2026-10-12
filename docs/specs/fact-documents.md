@@ -142,7 +142,7 @@ The cases each class covers, at minimum.
 
 #### Resources and identities
 
-1. Resources and identities holding `:`, `#`, `@`, `/`, `\`, `+`, `=`, `>` and non-ASCII characters load, and are found under the same text.
+1. Resources and identities holding `:`, `#`, `@`, `/`, `\`, `+`, `=` and `>` load, and are found under the same text.
 2. A resource or an identity holding any character outside `!` to `~` is refused, including a space, a tab, a line break, ESC, DEL, `é`, U+200B and U+202E.
 3. An empty resource and an empty identity are refused.
 4. `Anne` and `anne` are two identities.
