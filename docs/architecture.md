@@ -16,7 +16,7 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
   - computed: another relation on the same resource;
   - fact-to-subjectset: follow a fact, such as `parent`, then evaluate a relation on the resource it names;
   - union, intersection and exclusion.
-- `Namespace::new` checks a namespace whole when it is built, and refuses it with every problem it finds: duplicates, empty operators, nesting deeper than 100 levels, undeclared names and computed cycles. So every `Namespace` is valid, and any namespace that gets stored is guaranteed to evaluate.
+- `Namespace::new` checks a namespace whole when it is built, and refuses it with every problem it finds: duplicates, nesting deeper than 100 levels, undeclared names and computed cycles. So every `Namespace` is valid, and any namespace that gets stored is guaranteed to evaluate.
 
 **Storage ports** (`store.rs` in `sungma` and `sungma-write`, `intern.rs`, the `sungma-memory` crate)
 - The ports are async traits, which play the role of C# interfaces. Reads and writes are separate:
@@ -118,7 +118,7 @@ Each term names a set of subjects:
 
 A relation that takes only the facts bound to it is written `this`. A relation the namespace doesn't declare, such as one reached through a fact-to-subjectset whose target namespace lacks it, names the empty set.
 
-A namespace is checked whole when it is declared. It is refused if a relation is declared twice, a union or intersection is empty, a rewrite nests more than 100 levels deep, a computed subjectset or factset names a relation the namespace doesn't declare, or computed subjectsets form a cycle, such as `viewer: this ! viewer`. A cycle through a fact-to-subjectset, like folders inside folders, reads a fact at each step and is allowed.
+A namespace is checked whole when it is declared. It is refused if a relation is declared twice, a rewrite nests more than 100 levels deep, a computed subjectset or factset names a relation the namespace doesn't declare, or computed subjectsets form a cycle, such as `viewer: this ! viewer`. A cycle through a fact-to-subjectset, like folders inside folders, reads a fact at each step and is allowed.
 
 ## Sample
 

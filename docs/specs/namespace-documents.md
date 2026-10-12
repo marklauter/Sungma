@@ -138,7 +138,6 @@ A subjectset whose relation its namespace doesn't declare has an empty closure. 
 A namespace is checked whole when it is declared, and is refused if any of the following holds:
 
 - A relation is declared twice.
-- A union or intersection is empty. The grammar can't produce one, but a rewrite tree from another source can.
 - A rewrite nests more than 100 levels deep. A leaf is one level, a run of `|` or `&` is one level however many operands it has, and each `!` adds a level. Grouping parentheses nested more than 100 deep are also refused, before the tree is built.
 - A computed subjectset, or the factset of a fact-to-subjectset, names a relation the namespace doesn't declare. The computed relation of a fact-to-subjectset belongs to the namespace of the resource each fact binds, so it isn't checked.
 - Computed subjectsets form a cycle, such as `"viewer": "editor"` with `"editor": "viewer"`, or `"viewer": "this ! viewer"`. A cycle through a fact-to-subjectset, such as folders inside folders, reads a fact at each step and is allowed.
