@@ -38,7 +38,7 @@ A proof of concept. The evaluator, decisions with grounds and replay, namespace 
 git config core.hooksPath .githooks
 ```
 
-`fuzz/` holds `cargo-fuzz` targets for the namespace and fact document parsers. CI runs each for a minute; locally they need the nightly toolchain:
+`fuzz/` holds `cargo-fuzz` targets for the namespace and fact document parsers, which CI runs for a minute each, and for the NTP and NTS parsers, which it runs for 30 seconds each. Locally they need the nightly toolchain:
 
 ```sh
 cargo +nightly fuzz run document

@@ -8,9 +8,9 @@
 //! is named `...`: `namespace:id#...` is the resource itself, not a subjectset.
 //!
 //! A resource id and an [`Identity`] are owned by the caller and opaque, and
-//! are printable ASCII, `!` to `~`. A resource id is at most [`MAX_RESOURCE_ID_BYTES`] and
-//! an identity at most [`MAX_IDENTITY_BYTES`], as
-//! `docs/specs/fact-documents.md` specifies.
+//! are printable ASCII, `!` to `~`. A resource id is at most
+//! [`MAX_RESOURCE_ID_BYTES`] and an identity at most [`MAX_IDENTITY_BYTES`],
+//! as `docs/specs/fact-documents.md` specifies.
 //!
 //! Namespace and relation names are [`NamespaceName`] and [`RelationName`], as
 //! `docs/specs/namespace-documents.md` specifies. Text from a caller becomes

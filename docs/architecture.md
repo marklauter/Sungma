@@ -1,6 +1,6 @@
 # Architecture
 
-Sungma is a Zanzibar-style authorization service. It answers one question: is subject S in set `resource#relation` at revision R? The [README](../README.md) lists its crates. Below is how they fit together, from bottom to top.
+Sungma is a Zanzibar-style authorization service. It answers one question: is subject S in the subjectset `namespace:resource#relation` at revision R? The [README](../README.md) lists its crates. Below is how they fit together, from bottom to top.
 
 **The model** (`graph.rs`, `id.rs`, `name.rs`)
 - A **fact** binds a subject to a subjectset, for example `carol` to `file:design.md#owner`. The subject is one of three things:
@@ -78,7 +78,7 @@ A fact binds a subject to a subjectset. A fact document is a JSON array of facts
 
 - `namespace`, `resource` and `relation` name the subjectset, and `subject` holds the subject.
 - A subject's keys say which kind it is: `identity` alone is an identity, `namespace` and `resource` are a resource, and `namespace`, `resource` and `relation` are a subjectset.
-- Resources and identities are owned by external systems, such as emails, paths or URIs. Any character but whitespace is allowed.
+- Resources and identities are owned by external systems, such as emails, paths or URIs. They are printable ASCII, `!` to `~`.
 
 [specs/fact-documents.md](specs/fact-documents.md) specifies fact documents.
 
