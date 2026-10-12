@@ -14,4 +14,4 @@ A set of namespaces that together model authorization for one domain.
 
 ## Rationale
 
-A theory in the logician's sense: a set of sentences that, together with the facts, settles every question asked of it. It sits between namespace and catalog: a catalog may hold several theories, and a namespace belongs to one. It names an idea, not a mechanism. No type holds a theory, and a check never reads one. Kingo's theory was likewise a set of namespaces.
+A theory in the logician's sense: a set of sentences that, together with the facts, settles every question asked of it. It sits between namespace and catalog: a way to talk about the namespaces that model one domain. It names an idea, not a mechanism. No type holds a theory, and a check never reads one. Kingo's theory was likewise a set of namespaces.

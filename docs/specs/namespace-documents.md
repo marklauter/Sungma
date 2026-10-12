@@ -13,6 +13,7 @@ cites:
   - "[[subject]]"
   - "[[closure]]"
   - "[[identity]]"
+  - "[[theory]]"
 ---
 
 # Namespace documents
@@ -21,7 +22,7 @@ A namespace document is the JSON form of one [[namespace]]. It maps the namespac
 
 ## The name
 
-"Theory" is used in the logician's sense: a set of sentences that, together with the [[fact]]s, settles every question it can be asked. Here the sentences are a theory's rewrites, and each question asks whether a subject is a member of a [[subjectset]]. The rules in [Checks](#checks) exist to keep that true, so a theory and its facts give exactly one answer to each question.
+The namespaces that model one domain together form a [[theory]], in the logician's sense: a set of sentences that, together with the [[fact]]s, settles every question it can be asked. Here the sentences are rewrites, and each question asks whether a subject is a member of a [[subjectset]]. The rules in [Checks](#checks) exist to keep that true, so a theory and its facts give exactly one answer to each question.
 
 ## Sample
 
