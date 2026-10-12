@@ -35,7 +35,11 @@ Duplicate namespaces are therefore gated on the write side. A reader never sees 
 
 ## Storage
 
-The earlier plan, YAML namespace text stored with a grammar version, is withdrawn. Namespace documents are JSON and carry no grammar version; the REST endpoint that takes them is versioned instead. How a namespace version is stored is open.
+Namespace documents are JSON and carry no grammar version; the REST endpoint that takes them is versioned instead. How a namespace version is stored is open.
+
+## Settled
+
+- **What a write carries.** One whole namespace document, for create and PATCH alike. A document supersedes its namespace, and `Namespace::new` checks the next version whole; a change to some relations would have to be merged before it could be checked.
 
 ## Open questions
 
