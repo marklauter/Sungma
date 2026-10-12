@@ -42,19 +42,18 @@ Namespace documents are JSON and carry no grammar version; the REST endpoint tha
 - **Retiring a namespace.** Retiring closes a namespace's last span. [One timeline](../specs/one-timeline.md#retiring-a-namespace) says what happens to its facts and why writing it again doesn't resurrect them. Which call retires it is the transport's concern.
 - **Concurrent writes.** A namespace write carries the revision token of the version it was based on, as an etag; a write that creates the namespace expects none. The write is refused when the namespace's latest version has moved on, and the caller reads the latest version and tries again. The `NamespaceWriter` port takes the expected version, and each adapter meets it with its store's conditional write, as the interner does with `insert_if_absent`.
 - **Effects on facts.** A namespace write never scans facts, so it neither reports the facts it orphans nor refuses past some count. With billions of facts, a scan would make every namespace write as slow as the graph is large. [[one-timeline]] says which facts count afterward.
+- **Storage and ports.** A `NamespaceWriter` port in `sungma-write`, beside `FactWriter`, writes namespace versions, and `NamespaceStore::rewrite` reads at a revision. A namespace version is stored parsed and interned, not as document text; the printer gives back the same document every time, because it sorts relations by name.
 
 ## Open questions
 
-A production spec of namespace writes needs these settled. Question 3 shapes the rest.
+A production spec of namespace writes needs these settled.
 
 1. **The response.** Whether a write returns the new version's revision token, and the canonical printed document, so the caller sees what was stored.
 2. **Reading namespaces.** Whether there is a GET for a namespace at a revision token, and a list of a namespace's versions.
-3. **Storage and ports.** A `NamespaceWriter` port beside `FactWriter`, and `NamespaceStore::rewrite` reading at a revision. Whether the stored form is the document text or the parsed namespace.
-   Leaning: store the parsed, interned namespace. The printer gives back the same document every time, because it sorts relations by name.
-4. **Errors.** The HTTP status for each refusal, and the RFC 9457 body. Document errors already carry a relation and column.
-5. **Propagation.** How a new version reaches other nodes, and how namespace changes appear in the Watch stream.
+3. **Errors.** The HTTP status for each refusal, and the RFC 9457 body. Document errors already carry a relation and column.
+4. **Propagation.** How a new version reaches other nodes, and how namespace changes appear in the Watch stream.
    Partly settled: namespace versions go into the same change log as facts, and a node behind a request's revision token replays the log up to it.
-6. **Who may write.** Authorization of namespace writes, roadmap item 15. The spec may defer it, but says so.
+5. **Who may write.** Authorization of namespace writes, roadmap item 15. The spec may defer it, but says so.
 
 ## The clock port
 
