@@ -80,7 +80,8 @@ trait Proof: Send + Sized {
     /// proof keeps it.
     fn fact(fact: impl FnOnce() -> Fact) -> Self;
     /// The fact that led to a subjectset, followed by the proof found there.
-    fn cite(fact: Fact, proof: Self) -> Self;
+    /// The fact is built only when the proof keeps it.
+    fn cite(fact: impl FnOnce() -> Fact, proof: Self) -> Self;
     /// Adds the proof of another intersection operand.
     fn join(&mut self, proof: Self);
 }
@@ -94,9 +95,9 @@ impl Proof for Vec<Fact> {
         vec![fact()]
     }
 
-    fn cite(fact: Fact, proof: Self) -> Self {
+    fn cite(fact: impl FnOnce() -> Fact, proof: Self) -> Self {
         let mut cited = Vec::with_capacity(proof.len() + 1);
-        cited.push(fact);
+        cited.push(fact());
         cited.extend(proof);
         cited
     }
@@ -111,7 +112,7 @@ impl Proof for () {
 
     fn fact(_: impl FnOnce() -> Fact) -> Self {}
 
-    fn cite(_: Fact, _: Self) -> Self {}
+    fn cite(_: impl FnOnce() -> Fact, _: Self) -> Self {}
 
     fn join(&mut self, _: Self) {}
 }
@@ -308,13 +309,23 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
                     self.contains_at(computed, subject, path).await
                 }
                 Rewrite::FactTo { factset, computed } => {
-                    let targets = match self.fact_targets(set, *factset, *computed).await {
+                    let (factset, targets) = match self.fact_targets(set, *factset, *computed).await
+                    {
                         Ok(targets) => targets,
                         Err(error) => return Ok(Unknown(error)),
                     };
-                    any(targets, move |(fact, target)| async move {
+                    let factset = &factset;
+                    any(targets, move |(cited, target)| async move {
                         let found = self.contains_at(target, subject, path).await?;
-                        Ok(found.map(|proof| P::cite(fact, proof)))
+                        Ok(found.map(|proof| {
+                            P::cite(
+                                || Fact {
+                                    subjectset: factset.clone(),
+                                    subject: cited,
+                                },
+                                proof,
+                            )
+                        }))
                     })
                     .await
                 }
@@ -373,7 +384,7 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
                     let found = self.contains_at(nested.clone(), subject, path).await?;
                     Ok(found.map(|proof| {
                         P::cite(
-                            Fact {
+                            || Fact {
                                 subjectset: set.clone(),
                                 subject: Subject::Subjectset(nested),
                             },
@@ -405,6 +416,7 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
                 Rewrite::FactTo { factset, computed } => Expansion::Union(
                     self.fact_targets(set, *factset, *computed)
                         .await?
+                        .1
                         .into_iter()
                         .map(|(_, target)| Expansion::Reference(target))
                         .collect(),
@@ -433,23 +445,23 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
         Ok(expanded)
     }
 
-    /// `(factset, computed)`: each fact under `factset` that names a
-    /// resource, paired with that resource's `computed` subjectset. A
-    /// resource member names its resource and a subjectset names the
-    /// resource it belongs to, as in Zanzibar; identities name no resource
-    /// and are skipped.
+    /// `(factset, computed)`: the factset, and each subject stored under it
+    /// that names a resource, paired with that resource's `computed`
+    /// subjectset. A resource member names its resource and a subjectset
+    /// names the resource it belongs to, as in Zanzibar; identities name no
+    /// resource and are skipped.
     async fn fact_targets(
         &self,
         set: &Subjectset,
         factset: RelationId,
         computed: RelationId,
-    ) -> Result<Vec<(Fact, Subjectset)>, StoreError> {
+    ) -> Result<(Subjectset, Vec<(Subject, Subjectset)>), StoreError> {
         let factset = Subjectset {
             resource: set.resource.clone(),
             relation: factset,
         };
         let subjects = self.facts.subjects(&factset, self.revision).await?;
-        Ok(subjects
+        let targets = subjects
             .into_iter()
             .filter_map(|subject| {
                 let resource = match &subject {
@@ -461,12 +473,9 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
                     resource,
                     relation: computed,
                 };
-                let fact = Fact {
-                    subjectset: factset.clone(),
-                    subject,
-                };
-                Some((fact, target))
+                Some((subject, target))
             })
-            .collect())
+            .collect();
+        Ok((factset, targets))
     }
 }
