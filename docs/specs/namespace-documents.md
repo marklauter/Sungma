@@ -45,7 +45,7 @@ The `file` namespace: files sit in folders, and `(parent, viewer)` reads the vie
 
 - A document is one JSON object with exactly one key, the namespace's name. Its value is an object mapping the namespace's relation names to their expressions.
 - Every expression is a string. A relation that takes only the facts bound to it is written `"owner": "this"`. A relation whose value is anything other than a non-empty string, such as `null`, `""`, a number or an object, is refused.
-- A namespace's value is an object. Any other value, such as `null` or `[]`, is refused.
+- A namespace without relations is written `{}`. It names a kind of resource that is only ever a subject, `namespace:id`, of facts in other namespaces, as a `user` type does in other ReBAC models. Any other value for the namespace, such as `null` or `[]`, is refused.
 - A document declares exactly one namespace. An empty document or `{}` declares nothing, and an object with two or more keys declares more than one, so both are refused as parse errors. An API that takes a document answers either as a bad request.
 - An object with the same key twice is refused, including a relation named twice. JSON leaves duplicate keys to the reader, and a reader that keeps the last one would hide a mistake.
 - Key order carries no meaning.
@@ -137,7 +137,6 @@ A subjectset whose relation its namespace doesn't declare has an empty closure. 
 
 A namespace is checked whole when it is declared, and is refused if any of the following holds:
 
-- It declares no relations, since a namespace without relations can't answer any check.
 - A relation is declared twice.
 - A union or intersection is empty. The grammar can't produce one, but a rewrite tree from another source can.
 - A rewrite nests more than 100 levels deep. A leaf is one level, a run of `|` or `&` is one level however many operands it has, and each `!` adds a level. Grouping parentheses nested more than 100 deep are also refused, before the tree is built.
@@ -167,6 +166,7 @@ An error that quotes the document quotes at most 64 bytes of it, cut at a charac
 The printer writes a document the parser reads back as an equal namespace.
 
 - Every relation prints as `"name": "expression"`, including `"name": "this"`.
+- A namespace without relations prints as `"name": {}`.
 - Operators print with a space on each side, and a fact-to-subjectset prints as `(factset, computed)`.
 - The printer adds parentheses only where the grammar needs them:
   - A union inside a union is parenthesized.
@@ -202,7 +202,7 @@ The cases each class covers, at minimum.
 
 1. The sample parses to the namespace it shows.
 2. A document declares exactly one namespace: `{}`, an object with two namespace keys, and a namespace key written twice are refused.
-3. A namespace without relations, `{}`, is refused. A namespace whose value isn't an object is refused.
+3. A namespace without relations, `{}`, parses. A namespace whose value isn't an object is refused.
 4. A relation's value is a non-empty string. `null`, `""`, numbers, arrays and objects are refused.
 5. A relation named twice is one error.
 6. Text that isn't JSON is refused with the JSON library's error.
@@ -249,7 +249,7 @@ The cases each class covers, at minimum.
 
 #### Printing
 
-1. The printer writes the canonical form of the sample.
+1. The printer writes the canonical form of the sample, and of a namespace without relations.
 2. The printer adds only the parentheses the grammar needs.
 3. The printer refuses, as a caller defect, a union or intersection with one operand, and a name made with `new_unchecked` that breaks the grammar or is `this`, so it never writes a document that parses differently or isn't JSON.
 

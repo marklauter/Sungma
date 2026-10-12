@@ -196,10 +196,7 @@ pub fn parse(text: &str) -> Result<NamespaceDocument, Vec<DocumentError>> {
     let relations = Namespace::new(relations).map_err(|problems| {
         for Problem { at, error } in problems {
             let kind = ErrorKind::Namespace(quoted(error));
-            match at {
-                Some(at) => errors.at(Some(at), names[at].as_str(), None, kind),
-                None => errors.push(None, None, kind),
-            }
+            errors.at(Some(at), names[at].as_str(), None, kind);
         }
     });
     match (errors.finish(), relations) {
@@ -697,7 +694,11 @@ pub fn print(namespace: &NamespaceName, relations: &Namespace<RelationName>) -> 
         expression(&mut text, rewrite);
         text.push('"');
     }
-    text.push_str("\n  }\n}\n");
+    if relations.is_empty() {
+        text.push_str("}\n}\n");
+    } else {
+        text.push_str("\n  }\n}\n");
+    }
     text
 }
 

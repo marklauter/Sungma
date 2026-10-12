@@ -40,8 +40,6 @@ pub const MAX_CYCLE_NAMES: usize = 8;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum NamespaceError {
-    #[error("a namespace declares no relations")]
-    NoRelations,
     #[error("an empty {0} has no operands")]
     EmptyOperator(&'static str),
     #[error("a rewrite tree deeper than {MAX_REWRITE_DEPTH} levels is refused")]
@@ -66,17 +64,20 @@ fn cycle(path: &[String], omitted: usize) -> String {
 }
 
 /// A problem with a namespace, at the position of the relation it was found
-/// at, counting from 0 in declaration order. `None` for a problem with the
-/// namespace as a whole.
+/// at, counting from 0 in declaration order.
 #[derive(Debug, Error, PartialEq, Eq)]
 #[error("{error}")]
 pub struct Problem {
-    pub at: Option<usize>,
+    pub at: usize,
     pub error: NamespaceError,
 }
 
 /// A valid namespace. Generic over how relations are named: storage holds
 /// interned [`RelationId`]s, and a namespace document names its relations.
+///
+/// A namespace may declare no relations. Its resources are then only ever
+/// subjects, `namespace:id`, of facts in other namespaces, as a `user` type
+/// is in other ReBAC models.
 #[derive(Debug)]
 pub struct Namespace<R = RelationId> {
     /// In declaration order.
@@ -148,18 +149,7 @@ impl<R: Eq + Hash + Clone + Display> Namespace<R> {
 /// and a cycle at the relation of its component the check meets first.
 fn problems<R: Eq + Hash + Display>(relations: &[(R, Rewrite<R>)]) -> Vec<Problem> {
     let mut problems = Vec::new();
-    if relations.is_empty() {
-        return vec![Problem {
-            at: None,
-            error: NamespaceError::NoRelations,
-        }];
-    }
-    let mut problem = |at, error| {
-        problems.push(Problem {
-            at: Some(at),
-            error,
-        })
-    };
+    let mut problem = |at, error| problems.push(Problem { at, error });
     let mut declared = HashMap::new();
     for (at, (relation, _)) in relations.iter().enumerate() {
         if declared.contains_key(relation) {

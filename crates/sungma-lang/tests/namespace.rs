@@ -221,16 +221,14 @@ fn a_dotted_namespace_name_is_one_name() {
 }
 
 #[test]
-fn a_namespace_without_relations_is_refused() {
-    let error = only(r#"{ "t": {} }"#);
+fn a_namespace_without_relations_is_empty() {
     assert!(
-        matches!(
-            error.kind,
-            ErrorKind::Namespace(NamespaceError::NoRelations)
-        ),
-        "{error}"
+        parsed(r#"{ "t": {} }"#)
+            .relations
+            .relations()
+            .next()
+            .is_none()
     );
-    assert_eq!(error.relation, None);
 }
 
 #[test]
@@ -522,6 +520,7 @@ fn the_printer_writes_the_canonical_form() {
         print("file", &relations),
         include_str!("../../sungma/tests/fixtures/namespaces/file.json")
     );
+    assert_eq!(print("t", &[]), "{\n  \"t\": {}\n}\n");
 }
 
 #[test]
