@@ -15,7 +15,7 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
   - an identity (`carol`);
   - another subjectset (`group:eng#member`);
   - a resource itself (`folder:root`), which is how parent links are written.
-- Every string is interned to a `u32` newtype such as `NamespaceId` or `RelationId`. These are like C# `readonly record struct NamespaceId(uint Value)`. Past the edge, the core never handles a string.
+- Namespace and relation names are interned to `u32` newtypes, `NamespaceId` and `RelationId`. These are like C# `readonly record struct NamespaceId(uint Value)`. Resource ids and identities stay names, `ResourceId` and `Identity`, each holding its text in an `Arc<str>` so a clone shares it.
 - Each write bumps a global `Revision`, and every read is "as of" a revision.
 
 **Namespaces** (`namespace.rs`, `rewrite.rs`)
@@ -32,7 +32,7 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
   - `FactStore`: keyed like a wide-column store, with the subjectset as partition key and the subject as sort key;
   - `NamespaceStore`: the rewrite for a namespace and relation;
   - `FactWriter`: a batch of inserts and deletes, applied atomically at the next revision;
-  - `Interner`: mints ids for new names, each in its pool: namespace names, relation names, the resource ids of each namespace, and identities. Relations share one pool because `(parent, viewer)` means `viewer` in whichever namespace the parent fact names.
+  - `Interner`: mints ids for new names, each in its pool: namespace names and relation names. Relations share one pool because `(parent, viewer)` means `viewer` in whichever namespace the parent fact names.
 - Where a guarantee spans nodes, Sungma runs the protocol and a store supplies primitives. A fact keeps the revision that wrote it and the one that deleted it, so reads at any revision work on any store. `LeasingInterner` mints ids over a `NameStore`: each node leases a block of ids from a shared counter, and a conditional insert makes the first node to store a name win. [docs/interner.md](docs/interner.md) has the sequence.
 - `memory.rs` has in-memory fakes of the stores. There is no real database yet.
 
@@ -51,7 +51,7 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
 
 **The edge** (`name.rs`, `resolve.rs`, `check.rs`)
 - `name.rs` parses `namespace:id#relation` once, splitting at the first `:` and the last `#`.
-- `resolve.rs` maps names to ids. A name that was never interned is denied without touching the fact store.
+- `resolve.rs` maps namespace and relation names to ids. A name that was never interned is denied without touching the fact store. Resource ids and identities stay names.
 - `check.rs` has `CheckService`, which does three things: resolve, decide, then append an `AuditRecord` to an `AuditLog` (in memory for now).
 
 **Languages and the API**

@@ -20,6 +20,7 @@
 use std::{
     fmt::{self, Write},
     str::FromStr,
+    sync::Arc,
 };
 
 use thiserror::Error;
@@ -59,25 +60,34 @@ pub const MAX_RESOURCE_BYTES: usize = 256;
 /// The longest identity.
 pub const MAX_IDENTITY_BYTES: usize = 512;
 
+// Each name holds its text in an `Arc<str>`, so a clone shares the text
+// rather than copying it.
+
 /// One or more names joined by dots, such as `file` or `drive.file`.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct NamespaceName(String);
+pub struct NamespaceName(Arc<str>);
 
 /// One name, never `this` in any casing.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct RelationName(String);
+pub struct RelationName(Arc<str>);
 
 /// A key that references an external principal: opaque to Sungma, never
 /// empty, with no whitespace.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct Identity(String);
+pub struct Identity(Arc<str>);
+
+/// The id part of a resource name: opaque to Sungma, never empty, with no
+/// whitespace. Its length is checked with its namespace, by
+/// [`ResourceName::new`].
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct ResourceId(Arc<str>);
 
 macro_rules! name_type {
     ($name:ident, $check:ident) => {
         impl $name {
             /// A name from a trusted source, such as storage, which holds
             /// only names checked on the way in. Nothing is checked.
-            pub fn new_unchecked(name: impl Into<String>) -> Self {
+            pub fn new_unchecked(name: impl Into<Arc<str>>) -> Self {
                 Self(name.into())
             }
 
@@ -91,7 +101,7 @@ macro_rules! name_type {
 
             fn from_str(text: &str) -> Result<Self, NameError> {
                 $check(text)?;
-                Ok(Self(text.to_owned()))
+                Ok(Self(text.into()))
             }
         }
 
@@ -120,6 +130,7 @@ macro_rules! name_type {
 name_type!(NamespaceName, check_namespace_name);
 name_type!(RelationName, check_relation_name);
 name_type!(Identity, check_identity);
+name_type!(ResourceId, check_resource_id);
 
 fn check_identity(text: &str) -> Result<(), NameError> {
     if text.is_empty() {
@@ -232,7 +243,7 @@ fn is_hidden(c: char) -> bool {
 
 /// Checks a resource id on its own: never empty, with no whitespace. Its
 /// length is checked with its namespace, by [`ResourceName::new`].
-pub fn check_resource_id(id: &str) -> Result<(), NameError> {
+fn check_resource_id(id: &str) -> Result<(), NameError> {
     if id.is_empty() {
         Err(NameError::EmptyResource)
     } else if id.contains(char::is_whitespace) {
@@ -246,30 +257,27 @@ pub fn check_resource_id(id: &str) -> Result<(), NameError> {
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ResourceName {
     namespace: NamespaceName,
-    id: String,
+    id: ResourceId,
 }
 
 impl ResourceName {
     /// The resource `id` under `namespace`. The id is opaque but holds no
     /// whitespace, and `namespace:id` is at most [`MAX_RESOURCE_BYTES`].
     pub fn new(namespace: NamespaceName, id: &str) -> Result<Self, NameError> {
-        check_resource_id(id)?;
-        if namespace.as_str().len() + 1 + id.len() > MAX_RESOURCE_BYTES {
+        let id: ResourceId = id.parse()?;
+        if namespace.as_str().len() + 1 + id.as_str().len() > MAX_RESOURCE_BYTES {
             return Err(NameError::ResourceTooLong(quote(&format!(
                 "{namespace}:{id}"
             ))));
         }
-        Ok(Self {
-            namespace,
-            id: id.to_owned(),
-        })
+        Ok(Self { namespace, id })
     }
 
     pub fn namespace(&self) -> &NamespaceName {
         &self.namespace
     }
 
-    pub fn id(&self) -> &str {
+    pub fn id(&self) -> &ResourceId {
         &self.id
     }
 }

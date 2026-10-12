@@ -56,7 +56,7 @@ fn an_identity_is_at_most_max_identity_bytes() {
 fn a_subjectset_name_splits_at_the_first_colon_and_the_last_hash() {
     let name: SubjectsetName = "file:a:b#c#viewer".parse().unwrap();
     assert_eq!(name.resource().namespace().as_str(), "file");
-    assert_eq!(name.resource().id(), "a:b#c");
+    assert_eq!(name.resource().id().as_str(), "a:b#c");
     assert_eq!(name.relation().as_str(), "viewer");
     assert_eq!(name.to_string(), "file:a:b#c#viewer");
 }
@@ -65,7 +65,7 @@ fn a_subjectset_name_splits_at_the_first_colon_and_the_last_hash() {
 fn a_resource_name_splits_at_the_first_colon() {
     let name: ResourceName = "folder:a:b".parse().unwrap();
     assert_eq!(name.namespace().as_str(), "folder");
-    assert_eq!(name.id(), "a:b");
+    assert_eq!(name.id().as_str(), "a:b");
     assert_eq!(name.to_string(), "folder:a:b");
 }
 
@@ -178,7 +178,7 @@ proptest! {
         let text = format!("{namespace}:{id}#{relation}");
         let name: SubjectsetName = text.parse().unwrap();
         prop_assert_eq!(name.resource().namespace().as_str(), &namespace);
-        prop_assert_eq!(name.resource().id(), &id);
+        prop_assert_eq!(name.resource().id().as_str(), &id);
         prop_assert_eq!(name.relation().as_str(), &relation);
         prop_assert_eq!(name.to_string(), text);
     }
@@ -188,7 +188,7 @@ proptest! {
         let text = format!("{namespace}:{id}");
         let name: ResourceName = text.parse().unwrap();
         prop_assert_eq!(name.namespace().as_str(), &namespace);
-        prop_assert_eq!(name.id(), &id);
+        prop_assert_eq!(name.id().as_str(), &id);
         prop_assert_eq!(name.to_string(), text);
     }
 

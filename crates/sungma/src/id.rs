@@ -16,11 +16,3 @@ impl fmt::Display for RelationId {
         write!(f, "{}", self.0)
     }
 }
-
-/// An interned resource id. The string behind it is opaque to Sungma.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct ResourceId(pub u32);
-
-/// An interned identity. The string behind it is opaque to Sungma.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct IdentityId(pub u32);

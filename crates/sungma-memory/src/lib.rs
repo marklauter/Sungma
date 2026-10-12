@@ -136,13 +136,13 @@ impl Facts {
         self.head += 1;
         let revision = Revision(self.head);
         for write in writes {
-            match *write {
+            match write {
                 FactWrite::Insert(fact) => {
                     let spans = self
                         .spans
-                        .entry(fact.subjectset)
+                        .entry(fact.subjectset.clone())
                         .or_default()
-                        .entry(fact.subject)
+                        .entry(fact.subject.clone())
                         .or_default();
                     if spans.last().is_none_or(|span| span.deleted.is_some()) {
                         spans.push(Span {
@@ -167,20 +167,20 @@ impl Facts {
         revision
     }
 
-    fn contains(&self, set: Subjectset, subject: Subject, revision: Revision) -> bool {
+    fn contains(&self, set: &Subjectset, subject: &Subject, revision: Revision) -> bool {
         self.spans
-            .get(&set)
-            .and_then(|subjects| subjects.get(&subject))
+            .get(set)
+            .and_then(|subjects| subjects.get(subject))
             .is_some_and(|spans| spans.iter().any(|span| span.covers(revision)))
     }
 
-    fn visible(&self, set: Subjectset, revision: Revision) -> impl Iterator<Item = Subject> + '_ {
+    fn visible(&self, set: &Subjectset, revision: Revision) -> impl Iterator<Item = Subject> + '_ {
         self.spans
-            .get(&set)
+            .get(set)
             .into_iter()
             .flatten()
             .filter(move |(_, spans)| spans.iter().any(|span| span.covers(revision)))
-            .map(|(subject, _)| *subject)
+            .map(|(subject, _)| subject.clone())
     }
 }
 
@@ -209,8 +209,8 @@ impl FactStore for MemoryFactStore {
 
     async fn contains(
         &self,
-        set: Subjectset,
-        subject: Subject,
+        set: &Subjectset,
+        subject: &Subject,
         revision: Revision,
     ) -> Result<bool, StoreError> {
         Ok(self.facts()?.contains(set, subject, revision))
@@ -218,7 +218,7 @@ impl FactStore for MemoryFactStore {
 
     async fn subjectsets(
         &self,
-        set: Subjectset,
+        set: &Subjectset,
         revision: Revision,
     ) -> Result<Vec<Subjectset>, StoreError> {
         Ok(self
@@ -233,7 +233,7 @@ impl FactStore for MemoryFactStore {
 
     async fn subjects(
         &self,
-        set: Subjectset,
+        set: &Subjectset,
         revision: Revision,
     ) -> Result<Vec<Subject>, StoreError> {
         Ok(self.facts()?.visible(set, revision).collect())

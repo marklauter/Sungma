@@ -76,7 +76,7 @@ async fn denied_and_unknown() {
 
     let (status, reply) = check(
         &state,
-        json!({ "set": "file:design.md#viewer", "identity": "mallory" }),
+        json!({ "set": "file:design.md#reader", "identity": "bob" }),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -138,7 +138,7 @@ async fn headers_fill_the_audit_context() {
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].context.request_id, "r-42");
     assert_eq!(records[0].context.caller, "docs-service");
-    assert_eq!(records[0].request.set.resource().id(), "design.md");
+    assert_eq!(records[0].request.set.resource().id().as_str(), "design.md");
 }
 
 #[tokio::test]

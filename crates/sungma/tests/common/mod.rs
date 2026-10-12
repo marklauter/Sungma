@@ -54,11 +54,9 @@ pub async fn subjectset(world: &World, text: &str) -> Option<Subjectset> {
         .unwrap()
 }
 
-pub async fn identity(world: &World, identity: &str) -> Option<Subject> {
-    let identity = resolve::identity(&world.dictionary, identity)
-        .await
-        .unwrap();
-    identity.map(Subject::Identity)
+/// An identity is not interned, so it needs no lookup.
+pub fn identity(identity: &str) -> Subject {
+    Subject::Identity(identity.parse().unwrap())
 }
 
 /// The revision of the latest write.

@@ -16,7 +16,7 @@ use sungma::{
     namespace::NamespaceError,
     revision::Revision,
     rewrite::Rewrite::{self, Computed, Exclusion, Intersection, This, Union},
-    store::{Dictionary, FactStore, NamespaceStore, Pool, StoreError},
+    store::{FactStore, NamespaceStore, StoreError},
 };
 use sungma_lang::fact::load_facts;
 
@@ -27,10 +27,10 @@ async fn check_at(
     who: &str,
     revision: Revision,
 ) -> Result<bool, ClosureError> {
-    let (Some(set), Some(subject)) = (subjectset(world, set).await, identity(world, who).await)
-    else {
+    let Some(set) = subjectset(world, set).await else {
         return Ok(false);
     };
+    let subject = identity(who);
     agree(
         &Closure::new(&world.namespaces, &world.facts, set, revision),
         subject,
@@ -44,7 +44,7 @@ async fn agree<T: NamespaceStore + Sync, F: FactStore + Sync>(
     closure: &Closure<'_, T, F>,
     subject: Subject,
 ) -> Result<bool, ClosureError> {
-    let fast = closure.contains(subject).await;
+    let fast = closure.contains(&subject).await;
     let decided = closure.decide(subject).await;
     match (&fast, &decided) {
         (Ok(fast), Ok(decided)) => assert_eq!(*fast, decided.outcome.is_allowed()),
@@ -304,14 +304,18 @@ impl<'a> Probe<'a> {
     }
 
     /// Shuffles the subjects read under `set`, when the probe shuffles.
-    fn permute<T>(&self, subjects: &mut [T], set: Subjectset) {
+    fn permute<T>(&self, subjects: &mut [T], set: &Subjectset) {
         if let Some(seed) = self.shuffle {
             permute(subjects, &mut seed_for(seed, set));
         }
     }
 
-    fn fail(&self, set: Subjectset, read: Read) -> Result<(), StoreError> {
-        if self.failures.contains(&(set, read)) {
+    fn fail(&self, set: &Subjectset, read: Read) -> Result<(), StoreError> {
+        if self
+            .failures
+            .iter()
+            .any(|(failed, at)| failed == set && *at == read)
+        {
             return Err(StoreError("injected".to_owned()));
         }
         Ok(())
@@ -361,8 +365,9 @@ impl NamespaceStore for Probe<'_> {
         namespace: NamespaceId,
         relation: RelationId,
     ) -> Result<Option<Arc<Rewrite>>, StoreError> {
-        let failed = self.failures.iter().any(|&(set, read)| {
-            read == Read::Rewrite && (set.resource.namespace, set.relation) == (namespace, relation)
+        let failed = self.failures.iter().any(|(set, read)| {
+            *read == Read::Rewrite
+                && (set.resource.namespace, set.relation) == (namespace, relation)
         });
         if failed {
             return Err(StoreError("injected".to_owned()));
@@ -385,8 +390,8 @@ impl FactStore for Probe<'_> {
 
     async fn contains(
         &self,
-        set: Subjectset,
-        subject: Subject,
+        set: &Subjectset,
+        subject: &Subject,
         revision: Revision,
     ) -> Result<bool, StoreError> {
         self.fail(set, Read::Contains)?;
@@ -395,7 +400,7 @@ impl FactStore for Probe<'_> {
 
     async fn subjectsets(
         &self,
-        set: Subjectset,
+        set: &Subjectset,
         revision: Revision,
     ) -> Result<Vec<Subjectset>, StoreError> {
         self.fail(set, Read::Subjectsets)?;
@@ -406,7 +411,7 @@ impl FactStore for Probe<'_> {
 
     async fn subjects(
         &self,
-        set: Subjectset,
+        set: &Subjectset,
         revision: Revision,
     ) -> Result<Vec<Subject>, StoreError> {
         self.fail(set, Read::Subjects)?;
@@ -441,7 +446,7 @@ async fn check_failing(
     failed: &str,
     read: Read,
 ) -> Result<bool, ClosureError> {
-    let who = identity(world, who).await.unwrap();
+    let who = identity(who);
     let mut store = None;
     let closure = failing(world, &mut store, checked, failed, read).await;
     agree(&closure, who).await
@@ -659,8 +664,8 @@ async fn expand_keeps_an_intersection() {
         .expand()
         .await
         .unwrap();
-    let alice = identity(&world, "alice").await.unwrap();
-    let dave = identity(&world, "dave").await.unwrap();
+    let alice = identity("alice");
+    let dave = identity("dave");
     let viewer = subjectset(&world, "file:design.md#viewer").await.unwrap();
     let expected = Expansion::Intersection(vec![
         Expansion::Subjects(vec![alice, dave]),
@@ -728,7 +733,7 @@ async fn expand_lists_direct_subjects_including_subjectsets() {
         panic!("its base is a union");
     };
     let eng = subjectset(&world, "group:eng#member").await.unwrap();
-    let erin = identity(&world, "erin").await.unwrap();
+    let erin = identity("erin");
     assert_eq!(
         operands[0],
         Expansion::Subjects(vec![erin, Subject::Subjectset(eng)])
@@ -810,30 +815,23 @@ fn candidate_failures() -> Vec<(String, Read)> {
         .collect()
 }
 
-/// The docs world plus `facts`, with every random name interned.
-async fn random_world(facts: &[String]) -> World {
+/// The docs world plus `facts`.
+fn random_world(facts: &[String]) -> World {
     let world = world();
-    for (namespace, ids) in [("file", FILES), ("folder", FOLDERS), ("group", GROUPS)] {
-        let namespace = world.dictionary.lookup(Pool::Namespaces, namespace).await;
-        let namespace = NamespaceId(namespace.unwrap().unwrap());
-        for id in ids {
-            world.dictionary.intern(Pool::Resources(namespace), id);
-        }
-    }
-    for who in PEOPLE {
-        world.dictionary.intern(Pool::Identities, who);
-    }
     let facts = format!("[{}]", facts.join(","));
     load_facts(&facts, &world.dictionary, &world.facts).unwrap();
     world
 }
 
 /// The verdict, `None` when the check fails.
-async fn verdict(probe: &Probe<'_>, set: Subjectset, who: Subject) -> Option<bool> {
+async fn verdict(probe: &Probe<'_>, set: &Subjectset, who: &Subject) -> Option<bool> {
     let revision = head(probe.world).await;
-    agree(&Closure::new(probe, probe, set, revision), who)
-        .await
-        .ok()
+    agree(
+        &Closure::new(probe, probe, set.clone(), revision),
+        who.clone(),
+    )
+    .await
+    .ok()
 }
 
 async fn errors_follow_kleene_logic(
@@ -841,7 +839,7 @@ async fn errors_follow_kleene_logic(
     failures: Vec<(String, Read)>,
     seed: u64,
 ) -> Result<(), TestCaseError> {
-    let world = random_world(&facts).await;
+    let world = random_world(&facts);
     let mut failed = Vec::new();
     for (set, read) in failures {
         failed.push((subjectset(&world, &set).await.unwrap(), read));
@@ -863,17 +861,17 @@ async fn errors_follow_kleene_logic(
     for name in random_sets() {
         let set = subjectset(&world, &name).await.unwrap();
         for who in PEOPLE {
-            let subject = identity(&world, who).await.unwrap();
-            let expected = verdict(&plain, set, subject).await;
+            let subject = identity(who);
+            let expected = verdict(&plain, &set, &subject).await;
             prop_assert!(expected.is_some(), "{name} for {who}");
-            let reordered = verdict(&shuffled, set, subject).await;
+            let reordered = verdict(&shuffled, &set, &subject).await;
             prop_assert_eq!(reordered, expected, "{} for {} shuffled", name, who);
             // An error makes a verdict unknown, never wrong.
-            let failed = verdict(&failing, set, subject).await;
+            let failed = verdict(&failing, &set, &subject).await;
             if failed.is_some() {
                 prop_assert_eq!(failed, expected, "{} for {} failing", name, who);
             }
-            let both = verdict(&both, set, subject).await;
+            let both = verdict(&both, &set, &subject).await;
             prop_assert_eq!(both, failed, "{} for {} failing, shuffled", name, who);
         }
     }

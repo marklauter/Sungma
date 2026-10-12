@@ -45,8 +45,6 @@ async fn a_subject_is_read_by_its_keys() {
     ]"#;
     fact::load_facts(json, &dictionary, &facts).unwrap();
     assert_eq!(facts.head().await.unwrap().0, 3);
-    let anne = resolve::identity(&dictionary, "anne@example.com").await;
-    assert!(anne.unwrap().is_some());
     let folder = resolve::resource(&dictionary, &"folder:root".parse().unwrap()).await;
     assert!(folder.unwrap().is_some());
 }
@@ -204,8 +202,6 @@ async fn a_refused_document_declares_no_facts() {
     ]"#;
     assert!(fact::load_facts(json, &dictionary, &facts).is_err());
     assert_eq!(facts.head().await.unwrap().0, 0);
-    let alice = resolve::identity(&dictionary, "alice").await.unwrap();
-    assert_eq!(alice, None);
     let file = resolve::resource(&dictionary, &"file:a".parse().unwrap()).await;
     assert_eq!(file.unwrap(), None);
 }
@@ -219,17 +215,15 @@ fn a_fact_and_a_subject_must_be_objects() {
 }
 
 #[tokio::test]
-async fn resource_ids_are_pooled_per_namespace() {
-    let dictionary = MemoryDictionary::default();
-    let facts = MemoryFactStore::default();
-    let json = r#"[{ "namespace": "file", "resource": "a", "relation": "owner",
-        "subject": { "identity": "alice" } }]"#;
-    fact::load_facts(json, &dictionary, &facts).unwrap();
-    let file = resolve::resource(&dictionary, &"file:a".parse().unwrap()).await;
-    assert!(file.unwrap().is_some());
-    dictionary.intern(Pool::Namespaces, "folder");
-    let folder = resolve::resource(&dictionary, &"folder:a".parse().unwrap()).await;
-    assert_eq!(folder.unwrap(), None);
+async fn one_resource_id_names_a_resource_per_namespace() {
+    let world = loaded(
+        r#"[{ "namespace": "file", "resource": "a", "relation": "owner",
+        "subject": { "identity": "alice" } }]"#,
+    );
+    world.0.intern(Pool::Namespaces, "folder");
+    let alice = identity("alice");
+    assert!(holds(&world, ("file", "a", "owner"), &alice).await);
+    assert!(!holds(&world, ("folder", "a", "owner"), &alice).await);
 }
 
 /// The subject of a fact, as a test writes it.
@@ -284,10 +278,7 @@ async fn holds(
         return false;
     };
     let subject = match subject {
-        Who::Identity(identity) => resolve::identity(dictionary, identity)
-            .await
-            .unwrap()
-            .map(Subject::Identity),
+        Who::Identity(identity) => Some(Subject::Identity(identity.parse().unwrap())),
         Who::Resource(namespace, resource) => {
             let name = ResourceName::new(namespace.parse().unwrap(), resource).unwrap();
             resolve::resource(dictionary, &name)
@@ -306,7 +297,7 @@ async fn holds(
         return false;
     };
     let head = facts.head().await.unwrap();
-    facts.contains(set, subject, head).await.unwrap()
+    facts.contains(&set, &subject, head).await.unwrap()
 }
 
 fn identity(text: &str) -> Who {
@@ -411,9 +402,10 @@ async fn case_is_kept() {
     ]);
     let world = loaded(&documents.to_string());
     assert_eq!(world.1.head().await.unwrap().0, 2);
-    let upper = resolve::identity(&world.0, "Anne").await.unwrap();
-    let lower = resolve::identity(&world.0, "anne").await.unwrap();
-    assert!(upper.is_some() && lower.is_some() && upper != lower);
+    let owner = ("file", "a", "owner");
+    assert!(holds(&world, owner, &identity("Anne")).await);
+    assert!(holds(&world, owner, &identity("anne")).await);
+    assert!(!holds(&world, owner, &identity("ANNE")).await);
 }
 
 #[test]

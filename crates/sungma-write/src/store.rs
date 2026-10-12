@@ -64,7 +64,7 @@ pub trait NameStore: Dictionary {
 }
 
 /// One change to the stored facts.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum FactWrite {
     /// Stores the fact. Storing a fact already stored changes nothing.
     Insert(Fact),

@@ -8,13 +8,10 @@ use std::{
 };
 
 use proptest::{collection::vec, prelude::*, test_runner::TestCaseError};
-use sungma::{
-    id::NamespaceId,
-    store::{
-        Dictionary,
-        Pool::{self, Identities},
-        StoreError,
-    },
+use sungma::store::{
+    Dictionary,
+    Pool::{self, Relations},
+    StoreError,
 };
 use sungma_memory::MemoryDictionary;
 use sungma_write::{
@@ -76,30 +73,24 @@ impl NameStore for Node<'_> {
 async fn a_name_is_minted_once() {
     let store = MemoryDictionary::default();
     let node = node(&store, 10);
-    let alice = node.intern(Identities, "alice").await.unwrap();
-    let bob = node.intern(Identities, "bob").await.unwrap();
+    let alice = node.intern(Relations, "alice").await.unwrap();
+    let bob = node.intern(Relations, "bob").await.unwrap();
     assert_ne!(alice, bob);
-    assert_eq!(node.intern(Identities, "alice").await.unwrap(), alice);
-    assert_eq!(node.lookup(Identities, "alice").await.unwrap(), Some(alice));
-    assert_eq!(node.lookup(Identities, "carol").await.unwrap(), None);
+    assert_eq!(node.intern(Relations, "alice").await.unwrap(), alice);
+    assert_eq!(node.lookup(Relations, "alice").await.unwrap(), Some(alice));
+    assert_eq!(node.lookup(Relations, "carol").await.unwrap(), None);
     assert_eq!(
-        node.name(Identities, bob).await.unwrap().as_deref(),
+        node.name(Relations, bob).await.unwrap().as_deref(),
         Some("bob")
     );
-    assert_eq!(node.name(Identities, 99).await.unwrap(), None);
+    assert_eq!(node.name(Relations, 99).await.unwrap(), None);
 }
 
 #[tokio::test]
 async fn each_pool_mints_its_own_ids() {
     let store = MemoryDictionary::default();
     let node = node(&store, 10);
-    let pools = [
-        Pool::Namespaces,
-        Pool::Relations,
-        Pool::Resources(NamespaceId(0)),
-        Pool::Resources(NamespaceId(1)),
-        Identities,
-    ];
+    let pools = [Pool::Namespaces, Pool::Relations];
     for pool in pools {
         assert_eq!(node.intern(pool, "x").await.unwrap(), 0, "{pool:?}");
     }
@@ -118,7 +109,7 @@ async fn nodes_mint_from_their_own_blocks() {
     let (a, b) = (node(&store, 2), node(&store, 2));
     let mut ids = Vec::new();
     for (node, name) in [(&a, "w"), (&a, "x"), (&b, "y"), (&a, "z")] {
-        ids.push(node.intern(Identities, name).await.unwrap());
+        ids.push(node.intern(Relations, name).await.unwrap());
     }
     assert_eq!(ids, [0, 1, 2, 4]);
 }
@@ -135,10 +126,10 @@ async fn the_first_insert_of_a_name_wins() {
         },
         block(10),
     );
-    let first = a.intern(Identities, "alice").await.unwrap();
+    let first = a.intern(Relations, "alice").await.unwrap();
     // b misses a's insert, mints 10 from its own block, and loses.
-    assert_eq!(b.intern(Identities, "alice").await.unwrap(), first);
-    assert_eq!(store.name(Identities, 10).await.unwrap(), None);
+    assert_eq!(b.intern(Relations, "alice").await.unwrap(), first);
+    assert_eq!(store.name(Relations, 10).await.unwrap(), None);
 }
 
 #[tokio::test]
@@ -152,9 +143,9 @@ async fn interning_fails_once_the_ids_run_out() {
         },
         block(10),
     );
-    let error = node.intern(Identities, "alice").await.unwrap_err();
+    let error = node.intern(Relations, "alice").await.unwrap_err();
     assert!(
-        matches!(error, InternError::Exhausted(Identities)),
+        matches!(error, InternError::Exhausted(Relations)),
         "{error}"
     );
 }
@@ -163,15 +154,15 @@ async fn interning_fails_once_the_ids_run_out() {
 async fn setup_ids_and_leased_ids_never_meet() {
     let store = MemoryDictionary::default();
     let node = node(&store, 10);
-    assert_eq!(store.intern(Identities, "a"), 0);
-    assert_eq!(node.intern(Identities, "b").await.unwrap(), 1);
-    assert_eq!(store.intern(Identities, "c"), 11);
+    assert_eq!(store.intern(Relations, "a"), 0);
+    assert_eq!(node.intern(Relations, "b").await.unwrap(), 1);
+    assert_eq!(store.intern(Relations, "c"), 11);
 }
 
 /// `(node, pool, name)`: the node interns name `n{name}` in `POOLS[pool]`.
 type Intern = (usize, usize, usize);
 
-const POOLS: [Pool; 2] = [Identities, Pool::Resources(NamespaceId(0))];
+const POOLS: [Pool; 2] = [Relations, Pool::Namespaces];
 
 /// Nodes of the given block sizes, stale or not, intern names in turn.
 async fn ids_are_unique_and_stable(
