@@ -16,7 +16,7 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
   - another subjectset (`group:eng#member`);
   - a resource itself (`folder:root`), which is how parent links are written.
 - Namespace and relation names are interned to `u32` newtypes, `NamespaceId` and `RelationId`. These are like C# `readonly record struct NamespaceId(uint Value)`. Resource ids and identities stay names, `ResourceId` and `Identity`, each holding its text in an `Arc<str>` so a clone shares it.
-- Each write bumps a global `Revision`, and every read is "as of" a revision.
+- Each write is stamped with a `Revision` from the revision clock, and every read is "as of" a revision.
 
 **Namespaces** (`namespace.rs`, `rewrite.rs`)
 - A namespace declares the relations for one kind of resource. Each relation has a **rewrite**, a small expression tree. `Rewrite` is a Rust enum, which is a closed discriminated union; in C# it would be an abstract record with sealed subclasses. Its cases are:
@@ -26,15 +26,15 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
   - union, intersection and exclusion.
 - `Namespace::new` checks a namespace whole when it is built, and refuses it with every problem it finds: duplicates, empty operators, nesting deeper than 100 levels, undeclared names and computed cycles. So every `Namespace` is valid, and any namespace that gets stored is guaranteed to evaluate.
 
-**Storage ports** (`store.rs`, `memory.rs`, `intern.rs`)
+**Storage ports** (`store.rs` in `sungma` and `sungma-write`, `intern.rs`, the `sungma-memory` crate)
 - The ports are async traits, which play the role of C# interfaces. Reads and writes are separate:
   - `Dictionary`: name to id, and back;
   - `FactStore`: keyed like a wide-column store, with the subjectset as partition key and the subject as sort key;
   - `NamespaceStore`: the rewrite for a namespace and relation;
-  - `FactWriter`: a batch of inserts and deletes, applied atomically at the next revision;
+  - `FactWriter`: a batch of inserts and deletes, applied atomically and stamped with one revision;
   - `Interner`: mints ids for new names, each in its pool: namespace names and relation names. Relations share one pool because `(parent, viewer)` means `viewer` in whichever namespace the parent fact names.
 - Where a guarantee spans nodes, Sungma runs the protocol and a store supplies primitives. A fact keeps the revision that wrote it and the one that deleted it, so reads at any revision work on any store. `LeasingInterner` mints ids over a `NameStore`: each node leases a block of ids from a shared counter, and a conditional insert makes the first node to store a name win. [docs/interner.md](docs/interner.md) has the sequence.
-- `memory.rs` has in-memory fakes of the stores. There is no real database yet.
+- The `sungma-memory` crate has in-memory fakes of the stores. There is no real database yet.
 
 **Evaluation** (`closure.rs`, the heart of the project)
 - `Closure` walks a rewrite tree recursively against the stores at a fixed revision. It never builds the full set of subjects; it short-circuits as soon as the answer is known.

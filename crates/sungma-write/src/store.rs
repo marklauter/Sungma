@@ -78,13 +78,11 @@ pub enum FactWrite {
 /// A read at revision R sees the facts written at or before R and not
 /// deleted at or before R, so a replay can read any past revision.
 ///
-/// Revisions are issued in commit order. Once a write returns revision R, a
-/// read at R sees that write and every write before it, and no write after
-/// it. An adapter meets this however its store allows: SQLite's single
-/// writer, a counter updated in the write's transaction, or commit
-/// timestamps.
+/// A write is stamped with a revision. Once it returns revision R, a read
+/// at R sees that write and every write acknowledged before it began.
 pub trait FactWriter: FactStore {
-    /// Applies `writes` atomically at the next revision and returns it.
+    /// Applies `writes` atomically and returns the revision they're stamped
+    /// with.
     fn write(
         &self,
         writes: &[FactWrite],
