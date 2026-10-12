@@ -7,8 +7,8 @@
 //! is opaque and may contain either. No part may be empty, and no relation
 //! is named `...`: `namespace:id#...` is the resource itself, not a subjectset.
 //!
-//! A resource id and an [`Identity`] are owned by the caller and opaque, but
-//! hold no whitespace. A resource id is at most [`MAX_RESOURCE_ID_BYTES`] and
+//! A resource id and an [`Identity`] are owned by the caller and opaque, and
+//! are printable ASCII, `!` to `~`. A resource id is at most [`MAX_RESOURCE_ID_BYTES`] and
 //! an identity at most [`MAX_IDENTITY_BYTES`], as
 //! `docs/specs/fact-documents.md` specifies.
 //!
@@ -39,10 +39,8 @@ pub enum NameError {
     TooLong(String, usize),
     #[error("'{0}' is reserved")]
     Reserved(String),
-    #[error("'{0}' holds whitespace")]
-    Whitespace(String),
-    #[error("'{0}' holds a control, invisible or reordering character")]
-    Hidden(String),
+    #[error("'{0}' holds a character other than printable ASCII")]
+    NotPrintableAscii(String),
     #[error("an identity is empty")]
     EmptyIdentity,
     #[error("a resource is empty")]
@@ -77,12 +75,12 @@ pub struct NamespaceName(Arc<str>);
 pub struct RelationName(Arc<str>);
 
 /// A key that references an external principal: opaque to Sungma, never
-/// empty, with no whitespace.
+/// empty, printable ASCII.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Identity(Arc<str>);
 
 /// The id part of a resource name: opaque to Sungma, never empty, at most
-/// [`MAX_RESOURCE_ID_BYTES`], with no whitespace.
+/// [`MAX_RESOURCE_ID_BYTES`], printable ASCII.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct ResourceId(Arc<str>);
 
@@ -142,19 +140,16 @@ fn check_identity(text: &str) -> Result<(), NameError> {
     } else if text.len() > MAX_IDENTITY_BYTES {
         Err(NameError::IdentityTooLong(quote(text)))
     } else {
-        check_visible(text)
+        check_printable(text)
     }
 }
 
-/// Refuses whitespace and the characters [`quote`] escapes, so an opaque
-/// name can't forge a log line or pass for another name.
-fn check_visible(text: &str) -> Result<(), NameError> {
-    if text.contains(char::is_whitespace) {
-        Err(NameError::Whitespace(quote(text)))
-    } else if text.contains(is_hidden) {
-        Err(NameError::Hidden(quote(text)))
-    } else {
+/// Accepts printable ASCII, `!` to `~`, only.
+fn check_printable(text: &str) -> Result<(), NameError> {
+    if text.bytes().all(|byte| byte.is_ascii_graphic()) {
         Ok(())
+    } else {
+        Err(NameError::NotPrintableAscii(quote(text)))
     }
 }
 
@@ -261,7 +256,7 @@ fn check_resource_id(id: &str) -> Result<(), NameError> {
     } else if id.len() > MAX_RESOURCE_ID_BYTES {
         Err(NameError::ResourceIdTooLong(quote(id)))
     } else {
-        check_visible(id)
+        check_printable(id)
     }
 }
 

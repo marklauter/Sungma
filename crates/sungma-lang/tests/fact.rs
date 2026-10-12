@@ -9,7 +9,7 @@ use sungma::{
     graph::Subject,
     name::{
         MAX_IDENTITY_BYTES, MAX_NAMESPACE_BYTES, MAX_RELATION_BYTES, MAX_RESOURCE_ID_BYTES,
-        ResourceId, ResourceName, SubjectsetName,
+        ResourceName, SubjectsetName,
     },
     store::{FactStore, Pool},
 };
@@ -168,7 +168,7 @@ fn whitespace_in_a_resource_or_identity_is_refused() {
         with_subject(r#"{ "namespace": "group", "resource": "e ng", "relation": "member" }"#),
     ] {
         let error = refused(&json);
-        assert!(error.contains("holds whitespace"), "{error}");
+        assert!(error.contains("other than printable ASCII"), "{error}");
         assert!(error.contains("line 1 column"), "{error}");
     }
 }
@@ -358,7 +358,7 @@ async fn opaque_text_is_kept_as_written() {
         r"C:\docs\a.md",
         "a+b=c>d",
         "anne@example.com",
-        "é🦀",
+        "!~",
     ];
     let mut documents = Vec::new();
     for text in texts {
@@ -390,10 +390,16 @@ fn whitespace_of_every_kind_is_refused() {
         let text = format!("a{space}b");
         let fact = fact_json("file", &text, "owner", &identity("x"));
         let error = refused(&json!([fact]).to_string());
-        assert!(error.contains("holds whitespace"), "{text:?}: {error}");
+        assert!(
+            error.contains("other than printable ASCII"),
+            "{text:?}: {error}"
+        );
         let fact = fact_json("file", "a", "owner", &identity(&text));
         let error = refused(&json!([fact]).to_string());
-        assert!(error.contains("holds whitespace"), "{text:?}: {error}");
+        assert!(
+            error.contains("other than printable ASCII"),
+            "{text:?}: {error}"
+        );
     }
 }
 
@@ -536,14 +542,11 @@ async fn a_large_document_loads_within_a_time_bound() {
 #[tokio::test]
 async fn a_json_escape_is_decoded_before_the_rules_apply() {
     let error = refused(&with_subject(r#"{ "identity": "a\u0020b" }"#));
-    assert!(error.contains("holds whitespace"), "{error}");
+    assert!(error.contains("other than printable ASCII"), "{error}");
     let world = loaded(&with_subject(r#"{ "identity": "C:\\docs" }"#));
     assert!(holds(&world, ("file", "a", "owner"), &identity(r"C:\docs")).await);
     let error = refused(&with_subject(r#"{ "identity": "a\u0000b" }"#));
-    assert!(
-        error.contains("control, invisible or reordering"),
-        "{error}"
-    );
+    assert!(error.contains("other than printable ASCII"), "{error}");
 }
 
 #[test]
@@ -559,9 +562,9 @@ fn name() -> impl Strategy<Value = String> {
     "[a-z_][a-z0-9_]{0,8}".prop_filter("not this", |name| !name.eq_ignore_ascii_case("this"))
 }
 
-/// An opaque resource id or identity: no whitespace and nothing hidden.
+/// An opaque resource id or identity: printable ASCII.
 fn opaque() -> impl Strategy<Value = String> {
-    r"\S{1,20}".prop_filter("visible", |text| text.parse::<ResourceId>().is_ok())
+    r"[!-~]{1,20}"
 }
 
 fn who() -> impl Strategy<Value = Who> {

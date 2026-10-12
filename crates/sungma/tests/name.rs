@@ -20,13 +20,16 @@ fn a_resource_id_is_at_most_max_resource_id_bytes() {
 fn a_resource_id_holds_no_whitespace() {
     for text in ["file:a b", "file:a\tb", "file:a\u{a0}b", "file:a\n"] {
         assert!(
-            matches!(text.parse::<ResourceName>(), Err(NameError::Whitespace(_))),
+            matches!(
+                text.parse::<ResourceName>(),
+                Err(NameError::NotPrintableAscii(_))
+            ),
             "{text:?}"
         );
     }
     assert!(matches!(
         "file:a b#owner".parse::<SubjectsetName>(),
-        Err(NameError::Whitespace(_))
+        Err(NameError::NotPrintableAscii(_))
     ));
 }
 
@@ -37,7 +40,10 @@ fn an_identity_is_opaque_but_holds_no_whitespace() {
     assert_eq!("".parse::<Identity>(), Err(NameError::EmptyIdentity));
     for text in ["a b", "a\tb", "a\u{2003}b"] {
         assert!(
-            matches!(text.parse::<Identity>(), Err(NameError::Whitespace(_))),
+            matches!(
+                text.parse::<Identity>(),
+                Err(NameError::NotPrintableAscii(_))
+            ),
             "{text:?}"
         );
     }
@@ -236,15 +242,21 @@ fn a_cut_quote_fits_its_bound_with_the_cut_mark() {
 }
 
 #[test]
-fn an_identity_or_resource_id_refuses_hidden_characters() {
-    for hidden in ['\u{1b}', '\u{200b}', '\u{202e}'] {
+fn an_identity_or_resource_id_is_printable_ascii() {
+    for hidden in ['\u{1b}', '\u{7f}', '\u{200b}', '\u{202e}', 'é', ' '] {
         let text = format!("bob{hidden}");
         assert!(
-            matches!(text.parse::<Identity>(), Err(NameError::Hidden(_))),
+            matches!(
+                text.parse::<Identity>(),
+                Err(NameError::NotPrintableAscii(_))
+            ),
             "{hidden:?}"
         );
         assert!(
-            matches!(text.parse::<ResourceId>(), Err(NameError::Hidden(_))),
+            matches!(
+                text.parse::<ResourceId>(),
+                Err(NameError::NotPrintableAscii(_))
+            ),
             "{hidden:?}"
         );
     }
