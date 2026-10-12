@@ -38,25 +38,24 @@ Namespace documents are JSON and carry no grammar version; the REST endpoint tha
 
 ## Settled
 
-- **What a write carries.** One whole namespace document, for create and PATCH alike. A document supersedes its namespace, and `Namespace::new` checks the next version whole; a change to some relations would have to be merged before it could be checked.
+- **What a write carries.** One whole namespace document, whether it creates the namespace or writes a new version. A document supersedes its namespace, and `Namespace::new` checks the next version whole; a change to some relations would have to be merged before it could be checked.
 - **Retiring a namespace.** Retiring closes a namespace's last span. [One timeline](../specs/one-timeline.md#retiring-a-namespace) says what happens to its facts and why writing it again doesn't resurrect them. Which call retires it is the transport's concern.
+- **Concurrent writes.** A namespace write carries the revision token of the version it was based on, as an etag; a write that creates the namespace expects none. The write is refused when the namespace's latest version has moved on, and the caller reads the latest version and tries again. The `NamespaceWriter` port takes the expected version, and each adapter meets it with its store's conditional write, as the interner does with `insert_if_absent`.
 
 ## Open questions
 
-A production spec of namespace writes needs these settled. Questions 1 and 5 shape the rest.
+A production spec of namespace writes needs these settled. Question 4 shapes the rest.
 
-1. **Concurrent writes.** Whether a write names the version or [[revision-token]] it expects, as `If-Match` does, and is refused on a mismatch.
-   Leaning: yes, with the revision token as the `If-Match` value. Without it, two PATCHes from the same version silently overwrite each other.
-2. **Effects on facts.** Whether a namespace write reports the facts it orphans, refuses past some count, or does neither. [[one-timeline]] settles what epochs and orphaned facts mean.
+1. **Effects on facts.** Whether a namespace write reports the facts it orphans, refuses past some count, or does neither. [[one-timeline]] settles what epochs and orphaned facts mean.
    Leaning: neither. [[one-timeline]] accepts that a namespace write never scans the graph, and reporting or counting orphans needs that scan.
-3. **The response.** Whether a write returns the new version's revision token, and the canonical printed document, so the caller sees what was stored.
-4. **Reading namespaces.** Whether there is a GET for a namespace at a revision token, and a list of a namespace's versions.
-5. **Storage and ports.** A `NamespaceWriter` port beside `FactWriter`, and `NamespaceStore::rewrite` reading at a revision. Whether the stored form is the document text or the parsed namespace.
+2. **The response.** Whether a write returns the new version's revision token, and the canonical printed document, so the caller sees what was stored.
+3. **Reading namespaces.** Whether there is a GET for a namespace at a revision token, and a list of a namespace's versions.
+4. **Storage and ports.** A `NamespaceWriter` port beside `FactWriter`, and `NamespaceStore::rewrite` reading at a revision. Whether the stored form is the document text or the parsed namespace.
    Leaning: store the parsed, interned namespace. The printer gives back the same document every time, because it sorts relations by name.
-6. **Errors.** The HTTP status for each refusal, and the RFC 9457 body. Document errors already carry a relation and column.
-7. **Propagation.** How a new version reaches other nodes, and how namespace changes appear in the Watch stream.
+5. **Errors.** The HTTP status for each refusal, and the RFC 9457 body. Document errors already carry a relation and column.
+6. **Propagation.** How a new version reaches other nodes, and how namespace changes appear in the Watch stream.
    Partly settled: namespace versions go into the same change log as facts, and a node behind a request's revision token replays the log up to it.
-8. **Who may write.** Authorization of namespace writes, roadmap item 15. The spec may defer it, but says so.
+7. **Who may write.** Authorization of namespace writes, roadmap item 15. The spec may defer it, but says so.
 
 ## The clock port
 
