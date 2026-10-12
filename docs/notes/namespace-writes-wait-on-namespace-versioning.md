@@ -46,14 +46,19 @@ Namespace documents are JSON and carry no grammar version; the REST endpoint tha
 
 ## Open questions
 
-A production spec of namespace writes needs these settled.
+Each is answered with the roadmap item that needs it, so the namespace writes spec says where each is answered and goes no further.
 
 1. **The response.** Whether a write returns the new version's revision token, and the canonical printed document, so the caller sees what was stored.
+   Deferred to the transports, roadmap item 14.
 2. **Reading namespaces.** Whether there is a GET for a namespace at a revision token, and a list of a namespace's versions.
+   Deferred to the transports, roadmap item 14.
 3. **Errors.** The HTTP status for each refusal, and the RFC 9457 body. Document errors already carry a relation and column.
+   Deferred to the transports, roadmap item 14.
 4. **Propagation.** How a new version reaches other nodes, and how namespace changes appear in the Watch stream.
    Partly settled: namespace versions go into the same change log as facts, and a node behind a request's revision token replays the log up to it.
-5. **Who may write.** Authorization of namespace writes, roadmap item 15. The spec may defer it, but says so.
+   Deferred to the Watch service, roadmap item 11.
+5. **Who may write.** Authorization of namespace writes.
+   Deferred to authentication and authorization, roadmap item 15; see [[check-takes-a-caller-token-and-a-subject-token]].
 
 ## The clock port
 
