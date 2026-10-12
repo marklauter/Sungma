@@ -3,7 +3,7 @@
 use proptest::prelude::*;
 use sungma::name::{
     Identity, MAX_IDENTITY_BYTES, MAX_NAMESPACE_BYTES, MAX_QUOTE_BYTES, MAX_RESOURCE_ID_BYTES,
-    NameError, NamespaceName, RelationName, ResourceName, SubjectsetName, quote,
+    NameError, NamespaceName, RelationName, ResourceId, ResourceName, SubjectsetName, quote,
 };
 
 #[test]
@@ -233,4 +233,21 @@ fn a_cut_quote_fits_its_bound_with_the_cut_mark() {
     let cut = quote(&text(MAX_QUOTE_BYTES + 1));
     assert_eq!(cut, format!("{}...", text(MAX_QUOTE_BYTES - 3)));
     assert_eq!(cut.len(), MAX_QUOTE_BYTES);
+}
+
+#[test]
+fn an_identity_or_resource_id_refuses_hidden_characters() {
+    for hidden in ['\u{1b}', '\u{200b}', '\u{202e}'] {
+        let text = format!("bob{hidden}");
+        assert!(
+            matches!(text.parse::<Identity>(), Err(NameError::Hidden(_))),
+            "{hidden:?}"
+        );
+        assert!(
+            matches!(text.parse::<ResourceId>(), Err(NameError::Hidden(_))),
+            "{hidden:?}"
+        );
+    }
+    assert!("bob@example.com/a#b:c".parse::<Identity>().is_ok());
+    assert!("folder/a#b:c".parse::<ResourceId>().is_ok());
 }

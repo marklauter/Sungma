@@ -9,7 +9,7 @@ use sungma::{
     graph::Subject,
     name::{
         MAX_IDENTITY_BYTES, MAX_NAMESPACE_BYTES, MAX_RELATION_BYTES, MAX_RESOURCE_ID_BYTES,
-        ResourceName, SubjectsetName,
+        ResourceId, ResourceName, SubjectsetName,
     },
     store::{FactStore, Pool},
 };
@@ -539,8 +539,11 @@ async fn a_json_escape_is_decoded_before_the_rules_apply() {
     assert!(error.contains("holds whitespace"), "{error}");
     let world = loaded(&with_subject(r#"{ "identity": "C:\\docs" }"#));
     assert!(holds(&world, ("file", "a", "owner"), &identity(r"C:\docs")).await);
-    let world = loaded(&with_subject(r#"{ "identity": "a\u0000b" }"#));
-    assert!(holds(&world, ("file", "a", "owner"), &identity("a\0b")).await);
+    let error = refused(&with_subject(r#"{ "identity": "a\u0000b" }"#));
+    assert!(
+        error.contains("control, invisible or reordering"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -556,11 +559,16 @@ fn name() -> impl Strategy<Value = String> {
     "[a-z_][a-z0-9_]{0,8}".prop_filter("not this", |name| !name.eq_ignore_ascii_case("this"))
 }
 
+/// An opaque resource id or identity: no whitespace and nothing hidden.
+fn opaque() -> impl Strategy<Value = String> {
+    r"\S{1,20}".prop_filter("visible", |text| text.parse::<ResourceId>().is_ok())
+}
+
 fn who() -> impl Strategy<Value = Who> {
     prop_oneof![
-        r"\S{1,20}".prop_map(Who::Identity),
-        (name(), r"\S{1,20}").prop_map(|(namespace, resource)| Who::Resource(namespace, resource)),
-        (name(), r"\S{1,20}", name()).prop_map(|(namespace, resource, relation)| Who::Subjectset(
+        opaque().prop_map(Who::Identity),
+        (name(), opaque()).prop_map(|(namespace, resource)| Who::Resource(namespace, resource)),
+        (name(), opaque(), name()).prop_map(|(namespace, resource, relation)| Who::Subjectset(
             namespace, resource, relation
         )),
     ]
@@ -570,7 +578,7 @@ proptest! {
     /// Generated documents load, and each fact is found under its names.
     #[test]
     fn a_generated_document_loads_and_each_fact_is_found(
-        facts in proptest::collection::vec((name(), r"\S{1,20}", name(), who()), 1..10),
+        facts in proptest::collection::vec((name(), opaque(), name(), who()), 1..10),
     ) {
         let documents: Vec<Value> = facts
             .iter()

@@ -41,6 +41,8 @@ pub enum NameError {
     Reserved(String),
     #[error("'{0}' holds whitespace")]
     Whitespace(String),
+    #[error("'{0}' holds a control, invisible or reordering character")]
+    Hidden(String),
     #[error("an identity is empty")]
     EmptyIdentity,
     #[error("a resource is empty")]
@@ -139,8 +141,18 @@ fn check_identity(text: &str) -> Result<(), NameError> {
         Err(NameError::EmptyIdentity)
     } else if text.len() > MAX_IDENTITY_BYTES {
         Err(NameError::IdentityTooLong(quote(text)))
-    } else if text.contains(char::is_whitespace) {
+    } else {
+        check_visible(text)
+    }
+}
+
+/// Refuses whitespace and the characters [`quote`] escapes, so an opaque
+/// name can't forge a log line or pass for another name.
+fn check_visible(text: &str) -> Result<(), NameError> {
+    if text.contains(char::is_whitespace) {
         Err(NameError::Whitespace(quote(text)))
+    } else if text.contains(is_hidden) {
+        Err(NameError::Hidden(quote(text)))
     } else {
         Ok(())
     }
@@ -248,10 +260,8 @@ fn check_resource_id(id: &str) -> Result<(), NameError> {
         Err(NameError::EmptyResource)
     } else if id.len() > MAX_RESOURCE_ID_BYTES {
         Err(NameError::ResourceIdTooLong(quote(id)))
-    } else if id.contains(char::is_whitespace) {
-        Err(NameError::Whitespace(quote(id)))
     } else {
-        Ok(())
+        check_visible(id)
     }
 }
 
