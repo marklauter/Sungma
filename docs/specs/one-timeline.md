@@ -41,7 +41,7 @@ Proposed. Every [[fact]] and every [[namespace]] version holds over a [[span]] o
 - Declaring the relation again moves its epoch, so orphaned facts stay dead and old grants don't resurrect.
 - A write of a fact whose current span opened before its relation's epoch opens a new span. Otherwise a grant asserted again after the relation returns would stay dead.
 - Every reader applies the same rule: decide, expand, read, watch and dumps.
-- An epoch is per relation, not per namespace version. Writing a new version touches no fact, so the facts under a relation it keeps go on counting; only a relation dropped and declared again needs a new cutoff.
+- An epoch is per relation, not per namespace version. Writing a new version changes no facts, so facts under a relation the new version keeps still count. Only a relation that was dropped and declared again gets a new epoch.
 
 ## Retiring a namespace
 
