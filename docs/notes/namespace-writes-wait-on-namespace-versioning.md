@@ -29,7 +29,6 @@ A caller holds a [[revision-token]], not a revision. A request with a revision t
 - Creating a namespace that already exists is refused by the write pipeline.
 - PUT is refused. A namespace is never replaced in place.
 - PATCH appends a new version, which supersedes the previous one and closes its span.
-- Create and PATCH each carry one whole namespace document, as [Namespace documents](../specs/namespace-documents.md) specifies, and `Namespace::new` checks the new version whole.
 
 Duplicate namespaces are therefore gated on the write side. A reader never sees two versions of one namespace at one revision, so neither the namespace document parser nor the namespace store checks for them.
 
