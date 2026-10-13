@@ -1,9 +1,6 @@
 //! Namespace documents: parsed, checked whole, and printed back.
 
-use std::{
-    panic::{self, AssertUnwindSafe},
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use proptest::{collection::vec, prelude::*};
 use sungma::{
@@ -16,6 +13,7 @@ use sungma::{
 use sungma_lang::namespace::{
     self, DocumentError, ErrorKind, MAX_DOCUMENT_BYTES, MAX_ERRORS, MAX_EXPRESSION_BYTES,
     MAX_NAMESPACE_BYTES, MAX_QUOTE_BYTES, MAX_RELATION_BYTES, MAX_RELATIONS, NamespaceDocument,
+    PrintError,
 };
 
 fn parsed(json: &str) -> NamespaceDocument {
@@ -96,6 +94,7 @@ fn print(namespace: &str, relations: &[(&str, Rewrite<&str>)]) -> String {
         &NamespaceName::new_unchecked(namespace),
         &checked(relations),
     )
+    .expect("a printable namespace")
 }
 
 /// A document's relations, in document order.
@@ -113,7 +112,7 @@ fn printed_expression(tree: Rewrite<RelationName>) -> String {
     let mut relations: Vec<_> = DECLARED.iter().map(|name| (relation(name), This)).collect();
     relations.push((relation("r"), tree));
     let namespace = Namespace::new(relations).expect("a valid namespace");
-    let text = namespace::print(&t(), &namespace);
+    let text = namespace::print(&t(), &namespace).expect("a printable namespace");
     let line = text
         .lines()
         .find(|line| line.starts_with("    \"r\": "))
@@ -705,7 +704,7 @@ fn every_fixture_namespace_is_in_canonical_form() {
         let document = parsed(text);
         assert_eq!(
             namespace::print(&document.namespace, &document.relations),
-            text
+            Ok(text.to_owned())
         );
     }
 }
@@ -752,10 +751,16 @@ fn the_printer_refuses_caller_defects() {
     for (namespace, relations) in defects {
         let checked = checked(&relations);
         let namespace = NamespaceName::new_unchecked(namespace);
-        let printed =
-            panic::catch_unwind(AssertUnwindSafe(|| namespace::print(&namespace, &checked)));
+        let printed = namespace::print(&namespace, &checked);
         assert!(printed.is_err(), "printed {namespace}: {relations:?}");
     }
+    let one = checked(&[("r", Union(nonempty![This]))]);
+    assert_eq!(namespace::print(&t(), &one), Err(PrintError::OneOperand));
+    let unchecked = checked(&[("this", This)]);
+    assert!(matches!(
+        namespace::print(&t(), &unchecked),
+        Err(PrintError::Name(_))
+    ));
 }
 
 // Round trips.
@@ -843,11 +848,11 @@ proptest! {
     #[test]
     fn a_printed_namespace_parses_back_equal(relations in namespace()) {
         let checked = Namespace::new(relations.clone()).expect("a valid namespace");
-        let text = namespace::print(&t(), &checked);
+        let text = namespace::print(&t(), &checked).expect("a printable namespace");
         let document = namespace::parse(&text)
             .map_err(|errors| TestCaseError::fail(format!("{text}\n{errors:?}")))?;
         prop_assert_eq!(listed(&document), relations);
-        prop_assert_eq!(namespace::print(&t(), &document.relations), text);
+        prop_assert_eq!(namespace::print(&t(), &document.relations), Ok(text));
     }
 
     /// Expression text built from the grammar's tokens either is refused, or
@@ -861,11 +866,12 @@ proptest! {
             r#"{{ "t": {{ "r": "{expression}", "r0": "this", "r1": "this", "r2": "this" }} }}"#
         );
         if let Ok(document) = namespace::parse(&json) {
-            let text = namespace::print(&t(), &document.relations);
+            let text = namespace::print(&t(), &document.relations)
+                .map_err(|error| TestCaseError::fail(error.to_string()))?;
             let again = namespace::parse(&text)
                 .map_err(|errors| TestCaseError::fail(format!("{text}\n{errors:?}")))?;
             prop_assert_eq!(listed(&again), listed(&document));
-            prop_assert_eq!(namespace::print(&t(), &again.relations), text);
+            prop_assert_eq!(namespace::print(&t(), &again.relations), Ok(text));
         }
     }
 

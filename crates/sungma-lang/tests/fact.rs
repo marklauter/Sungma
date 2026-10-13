@@ -223,7 +223,7 @@ async fn one_resource_id_names_a_resource_per_namespace() {
         r#"[{ "namespace": "file", "resource": "a", "relation": "owner",
         "subject": { "identity": "alice" } }]"#,
     );
-    world.0.intern(Pool::Namespaces, "folder");
+    world.0.intern(Pool::Namespaces, "folder").unwrap();
     let alice = identity("alice");
     assert!(holds(&world, ("file", "a", "owner"), &alice).await);
     assert!(!holds(&world, ("folder", "a", "owner"), &alice).await);

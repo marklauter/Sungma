@@ -48,7 +48,7 @@ fn a_refused_document_stores_no_namespace() {
     ];
     let refused = load_namespaces(&documents, &dictionary, &namespaces);
     assert!(matches!(refused, Err(LoadError::Refused(_))));
-    let file = NamespaceId(dictionary.intern(Pool::Namespaces, "file"));
+    let file = NamespaceId(dictionary.intern(Pool::Namespaces, "file").unwrap());
     assert!(namespaces.namespace(file).is_none());
 }
 

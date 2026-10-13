@@ -18,7 +18,8 @@ use sungma::{
     version::{History, HistoryError, Version},
 };
 use sungma_write::store::{
-    FactWrite, FactWriter, NameStore, NamespaceWrite, NamespaceWriteError, NamespaceWriter,
+    FactWrite, FactWriter, InternError, NameStore, NamespaceWrite, NamespaceWriteError,
+    NamespaceWriter,
 };
 
 /// One pool's names and ids both ways, and the counter its leases advance.
@@ -56,15 +57,15 @@ pub struct MemoryDictionary {
 
 impl MemoryDictionary {
     /// Returns the name's id in `pool`, minting the next one if it's new.
-    pub fn intern(&self, pool: Pool, name: &str) -> u32 {
+    /// [`InternError::Exhausted`] when the pool has no ids left.
+    pub fn intern(&self, pool: Pool, name: &str) -> Result<u32, InternError> {
         let mut pools = self.pools();
         let names = pools.entry(pool).or_default();
         if let Some(&id) = names.ids.get(name) {
-            return id;
+            return Ok(id);
         }
-        let id = names.lease(1);
-        assert!(!id.is_empty(), "{pool:?} exceeds u32 ids");
-        names.insert_if_absent(name, id.start)
+        let id = names.lease(1).next().ok_or(InternError::Exhausted(pool))?;
+        Ok(names.insert_if_absent(name, id))
     }
 
     fn pools(&self) -> MutexGuard<'_, HashMap<Pool, Names>> {

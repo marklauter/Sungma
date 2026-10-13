@@ -362,17 +362,29 @@ pub(crate) struct Sampled<T> {
     window: Mutex<Window>,
 }
 
-/// The samples, and the drift they measure.
+/// The samples, and the drift they measure. The newest is kept apart, so a
+/// window always holds one.
 #[derive(Debug)]
 struct Window {
-    samples: VecDeque<Taken>,
+    /// Oldest first.
+    older: VecDeque<Taken>,
+    newest: Taken,
     drift: Drift,
 }
 
 impl Window {
-    fn of(samples: VecDeque<Taken>) -> Self {
-        let drift = Drift::of(&samples);
-        Self { samples, drift }
+    fn of(older: VecDeque<Taken>, newest: Taken) -> Self {
+        let drift = Drift::of(&older.iter().copied().chain([newest]).collect());
+        Self {
+            older,
+            newest,
+            drift,
+        }
+    }
+
+    /// Every sample, oldest first.
+    fn samples(&self) -> impl Iterator<Item = &Taken> {
+        self.older.iter().chain([&self.newest])
     }
 }
 
@@ -381,7 +393,7 @@ impl<T: TimeSource> Sampled<T> {
         let first = Taken::read(sample, &time);
         Self {
             time,
-            window: Mutex::new(Window::of(VecDeque::from([first]))),
+            window: Mutex::new(Window::of(VecDeque::new(), first)),
         }
     }
 
@@ -392,11 +404,7 @@ impl<T: TimeSource> Sampled<T> {
 
     /// Monotonic time since the newest sample was taken.
     pub(crate) fn since_newest(&self) -> Duration {
-        let window = self.window.lock();
-        let newest = window
-            .samples
-            .back()
-            .expect("a window always holds a sample");
+        let newest = self.window.lock().newest;
         Duration::from_nanos(self.time.monotonic().saturating_sub(newest.at.monotonic))
     }
 
@@ -413,24 +421,25 @@ impl<T: TimeSource> Sampled<T> {
         let mut window = self.window.lock();
         let drift = window.drift;
         let ranges: Vec<_> = window
-            .samples
-            .iter()
+            .samples()
             .map(|taken| taken.range(fresh.at, drift))
             .collect();
-        let mut kept = ranges.iter().map(Result::is_ok);
-        window.samples.retain(|_| kept.next().unwrap_or(false));
+        let mut samples: VecDeque<_> = window
+            .samples()
+            .zip(&ranges)
+            .filter(|(_, range)| range.is_ok())
+            .map(|(taken, _)| *taken)
+            .collect();
         let earlier = ranges.into_iter().filter_map(Result::ok);
         let ours = fresh.range(fresh.at, drift)?;
-        let agrees = window.samples.is_empty() || meet(earlier.chain([ours])).is_some();
-        let mut samples = std::mem::take(&mut window.samples);
+        let agrees = samples.is_empty() || meet(earlier.chain([ours])).is_some();
         if !agrees {
             samples.clear();
         }
         if samples.len() == WINDOW {
             samples.pop_front();
         }
-        samples.push_back(fresh);
-        *window = Window::of(samples);
+        *window = Window::of(samples, fresh);
         if agrees {
             Ok(())
         } else {
@@ -444,14 +453,9 @@ impl<T: TimeSource> Sampled<T> {
         let now = self.time.moment();
         let window = self.window.lock();
         let drift = window.drift;
-        let newest = window
-            .samples
-            .back()
-            .expect("a window always holds a sample");
-        newest.range(now, drift)?;
+        window.newest.range(now, drift)?;
         let ranges = window
-            .samples
-            .iter()
+            .samples()
             .filter_map(|taken| taken.range(now, drift).ok());
         let (low, high) = meet(ranges).ok_or(ClockFault::Drifted)?;
         spanning(low, high)

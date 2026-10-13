@@ -80,9 +80,10 @@ pub fn declare(
     relation: &str,
     rewrite: Rewrite<&str>,
 ) -> Result<(), NamespaceError> {
-    let namespace = NamespaceId(dictionary.intern(Pool::Namespaces, namespace));
-    let relation = RelationId(dictionary.intern(Pool::Relations, relation));
-    let rewrite = rewrite.map(&mut |name| RelationId(dictionary.intern(Pool::Relations, name)));
+    let intern = |pool, name| dictionary.intern(pool, name).expect("an id is left");
+    let namespace = NamespaceId(intern(Pool::Namespaces, namespace));
+    let relation = RelationId(intern(Pool::Relations, relation));
+    let rewrite = rewrite.map(&mut |name| RelationId(intern(Pool::Relations, name)));
     let current = namespaces.namespace(namespace);
     let mut relations: Vec<_> = current
         .iter()

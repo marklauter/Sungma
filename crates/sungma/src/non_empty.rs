@@ -1,7 +1,7 @@
 //! A list with at least one item, so code that needs one can't be handed
 //! none.
 
-use std::{ops::Deref, slice, vec};
+use std::{num::NonZeroUsize, ops::Deref, slice, vec};
 
 /// A list with at least one item. It derefs to a slice, so it reads like
 /// one, and every way to build it keeps at least one item.
@@ -10,11 +10,18 @@ pub struct NonEmpty<T>(Vec<T>);
 
 /// `nonempty![a, b]` builds a [`NonEmpty`] from at least one item, so an
 /// empty list doesn't compile. `nonempty![item; n]` repeats an item `n`
-/// times and panics when `n` is 0.
+/// times, where `n` is a constant, so a count of 0 doesn't compile either:
+///
+/// ```compile_fail
+/// let none = sungma::nonempty![1; 0];
+/// ```
 #[macro_export]
 macro_rules! nonempty {
     ($item:expr; $count:expr) => {
-        $crate::non_empty::NonEmpty::new(vec![$item; $count]).expect("repeated at least once")
+        $crate::non_empty::NonEmpty::repeat(
+            $item,
+            const { ::std::num::NonZeroUsize::new($count).expect("repeated at least once") },
+        )
     };
     ($first:expr $(, $rest:expr)* $(,)?) => {
         $crate::non_empty::NonEmpty::with_rest($first, vec![$($rest),*])
@@ -29,6 +36,14 @@ impl<T> NonEmpty<T> {
 
     pub fn one(item: T) -> Self {
         Self(vec![item])
+    }
+
+    /// `item`, `count` times.
+    pub fn repeat(item: T, count: NonZeroUsize) -> Self
+    where
+        T: Clone,
+    {
+        Self(vec![item; count.get()])
     }
 
     /// `first` followed by `rest`.

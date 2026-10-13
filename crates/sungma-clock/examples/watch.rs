@@ -26,9 +26,9 @@ const SERVERS: [&str; 4] = [
 async fn main() -> Result<(), Box<dyn Error>> {
     let hosts: Vec<String> = env::args().skip(1).collect();
     let servers = if hosts.is_empty() {
-        Servers::nts(SERVERS)
+        Servers::nts(SERVERS)?
     } else {
-        Servers::nts(hosts)
+        Servers::nts(hosts)?
     };
     let clock = Arc::new(tokio::task::spawn_blocking(move || SystemClock::detect(servers)).await??);
     match clock.as_ref() {

@@ -154,9 +154,9 @@ async fn interning_fails_once_the_ids_run_out() {
 async fn setup_ids_and_leased_ids_never_meet() {
     let store = MemoryDictionary::default();
     let node = node(&store, 10);
-    assert_eq!(store.intern(Relations, "a"), 0);
+    assert_eq!(store.intern(Relations, "a").unwrap(), 0);
     assert_eq!(node.intern(Relations, "b").await.unwrap(), 1);
-    assert_eq!(store.intern(Relations, "c"), 11);
+    assert_eq!(store.intern(Relations, "c").unwrap(), 11);
 }
 
 /// `(node, pool, name)`: the node interns name `n{name}` in `POOLS[pool]`.
@@ -208,4 +208,16 @@ proptest! {
         let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
         runtime.block_on(ids_are_unique_and_stable(nodes, interns))?;
     }
+}
+
+#[tokio::test]
+async fn setup_interning_stops_when_a_pool_runs_out() {
+    let store = MemoryDictionary::default();
+    assert_eq!(store.intern(Relations, "owner").unwrap(), 0);
+    store.lease(Relations, u32::MAX).await.unwrap();
+    assert!(matches!(
+        store.intern(Relations, "viewer"),
+        Err(InternError::Exhausted(Relations))
+    ));
+    assert_eq!(store.intern(Relations, "owner").unwrap(), 0);
 }
