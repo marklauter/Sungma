@@ -14,7 +14,8 @@ fuzz_target!(|data: &[u8]| {
     let Ok(parsed) = namespace::parse(text) else {
         return;
     };
-    let printed = namespace::print(&parsed.namespace, &parsed.relations);
+    let printed = namespace::print(&parsed.namespace, &parsed.relations)
+        .expect("a parsed namespace prints");
     let again = namespace::parse(&printed).expect("a printed namespace parses");
     let sorted = |document: &namespace::NamespaceDocument| {
         let mut relations: Vec<_> = document.relations.relations().collect();
