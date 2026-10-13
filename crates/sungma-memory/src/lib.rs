@@ -13,8 +13,11 @@ use sungma::{
     revision::Revision,
     rewrite::Rewrite,
     store::{Dictionary, FactStore, NamespaceStore, Pool, StoreError},
+    version::Version,
 };
-use sungma_write::store::{FactWrite, FactWriter, NameStore};
+use sungma_write::store::{
+    FactWrite, FactWriter, NameStore, NamespaceWrite, NamespaceWriteError, NamespaceWriter,
+};
 
 /// The ports take `&self` so a store can be shared across concurrent
 /// requests, so its contents sit behind a mutex. Setup code calls the
@@ -252,21 +255,120 @@ impl FactWriter for MemoryFactStore {
     }
 }
 
-/// Every namespace, by id.
+/// A stored version, and the revision its span closed at once it has.
+#[derive(Debug)]
+struct Stored {
+    version: Arc<Version>,
+    closed: Option<Revision>,
+}
+
+/// Each namespace's versions, oldest first.
+#[derive(Debug, Default)]
+struct Versions {
+    namespaces: HashMap<NamespaceId, Vec<Stored>>,
+    head: u64,
+}
+
+impl Versions {
+    /// The version whose span is still open, `None` when the namespace was
+    /// never created or is retired.
+    fn current(&self, id: NamespaceId) -> Option<&Arc<Version>> {
+        self.namespaces
+            .get(&id)?
+            .last()
+            .filter(|stored| stored.closed.is_none())
+            .map(|stored| &stored.version)
+    }
+
+    fn write(
+        &mut self,
+        id: NamespaceId,
+        write: NamespaceWrite,
+    ) -> Result<Revision, NamespaceWriteError> {
+        let current = self.current(id).cloned();
+        let revision = Revision(self.head + 1);
+        let conflict = || NamespaceWriteError::Conflict {
+            current: current.as_ref().map(|version| version.revision()),
+        };
+        let based_on = |expected: Revision| {
+            current
+                .as_ref()
+                .filter(|version| version.revision() == expected)
+                .ok_or_else(conflict)
+        };
+        let next = match write {
+            NamespaceWrite::Create(namespace) => match current {
+                Some(_) => return Err(conflict()),
+                None => Some(Version::first(namespace, revision)),
+            },
+            NamespaceWrite::NewVersion {
+                based_on: expected,
+                namespace,
+            } => Some(
+                based_on(expected)?
+                    .next(namespace, revision)
+                    .expect("each write's revision is past the last"),
+            ),
+            NamespaceWrite::Retire { based_on: expected } => {
+                based_on(expected)?;
+                None
+            }
+        };
+        self.head += 1;
+        let versions = self.namespaces.entry(id).or_default();
+        if let Some(open) = versions.last_mut().filter(|stored| stored.closed.is_none()) {
+            open.closed = Some(revision);
+        }
+        if let Some(version) = next {
+            versions.push(Stored {
+                version: Arc::new(version),
+                closed: None,
+            });
+        }
+        Ok(revision)
+    }
+}
+
+/// Every namespace's versions. Reads see each namespace's current version;
+/// reading at a revision comes with the readers. Revisions here are the
+/// store's own and don't share a timeline with a [`MemoryFactStore`]'s.
 #[derive(Debug, Default)]
 pub struct MemoryNamespaceStore {
-    namespaces: HashMap<NamespaceId, Namespace>,
+    versions: Mutex<Versions>,
 }
 
 impl MemoryNamespaceStore {
-    /// Declares a namespace whole, replacing any earlier declaration.
+    /// Stores `namespace` as the namespace's next version, or its first,
+    /// whatever version is current.
     pub fn declare(&mut self, id: NamespaceId, namespace: Namespace) {
-        self.namespaces.insert(id, namespace);
+        let versions = self.versions.get_mut().expect("namespace store poisoned");
+        let write = match versions.current(id) {
+            Some(current) => NamespaceWrite::NewVersion {
+                based_on: current.revision(),
+                namespace,
+            },
+            None => NamespaceWrite::Create(namespace),
+        };
+        versions
+            .write(id, write)
+            .expect("a write based on the current version is stored");
     }
 
-    /// The namespace as declared, `None` when it never was.
-    pub fn namespace(&self, id: NamespaceId) -> Option<&Namespace> {
-        self.namespaces.get(&id)
+    /// The current version, `None` when the namespace was never created or
+    /// is retired.
+    pub fn version(&self, id: NamespaceId) -> Option<Arc<Version>> {
+        let versions = self.versions.lock().expect("namespace store poisoned");
+        versions.current(id).cloned()
+    }
+
+    /// The current version's namespace.
+    pub fn namespace(&self, id: NamespaceId) -> Option<Arc<Namespace>> {
+        self.version(id)
+            .map(|version| Arc::clone(version.namespace()))
+    }
+
+    fn versions(&self) -> Result<MutexGuard<'_, Versions>, StoreError> {
+        lock(&self.versions, "namespace store")
     }
 }
 
@@ -276,9 +378,20 @@ impl NamespaceStore for MemoryNamespaceStore {
         namespace: NamespaceId,
         relation: RelationId,
     ) -> Result<Option<Arc<Rewrite>>, StoreError> {
-        let namespace = self.namespaces.get(&namespace);
-        Ok(namespace
-            .and_then(|namespace| namespace.rewrite(&relation))
+        let versions = self.versions()?;
+        Ok(versions
+            .current(namespace)
+            .and_then(|version| version.namespace().rewrite(&relation))
             .cloned())
+    }
+}
+
+impl NamespaceWriter for MemoryNamespaceStore {
+    async fn write_namespace(
+        &self,
+        namespace: NamespaceId,
+        write: NamespaceWrite,
+    ) -> Result<Revision, NamespaceWriteError> {
+        self.versions()?.write(namespace, write)
     }
 }
