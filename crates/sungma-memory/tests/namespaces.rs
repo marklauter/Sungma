@@ -92,19 +92,31 @@ async fn a_write_based_on_an_older_version_stores_nothing() {
     assert!(rewrite(&store, BANNED).await.is_none());
 }
 
-#[tokio::test]
-async fn of_two_writes_based_on_one_version_exactly_one_succeeds() {
-    let store = MemoryNamespaceStore::default();
-    let first = write(&store, Create(declaring(&[OWNER]))).await.unwrap();
-    let based_on = |relation| NewVersion {
-        based_on: first,
-        namespace: declaring(&[relation]),
-    };
-    let (left, right) = tokio::join!(
-        write(&store, based_on(OWNER)),
-        write(&store, based_on(BANNED))
-    );
-    assert_eq!(left.is_ok() as u8 + right.is_ok() as u8, 1);
+/// Writers on separate threads, all based on one version, race for it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn of_writes_based_on_one_version_exactly_one_succeeds() {
+    for _ in 0..50 {
+        let store = Arc::new(MemoryNamespaceStore::default());
+        let first = write(&store, Create(declaring(&[OWNER]))).await.unwrap();
+        let writers: Vec<_> = [OWNER, BANNED, OWNER, BANNED]
+            .into_iter()
+            .map(|relation| {
+                let store = Arc::clone(&store);
+                tokio::spawn(async move {
+                    let write = NewVersion {
+                        based_on: first,
+                        namespace: declaring(&[relation]),
+                    };
+                    store.write_namespace(FILE, write).await.is_ok()
+                })
+            })
+            .collect();
+        let mut stored = 0;
+        for writer in writers {
+            stored += usize::from(writer.await.unwrap());
+        }
+        assert_eq!(stored, 1);
+    }
 }
 
 #[tokio::test]

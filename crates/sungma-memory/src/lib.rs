@@ -287,32 +287,26 @@ impl Versions {
     ) -> Result<Revision, NamespaceWriteError> {
         let current = self.current(id).cloned();
         let revision = Revision(self.head + 1);
-        let conflict = || NamespaceWriteError::Conflict {
-            current: current.as_ref().map(|version| version.revision()),
+        let expected = match &write {
+            NamespaceWrite::Create(_) => None,
+            NamespaceWrite::NewVersion { based_on, .. } | NamespaceWrite::Retire { based_on } => {
+                Some(*based_on)
+            }
         };
-        let based_on = |expected: Revision| {
-            current
-                .as_ref()
-                .filter(|version| version.revision() == expected)
-                .ok_or_else(conflict)
-        };
+        if current.as_deref().map(Version::revision) != expected {
+            return Err(NamespaceWriteError::Conflict {
+                current: current.as_deref().map(Version::revision),
+            });
+        }
         let next = match write {
-            NamespaceWrite::Create(namespace) => match current {
-                Some(_) => return Err(conflict()),
-                None => Some(Version::first(namespace, revision)),
-            },
-            NamespaceWrite::NewVersion {
-                based_on: expected,
-                namespace,
-            } => Some(
-                based_on(expected)?
+            NamespaceWrite::Create(namespace) => Some(Version::first(namespace, revision)),
+            NamespaceWrite::NewVersion { namespace, .. } => Some(
+                current
+                    .expect("checked against based_on above")
                     .next(namespace, revision)
                     .expect("each write's revision is past the last"),
             ),
-            NamespaceWrite::Retire { based_on: expected } => {
-                based_on(expected)?;
-                None
-            }
+            NamespaceWrite::Retire { .. } => None,
         };
         self.head += 1;
         let versions = self.namespaces.entry(id).or_default();
