@@ -13,7 +13,7 @@ use sungma::{
     revision::Revision,
     rewrite::Rewrite,
     store::{Dictionary, FactStore, NamespaceStore, Pool, StoreError},
-    version::Version,
+    version::{History, Version},
 };
 use sungma_write::store::{
     FactWrite, FactWriter, NameStore, NamespaceWrite, NamespaceWriteError, NamespaceWriter,
@@ -255,22 +255,10 @@ impl FactWriter for MemoryFactStore {
     }
 }
 
-/// One step in a namespace's history. Each entry opens where its revision
-/// is, and the span before it closes there, so every revision is stored
-/// once.
-#[derive(Debug)]
-enum Entry {
-    Version(Arc<Version>),
-    /// A close with nothing opening after it.
-    Retired(
-        #[expect(dead_code, reason = "the reader finds the entry covering a revision")] Revision,
-    ),
-}
-
-/// Each namespace's history, oldest first.
+/// Each namespace's history.
 #[derive(Debug, Default)]
 struct Versions {
-    namespaces: HashMap<NamespaceId, Vec<Entry>>,
+    namespaces: HashMap<NamespaceId, History>,
     head: u64,
 }
 
@@ -278,10 +266,7 @@ impl Versions {
     /// The version whose span is still open, `None` when the namespace was
     /// never created or is retired.
     fn current(&self, id: NamespaceId) -> Option<&Arc<Version>> {
-        match self.namespaces.get(&id)?.last()? {
-            Entry::Version(version) => Some(version),
-            Entry::Retired(_) => None,
-        }
+        self.namespaces.get(&id)?.current()
     }
 
     /// Refuses a write the namespace isn't at the version of, then stores it.
@@ -290,7 +275,7 @@ impl Versions {
         id: NamespaceId,
         write: NamespaceWrite,
     ) -> Result<Revision, NamespaceWriteError> {
-        let current = self.current(id).cloned();
+        let current = self.current(id).map(|version| version.revision());
         let (expected, next) = match write {
             NamespaceWrite::Create(namespace) => (None, Some(namespace)),
             NamespaceWrite::NewVersion {
@@ -299,36 +284,24 @@ impl Versions {
             } => (Some(based_on), Some(namespace)),
             NamespaceWrite::Retire { based_on } => (Some(based_on), None),
         };
-        let at = current.as_deref().map(Version::revision);
-        if at != expected {
-            return Err(NamespaceWriteError::Conflict { current: at });
+        if current != expected {
+            return Err(NamespaceWriteError::Conflict { current });
         }
-        Ok(self.store(id, current.as_deref(), next))
+        Ok(self.store(id, next)?)
     }
 
-    /// Stores `next` as the version after `current`, which must be the
-    /// namespace's current version, or retires the namespace when there's
-    /// none, at the next revision. `head` is the only source of revisions
-    /// and only moves forward, so each entry comes after the one before it.
-    fn store(
-        &mut self,
-        id: NamespaceId,
-        current: Option<&Version>,
-        next: Option<Namespace>,
-    ) -> Revision {
+    /// Stores `next` as the namespace's next version, or retires it when
+    /// there's none, at the next revision.
+    fn store(&mut self, id: NamespaceId, next: Option<Namespace>) -> Result<Revision, StoreError> {
         let revision = Revision(self.head + 1);
-        let entry = match (next, current) {
-            (Some(namespace), Some(current)) => {
-                Entry::Version(Arc::new(current.next(namespace, revision)))
-            }
-            (Some(namespace), None) => {
-                Entry::Version(Arc::new(Version::first(namespace, revision)))
-            }
-            (None, _) => Entry::Retired(revision),
-        };
+        let history = self.namespaces.entry(id).or_default();
+        match next {
+            Some(namespace) => history.write(namespace, revision),
+            None => history.retire(revision),
+        }
+        .map_err(|refused| StoreError(refused.to_string()))?;
         self.head += 1;
-        self.namespaces.entry(id).or_default().push(entry);
-        revision
+        Ok(revision)
     }
 }
 
@@ -350,9 +323,7 @@ impl MemoryNamespaceStore {
     /// Stores `namespace` as the namespace's next version, or its first,
     /// whatever version is current, and returns its revision.
     pub fn declare(&self, id: NamespaceId, namespace: Namespace) -> Result<Revision, StoreError> {
-        let mut versions = self.versions()?;
-        let current = versions.current(id).cloned();
-        Ok(versions.store(id, current.as_deref(), Some(namespace)))
+        self.versions()?.store(id, Some(namespace))
     }
 
     /// The current version, `None` when the namespace was never created or
