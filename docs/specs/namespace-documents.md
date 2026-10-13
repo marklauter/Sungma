@@ -174,7 +174,7 @@ The printer writes a document the parser reads back as an equal namespace.
   - Any operator node on the right of `!` is parenthesized.
 - Relations print sorted by name, comparing bytes. Order carries no meaning, so a namespace holds its relations unordered, and the printer sorts them so one namespace always prints as the same text.
 - Objects indent by two spaces, one key per line, and lines end in `\n` on every platform.
-- Printing a name made with `new_unchecked` that breaks the grammar, including `this`, or a union or intersection with one operand, is a caller defect.
+- Printing refuses, with a `PrintError`, a name made with `new_unchecked` that breaks the grammar, including `this`, or a union or intersection with one operand.
 
 ## Required tests
 
@@ -186,7 +186,7 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 4. **Checks.** Each check in [Checks](#checks) refuses what it should and allows what it should, including cycles through a fact-to-subjectset and relations that share a target.
 5. **Errors.** Every problem is reported in document order, up to the cap, each with its place and a message that names what was expected and what was found. Quoted input is bounded and escaped.
 6. **Limits.** Each limit at its value and one past it.
-7. **Printing.** The canonical form, only the parentheses the grammar needs, and each caller defect: a union or intersection with one operand, and a name made with `new_unchecked` that breaks the grammar.
+7. **Printing.** The canonical form, only the parentheses the grammar needs, and each refusal: a union or intersection with one operand, and a name made with `new_unchecked` that breaks the grammar.
 8. **Round trips.** Property tests from trees and from expression text. Print then parse gives an equal namespace, and printing again gives the same text. Generated trees reach the depth limits and include wide runs.
 9. **Hostile input.** Within the size limit: the longest chain of computed subjectsets, the largest set of relations that reach each other, and far more relations than the limit. Each is refused or accepted without a crash and within a time bound. A namespace built in code, which bypasses the document limits, passes the same checks without a crash.
 10. **Fuzzing.** A `cargo-fuzz` target, and a property test in CI, assert the parser never panics, overflows its stack or aborts on arbitrary input.
