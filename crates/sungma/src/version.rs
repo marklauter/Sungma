@@ -64,6 +64,17 @@ impl Version {
     pub fn epoch(&self, relation: RelationId) -> Option<Revision> {
         self.epochs.get(&relation).copied()
     }
+
+    pub fn declares(&self, relation: RelationId) -> bool {
+        self.epochs.contains_key(&relation)
+    }
+
+    /// Whether a fact under `relation` whose span opened at `written`
+    /// counts: this version declares the relation, and the span opened at
+    /// or after its epoch.
+    pub fn counts(&self, relation: RelationId, written: Revision) -> bool {
+        self.epoch(relation).is_some_and(|epoch| written >= epoch)
+    }
 }
 
 /// One step in a namespace's history.
@@ -105,6 +116,18 @@ impl History {
     /// never created or is retired.
     pub fn current(&self) -> Option<&Arc<Version>> {
         match self.entries.last()? {
+            Entry::Version(version) => Some(version),
+            Entry::Retired(_) => None,
+        }
+    }
+
+    /// The version whose span covers `revision`, `None` when the namespace
+    /// wasn't created yet or was retired then.
+    pub fn at(&self, revision: Revision) -> Option<&Arc<Version>> {
+        let opened = self
+            .entries
+            .partition_point(|entry| entry.revision() <= revision);
+        match self.entries.get(opened.checked_sub(1)?)? {
             Entry::Version(version) => Some(version),
             Entry::Retired(_) => None,
         }

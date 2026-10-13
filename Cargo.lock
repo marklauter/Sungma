@@ -1132,6 +1132,7 @@ dependencies = [
  "sungma-check",
  "sungma-lang",
  "sungma-memory",
+ "sungma-write",
  "thiserror",
  "tokio",
 ]
@@ -1203,6 +1204,7 @@ dependencies = [
  "parking_lot",
  "proptest",
  "sungma",
+ "sungma-clock",
  "sungma-write",
  "tokio",
 ]
@@ -1214,6 +1216,7 @@ dependencies = [
  "parking_lot",
  "proptest",
  "sungma",
+ "sungma-clock",
  "sungma-memory",
  "thiserror",
  "tokio",

@@ -48,7 +48,7 @@ use sungma_lang::{
     fact::{self, FactError},
     namespace,
 };
-use sungma_memory::{MemoryDictionary, MemoryFactStore, MemoryNamespaceStore};
+use sungma_memory::{MemoryDictionary, MemoryStore};
 use thiserror::Error;
 
 /// Why the state didn't load.
@@ -64,8 +64,7 @@ pub enum LoadError {
 #[derive(Debug, Default)]
 pub struct AppState {
     pub dictionary: MemoryDictionary,
-    pub namespaces: MemoryNamespaceStore,
-    pub facts: MemoryFactStore,
+    pub store: MemoryStore,
     pub audit: MemoryAuditLog,
     /// Numbers requests that arrive without an `x-request-id`.
     requests: AtomicU64,
@@ -76,8 +75,8 @@ impl AppState {
     /// forms.
     pub fn load(namespaces: &[&str], facts: &str) -> Result<Self, LoadError> {
         let state = Self::default();
-        namespace::load_namespaces(namespaces, &state.dictionary, &state.namespaces)?;
-        fact::load_facts(facts, &state.dictionary, &state.facts)?;
+        namespace::load_namespaces(namespaces, &state.dictionary, &state.store)?;
+        fact::load_facts(facts, &state.dictionary, &state.store)?;
         Ok(state)
     }
 
@@ -154,12 +153,7 @@ async fn check(
         Ok(request) => request,
         Err(error) => return failure(StatusCode::BAD_REQUEST, request_id, error),
     };
-    let service = CheckService::new(
-        &state.dictionary,
-        &state.namespaces,
-        &state.facts,
-        &state.audit,
-    );
+    let service = CheckService::new(&state.dictionary, &state.store, &state.store, &state.audit);
     let (verdict, zookie) = match service.check(context, request).await {
         Ok(Verdict::Decided(decision)) => {
             let verdict = if decision.outcome.is_allowed() {

@@ -32,8 +32,8 @@ use sungma::{
     },
     store::Pool,
 };
-use sungma_memory::{MemoryDictionary, MemoryFactStore};
-use sungma_write::store::InternError;
+use sungma_memory::{MemoryDictionary, MemoryStore};
+use sungma_write::store::{FactWriteError, InternError};
 
 /// Why a fact document wasn't loaded.
 #[derive(Debug, Error)]
@@ -43,6 +43,8 @@ pub enum FactError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Intern(#[from] InternError),
+    #[error(transparent)]
+    Write(#[from] FactWriteError),
 }
 
 /// One fact as written: its subjectset and its subject.
@@ -188,7 +190,7 @@ impl<'de> Deserialize<'de> for SubjectDto {
 pub fn load_facts(
     json: &str,
     dictionary: &MemoryDictionary,
-    store: &MemoryFactStore,
+    store: &MemoryStore,
 ) -> Result<(), FactError> {
     let dtos = serde_json::from_str::<Vec<FactDto>>(json)?;
     let mut facts = Vec::with_capacity(dtos.len());
@@ -209,7 +211,7 @@ pub fn load_facts(
         });
     }
     for fact in facts {
-        store.insert(fact);
+        store.insert(fact)?;
     }
     Ok(())
 }

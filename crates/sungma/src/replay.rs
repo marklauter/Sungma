@@ -1,9 +1,8 @@
 //! Replay: judge a recorded decision again at its revision and compare.
 //!
-//! Facts are read at the recorded revision, so later writes don't affect a
-//! replay. Namespaces are not versioned yet: a replay reads the current
-//! namespaces, and a namespace change since the decision shows up as
-//! [`Replay::Differs`] or [`Replay::Regrounded`].
+//! Facts and namespaces are read at the recorded revision, so later writes,
+//! including new namespace versions and retirements, don't affect a
+//! replay.
 
 use crate::{
     closure::{Closure, ClosureError},
@@ -15,9 +14,9 @@ use crate::{
 pub enum Replay {
     /// The same outcome, on the same grounds.
     Matches,
-    /// The same verdict, allowed on other grounds. A namespace change can move
-    /// the grounds, and so can a store error at decision time: the walk
-    /// read past the failed read and cited another path.
+    /// The same verdict, allowed on other grounds. A store error at
+    /// decision time can move the grounds: the walk read past the failed
+    /// read and cited another path.
     Regrounded { now: Decision },
     /// The current rules decide differently at the recorded revision.
     Differs { now: Decision },

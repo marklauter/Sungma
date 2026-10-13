@@ -15,12 +15,12 @@ use sungma::{
 };
 use sungma_check::resolve;
 use sungma_lang::fact;
-use sungma_memory::{MemoryDictionary, MemoryFactStore};
+use sungma_memory::{MemoryDictionary, MemoryStore};
 
 /// The message a fact JSON document is refused with.
 fn refused(json: &str) -> String {
     let dictionary = MemoryDictionary::default();
-    let facts = MemoryFactStore::default();
+    let facts = MemoryStore::default();
     match fact::load_facts(json, &dictionary, &facts) {
         Err(error) => error.to_string(),
         Ok(()) => panic!("accepted: {json}"),
@@ -37,7 +37,7 @@ fn with_subject(subject: &str) -> String {
 #[tokio::test]
 async fn a_subject_is_read_by_its_keys() {
     let dictionary = MemoryDictionary::default();
-    let facts = MemoryFactStore::default();
+    let facts = MemoryStore::default();
     let json = r#"[
         { "namespace": "file", "resource": "a", "relation": "owner",
           "subject": { "identity": "anne@example.com" } },
@@ -196,7 +196,7 @@ fn an_empty_resource_or_identity_is_refused() {
 #[tokio::test]
 async fn a_refused_document_declares_no_facts() {
     let dictionary = MemoryDictionary::default();
-    let facts = MemoryFactStore::default();
+    let facts = MemoryStore::default();
     let json = r#"[
         { "namespace": "file", "resource": "a", "relation": "owner",
           "subject": { "identity": "alice" } },
@@ -255,9 +255,9 @@ fn fact_json(namespace: &str, resource: &str, relation: &str, subject: &Who) -> 
     json!({ "namespace": namespace, "resource": resource, "relation": relation, "subject": subject.json() })
 }
 
-fn loaded(json: &str) -> (MemoryDictionary, MemoryFactStore) {
+fn loaded(json: &str) -> (MemoryDictionary, MemoryStore) {
     let dictionary = MemoryDictionary::default();
-    let facts = MemoryFactStore::default();
+    let facts = MemoryStore::default();
     if let Err(error) = fact::load_facts(json, &dictionary, &facts) {
         panic!("refused: {error}");
     }
@@ -272,7 +272,7 @@ fn set_name(namespace: &str, resource: &str, relation: &str) -> SubjectsetName {
 /// Whether the store holds the fact, found under the names it was written
 /// with.
 async fn holds(
-    (dictionary, facts): &(MemoryDictionary, MemoryFactStore),
+    (dictionary, facts): &(MemoryDictionary, MemoryStore),
     (namespace, resource, relation): (&str, &str, &str),
     subject: &Who,
 ) -> bool {
@@ -300,7 +300,7 @@ async fn holds(
         return false;
     };
     let head = facts.head().await.unwrap();
-    facts.contains(&set, &subject, head).await.unwrap()
+    facts.written(&set, &subject, head).await.unwrap().is_some()
 }
 
 fn identity(text: &str) -> Who {
@@ -606,7 +606,7 @@ proptest! {
         ],
     ) {
         let dictionary = MemoryDictionary::default();
-        let facts = MemoryFactStore::default();
+        let facts = MemoryStore::default();
         if fact::load_facts(&text, &dictionary, &facts).is_err() {
             let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
             prop_assert_eq!(runtime.block_on(facts.head()).unwrap().0, 0);

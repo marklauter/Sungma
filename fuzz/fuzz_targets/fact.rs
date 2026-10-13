@@ -12,14 +12,14 @@ use std::{
 use libfuzzer_sys::fuzz_target;
 use sungma::store::FactStore;
 use sungma_lang::fact;
-use sungma_memory::{MemoryDictionary, MemoryFactStore};
+use sungma_memory::{MemoryDictionary, MemoryStore};
 
 fuzz_target!(|data: &[u8]| {
     let Ok(text) = std::str::from_utf8(data) else {
         return;
     };
     let dictionary = MemoryDictionary::default();
-    let facts = MemoryFactStore::default();
+    let facts = MemoryStore::default();
     if fact::load_facts(text, &dictionary, &facts).is_err() {
         // The in-memory store answers at once, so one poll settles it.
         let Poll::Ready(head) = pin!(facts.head()).poll(&mut Context::from_waker(Waker::noop()))
