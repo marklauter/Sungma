@@ -255,17 +255,22 @@ impl FactWriter for MemoryFactStore {
     }
 }
 
-/// A stored version, and the revision its span closed at once it has.
+/// One step in a namespace's history. Each entry opens where its revision
+/// is, and the span before it closes there, so every revision is stored
+/// once.
 #[derive(Debug)]
-struct Stored {
-    version: Arc<Version>,
-    closed: Option<Revision>,
+enum Entry {
+    Version(Arc<Version>),
+    /// A close with nothing opening after it.
+    Retired(
+        #[expect(dead_code, reason = "the reader finds the entry covering a revision")] Revision,
+    ),
 }
 
-/// Each namespace's versions, oldest first.
+/// Each namespace's history, oldest first.
 #[derive(Debug, Default)]
 struct Versions {
-    namespaces: HashMap<NamespaceId, Vec<Stored>>,
+    namespaces: HashMap<NamespaceId, Vec<Entry>>,
     head: u64,
 }
 
@@ -273,11 +278,10 @@ impl Versions {
     /// The version whose span is still open, `None` when the namespace was
     /// never created or is retired.
     fn current(&self, id: NamespaceId) -> Option<&Arc<Version>> {
-        self.namespaces
-            .get(&id)?
-            .last()
-            .filter(|stored| stored.closed.is_none())
-            .map(|stored| &stored.version)
+        match self.namespaces.get(&id)?.last()? {
+            Entry::Version(version) => Some(version),
+            Entry::Retired(_) => None,
+        }
     }
 
     /// Refuses a write the namespace isn't at the version of, then stores it.
@@ -301,30 +305,23 @@ impl Versions {
         Ok(self.store(id, next)?)
     }
 
-    /// Closes the current version's span, if one is open, and stores `next`
-    /// as the version after it, at the next revision.
+    /// Stores `next` as the version after the current one, or retires the
+    /// namespace when there's none, at the next revision.
     fn store(&mut self, id: NamespaceId, next: Option<Namespace>) -> Result<Revision, StoreError> {
         let revision = Revision(self.head + 1);
-        let next = match (next, self.current(id)) {
-            (Some(namespace), Some(current)) => Some(
+        let entry = match (next, self.current(id)) {
+            (Some(namespace), Some(current)) => Entry::Version(Arc::new(
                 current
                     .next(namespace, revision)
                     .map_err(|refused| StoreError(refused.to_string()))?,
-            ),
-            (Some(namespace), None) => Some(Version::first(namespace, revision)),
-            (None, _) => None,
+            )),
+            (Some(namespace), None) => {
+                Entry::Version(Arc::new(Version::first(namespace, revision)))
+            }
+            (None, _) => Entry::Retired(revision),
         };
         self.head += 1;
-        let versions = self.namespaces.entry(id).or_default();
-        if let Some(open) = versions.last_mut().filter(|stored| stored.closed.is_none()) {
-            open.closed = Some(revision);
-        }
-        if let Some(version) = next {
-            versions.push(Stored {
-                version: Arc::new(version),
-                closed: None,
-            });
-        }
+        self.namespaces.entry(id).or_default().push(entry);
         Ok(revision)
     }
 }
