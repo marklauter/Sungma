@@ -83,7 +83,7 @@ pub fn declare(
     let namespace = NamespaceId(dictionary.intern(Pool::Namespaces, namespace));
     let relation = RelationId(dictionary.intern(Pool::Relations, relation));
     let rewrite = rewrite.map(&mut |name| RelationId(dictionary.intern(Pool::Relations, name)));
-    let current = namespaces.namespace(namespace).unwrap();
+    let current = namespaces.namespace(namespace);
     let mut relations: Vec<_> = current
         .iter()
         .flat_map(|current| current.relations())

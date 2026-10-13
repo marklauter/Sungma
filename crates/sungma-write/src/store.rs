@@ -18,6 +18,7 @@ use sungma::{
     namespace::Namespace,
     revision::Revision,
     store::{Dictionary, FactStore, NamespaceStore, Pool, StoreError},
+    version::HistoryError,
 };
 
 #[derive(Debug, Error)]
@@ -116,6 +117,9 @@ pub enum NamespaceWriteError {
     /// caller reads the current version and tries again.
     #[error("the namespace isn't at the version the write was based on")]
     Conflict { current: Option<Revision> },
+    /// The namespace's history refuses the revision the store stamped.
+    #[error(transparent)]
+    History(#[from] HistoryError),
     #[error(transparent)]
     Store(#[from] StoreError),
 }

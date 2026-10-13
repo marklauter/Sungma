@@ -40,7 +40,7 @@ fn conflict(result: Result<Revision, NamespaceWriteError>) -> Option<Revision> {
 }
 
 fn current(store: &MemoryNamespaceStore) -> Option<Arc<Version>> {
-    store.version(FILE).unwrap()
+    store.version(FILE)
 }
 
 async fn rewrite(store: &MemoryNamespaceStore, relation: RelationId) -> Option<Arc<Rewrite>> {
@@ -159,15 +159,8 @@ fn declaring_writes_the_next_version() {
     assert_eq!(current.revision(), Revision(2));
     assert_eq!(current.epoch(OWNER), Some(Revision(1)));
     assert_eq!(current.epoch(BANNED), Some(Revision(2)));
-    assert!(
-        store
-            .namespace(FILE)
-            .unwrap()
-            .unwrap()
-            .rewrite(&BANNED)
-            .is_some()
-    );
-    assert!(store.namespace(NamespaceId(1)).unwrap().is_none());
+    assert!(store.namespace(FILE).unwrap().rewrite(&BANNED).is_some());
+    assert!(store.namespace(NamespaceId(1)).is_none());
 }
 
 #[test]

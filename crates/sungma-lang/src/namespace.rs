@@ -37,7 +37,8 @@ use sungma::{
     namespace::{MAX_REWRITE_DEPTH, Namespace, NamespaceError, Problem},
     non_empty::NonEmpty,
     rewrite::Rewrite,
-    store::{Pool, StoreError},
+    store::Pool,
+    version::HistoryError,
 };
 use sungma_memory::{MemoryDictionary, MemoryNamespaceStore};
 
@@ -220,7 +221,7 @@ pub enum LoadError {
     #[error(transparent)]
     Refused(#[from] Refusal),
     #[error(transparent)]
-    Store(#[from] StoreError),
+    History(#[from] HistoryError),
 }
 
 /// Parses and checks every document, interning its names in `dictionary`,

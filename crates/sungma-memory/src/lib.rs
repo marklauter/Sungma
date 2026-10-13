@@ -3,7 +3,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     ops::Range,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
 use sungma::{
@@ -13,7 +13,7 @@ use sungma::{
     revision::Revision,
     rewrite::Rewrite,
     store::{Dictionary, FactStore, NamespaceStore, Pool, StoreError},
-    version::{History, Version},
+    version::{History, HistoryError, Version},
 };
 use sungma_write::store::{
     FactWrite, FactWriter, NameStore, NamespaceWrite, NamespaceWriteError, NamespaceWriter,
@@ -292,14 +292,17 @@ impl Versions {
 
     /// Stores `next` as the namespace's next version, or retires it when
     /// there's none, at the next revision.
-    fn store(&mut self, id: NamespaceId, next: Option<Namespace>) -> Result<Revision, StoreError> {
+    fn store(
+        &mut self,
+        id: NamespaceId,
+        next: Option<Namespace>,
+    ) -> Result<Revision, HistoryError> {
         let revision = Revision(self.head + 1);
         let history = self.namespaces.entry(id).or_default();
         match next {
             Some(namespace) => history.write(namespace, revision),
             None => history.retire(revision),
-        }
-        .map_err(|refused| StoreError(refused.to_string()))?;
+        }?;
         self.head += 1;
         Ok(revision)
     }
@@ -322,25 +325,27 @@ pub struct MemoryNamespaceStore {
 impl MemoryNamespaceStore {
     /// Stores `namespace` as the namespace's next version, or its first,
     /// whatever version is current, and returns its revision.
-    pub fn declare(&self, id: NamespaceId, namespace: Namespace) -> Result<Revision, StoreError> {
-        self.versions()?.store(id, Some(namespace))
+    pub fn declare(&self, id: NamespaceId, namespace: Namespace) -> Result<Revision, HistoryError> {
+        self.versions().store(id, Some(namespace))
     }
 
     /// The current version, `None` when the namespace was never created or
     /// is retired.
-    pub fn version(&self, id: NamespaceId) -> Result<Option<Arc<Version>>, StoreError> {
-        Ok(self.versions()?.current(id).cloned())
+    pub fn version(&self, id: NamespaceId) -> Option<Arc<Version>> {
+        self.versions().current(id).cloned()
     }
 
     /// The current version's namespace.
-    pub fn namespace(&self, id: NamespaceId) -> Result<Option<Arc<Namespace>>, StoreError> {
-        Ok(self
-            .version(id)?
-            .map(|version| Arc::clone(version.namespace())))
+    pub fn namespace(&self, id: NamespaceId) -> Option<Arc<Namespace>> {
+        self.version(id)
+            .map(|version| Arc::clone(version.namespace()))
     }
 
-    fn versions(&self) -> Result<MutexGuard<'_, Versions>, StoreError> {
-        lock(&self.versions, "namespace store")
+    /// A lock is poisoned only by a panic while it's held, and nothing under
+    /// this one panics. Each write ends with one push, so even then the
+    /// histories are whole and are used as is.
+    fn versions(&self) -> MutexGuard<'_, Versions> {
+        self.versions.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -360,8 +365,8 @@ impl NamespaceStore for MemoryNamespaceStore {
         namespace: NamespaceId,
         relation: RelationId,
     ) -> Result<Option<Arc<Rewrite>>, StoreError> {
-        let versions = self.versions()?;
-        Ok(versions
+        Ok(self
+            .versions()
             .current(namespace)
             .and_then(|version| version.namespace().rewrite(&relation))
             .cloned())
@@ -374,6 +379,6 @@ impl NamespaceWriter for MemoryNamespaceStore {
         namespace: NamespaceId,
         write: NamespaceWrite,
     ) -> Result<Revision, NamespaceWriteError> {
-        self.versions()?.write(namespace, write)
+        self.versions().write(namespace, write)
     }
 }
