@@ -9,9 +9,10 @@
 
 use std::{
     collections::VecDeque,
-    sync::{Mutex, PoisonError},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+use parking_lot::Mutex;
 
 use crate::{Clock, ClockFault, Reading};
 use sungma::revision::Revision;
@@ -386,15 +387,12 @@ impl<T: TimeSource> Sampled<T> {
 
     /// The drift the window measures.
     pub(crate) fn drift(&self) -> Drift {
-        self.window
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .drift
+        self.window.lock().drift
     }
 
     /// Monotonic time since the newest sample was taken.
     pub(crate) fn since_newest(&self) -> Duration {
-        let window = self.window.lock().unwrap_or_else(PoisonError::into_inner);
+        let window = self.window.lock();
         let newest = window
             .samples
             .back()
@@ -412,7 +410,7 @@ impl<T: TimeSource> Sampled<T> {
     /// sample alone.
     pub(crate) fn add(&self, sample: Sample) -> Result<(), ClockFault> {
         let fresh = Taken::read(sample, &self.time);
-        let mut window = self.window.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut window = self.window.lock();
         let drift = window.drift;
         let ranges: Vec<_> = window
             .samples
@@ -444,7 +442,7 @@ impl<T: TimeSource> Sampled<T> {
     /// system clock jumped since the newest sample.
     pub(crate) fn now(&self) -> Result<Reading, ClockFault> {
         let now = self.time.moment();
-        let window = self.window.lock().unwrap_or_else(PoisonError::into_inner);
+        let window = self.window.lock();
         let drift = window.drift;
         let newest = window
             .samples
@@ -552,13 +550,13 @@ mod tests {
         }
 
         fn left(&self) -> usize {
-            self.0.lock().unwrap().len()
+            self.0.lock().len()
         }
     }
 
     impl Clock for Scripted {
         fn now(&self) -> Result<Reading, ClockFault> {
-            let mut script = self.0.lock().unwrap();
+            let mut script = self.0.lock();
             if script.len() > 1 {
                 script.pop().unwrap()
             } else {

@@ -4,10 +4,12 @@ use std::{
     collections::HashMap,
     fmt, io,
     net::{SocketAddr, ToSocketAddrs},
-    sync::{Arc, Condvar, Mutex, PoisonError},
+    sync::Arc,
     thread,
     time::{Duration, Instant},
 };
+
+use parking_lot::{Condvar, Mutex};
 
 use rustls::{ClientConfig, RootCertStore, pki_types::CertificateDer};
 
@@ -101,12 +103,11 @@ impl Lookups {
         deadline: Instant,
     ) -> Result<Vec<SocketAddr>, ClockError> {
         let lookup = self.start(server)?;
-        let found = lookup.found.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut found = lookup.found.lock();
         let left = deadline.saturating_duration_since(Instant::now());
-        let (found, _) = lookup
+        lookup
             .finished
-            .wait_timeout_while(found, left, |found| found.is_none())
-            .unwrap_or_else(PoisonError::into_inner);
+            .wait_while_for(&mut found, |found| found.is_none(), left);
         match &*found {
             Some(Ok(addresses)) => Ok(addresses.clone()),
             Some(Err((kind, message))) => Err(io::Error::new(*kind, message.clone()).into()),
@@ -122,7 +123,7 @@ impl Lookups {
     /// stuck and the name has room for another thread, or a new one. The
     /// error when the system can't start a thread.
     fn start(&self, server: &str) -> io::Result<Arc<Lookup>> {
-        let mut running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut running = self.running.lock();
         if let Some(entry) = running.get(server)
             && let Some(lookup) = &entry.current
             && (lookup.started.elapsed() < self.stale || entry.threads >= MOST)
@@ -180,14 +181,10 @@ impl Drop for Finish {
                 "the resolver stopped without an answer".to_owned(),
             ))
         });
-        *self
-            .lookup
-            .found
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(found);
+        *self.lookup.found.lock() = Some(found);
         self.lookup.finished.notify_all();
         // The next caller starts afresh, so a pool's addresses can change.
-        let mut names = self.names.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut names = self.names.lock();
         if let Some(running) = names.get_mut(&self.name) {
             running.threads = running.threads.saturating_sub(1);
             if running
@@ -331,7 +328,7 @@ mod tests {
         let counted = calls.clone();
         let hung = Lookups::new(move |_: &str| {
             counted.fetch_add(1, Ordering::SeqCst);
-            let _ = released.lock().unwrap().recv();
+            let _ = released.lock().recv();
             Ok(vec![address])
         });
         let soon = || Instant::now() + Duration::from_millis(20);
@@ -358,7 +355,7 @@ mod tests {
         let counted = calls.clone();
         let mut hung = Lookups::new(move |_: &str| {
             counted.fetch_add(1, Ordering::SeqCst);
-            let _ = released.lock().unwrap().recv();
+            let _ = released.lock().recv();
             Ok(vec![address])
         });
         hung.stale = Duration::from_millis(30);
@@ -381,10 +378,10 @@ mod tests {
         let later = Instant::now() + Duration::from_secs(5);
         assert_eq!(hung.resolve_by("hung.test:123", later).unwrap(), [address]);
         let gone = Instant::now() + Duration::from_secs(5);
-        while !hung.running.lock().unwrap().is_empty() && Instant::now() < gone {
+        while !hung.running.lock().is_empty() && Instant::now() < gone {
             thread::yield_now();
         }
-        assert!(hung.running.lock().unwrap().is_empty());
+        assert!(hung.running.lock().is_empty());
     }
 
     #[test]
@@ -404,10 +401,10 @@ mod tests {
         );
         // The lookup that panicked leaves the running set once it has ended.
         let gone = Instant::now() + Duration::from_secs(5);
-        while !lookups.running.lock().unwrap().is_empty() && Instant::now() < gone {
+        while !lookups.running.lock().is_empty() && Instant::now() < gone {
             thread::yield_now();
         }
-        assert!(lookups.running.lock().unwrap().is_empty());
+        assert!(lookups.running.lock().is_empty());
         assert_eq!(lookups.resolve_by("a.test:123", later()).unwrap().len(), 1);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }

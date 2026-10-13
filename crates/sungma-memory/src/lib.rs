@@ -3,8 +3,10 @@
 use std::{
     collections::{BTreeMap, HashMap},
     ops::Range,
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
+    sync::Arc,
 };
+
+use parking_lot::{Mutex, MutexGuard};
 
 use sungma::{
     graph::{Fact, Subject, Subjectset},
@@ -18,15 +20,6 @@ use sungma::{
 use sungma_write::store::{
     FactWrite, FactWriter, NameStore, NamespaceWrite, NamespaceWriteError, NamespaceWriter,
 };
-
-/// The ports take `&self` so a store can be shared across concurrent
-/// requests, so its contents sit behind a mutex. Setup code calls the
-/// synchronous inherent methods, which share the ports' code.
-fn lock<'a, T>(mutex: &'a Mutex<T>, what: &str) -> Result<MutexGuard<'a, T>, StoreError> {
-    mutex
-        .lock()
-        .map_err(|_| StoreError(format!("{what} poisoned")))
-}
 
 /// One pool's names and ids both ways, and the counter its leases advance.
 #[derive(Debug, Default)]
@@ -64,7 +57,7 @@ pub struct MemoryDictionary {
 impl MemoryDictionary {
     /// Returns the name's id in `pool`, minting the next one if it's new.
     pub fn intern(&self, pool: Pool, name: &str) -> u32 {
-        let mut pools = self.pools.lock().expect("dictionary poisoned");
+        let mut pools = self.pools();
         let names = pools.entry(pool).or_default();
         if let Some(&id) = names.ids.get(name) {
             return id;
@@ -74,14 +67,14 @@ impl MemoryDictionary {
         names.insert_if_absent(name, id.start)
     }
 
-    fn pools(&self) -> Result<MutexGuard<'_, HashMap<Pool, Names>>, StoreError> {
-        lock(&self.pools, "dictionary")
+    fn pools(&self) -> MutexGuard<'_, HashMap<Pool, Names>> {
+        self.pools.lock()
     }
 }
 
 impl Dictionary for MemoryDictionary {
     async fn lookup(&self, pool: Pool, name: &str) -> Result<Option<u32>, StoreError> {
-        let pools = self.pools()?;
+        let pools = self.pools();
         Ok(pools
             .get(&pool)
             .and_then(|names| names.ids.get(name))
@@ -89,7 +82,7 @@ impl Dictionary for MemoryDictionary {
     }
 
     async fn name(&self, pool: Pool, id: u32) -> Result<Option<String>, StoreError> {
-        let pools = self.pools()?;
+        let pools = self.pools();
         Ok(pools
             .get(&pool)
             .and_then(|names| names.names.get(&id))
@@ -100,14 +93,14 @@ impl Dictionary for MemoryDictionary {
 impl NameStore for MemoryDictionary {
     async fn insert_if_absent(&self, pool: Pool, name: &str, id: u32) -> Result<u32, StoreError> {
         Ok(self
-            .pools()?
+            .pools()
             .entry(pool)
             .or_default()
             .insert_if_absent(name, id))
     }
 
     async fn lease(&self, pool: Pool, count: u32) -> Result<Range<u32>, StoreError> {
-        Ok(self.pools()?.entry(pool).or_default().lease(count))
+        Ok(self.pools().entry(pool).or_default().lease(count))
     }
 }
 
@@ -141,18 +134,12 @@ impl Facts {
         for write in writes {
             match write {
                 FactWrite::Insert(fact) => {
-                    // A key is cloned only when it is stored the first time.
-                    if !self.spans.contains_key(&fact.subjectset) {
-                        self.spans.insert(fact.subjectset.clone(), BTreeMap::new());
-                    }
-                    let subjects = self
+                    let spans = self
                         .spans
-                        .get_mut(&fact.subjectset)
-                        .expect("inserted above");
-                    if !subjects.contains_key(&fact.subject) {
-                        subjects.insert(fact.subject.clone(), Vec::new());
-                    }
-                    let spans = subjects.get_mut(&fact.subject).expect("inserted above");
+                        .entry(fact.subjectset.clone())
+                        .or_default()
+                        .entry(fact.subject.clone())
+                        .or_default();
                     if spans.last().is_none_or(|span| span.deleted.is_some()) {
                         spans.push(Span {
                             written: revision,
@@ -202,18 +189,17 @@ pub struct MemoryFactStore {
 impl MemoryFactStore {
     /// Stores the fact at the next revision and returns it.
     pub fn insert(&self, fact: Fact) -> Revision {
-        let mut facts = self.facts.lock().expect("fact store poisoned");
-        facts.write(&[FactWrite::Insert(fact)])
+        self.facts().write(&[FactWrite::Insert(fact)])
     }
 
-    fn facts(&self) -> Result<MutexGuard<'_, Facts>, StoreError> {
-        lock(&self.facts, "fact store")
+    fn facts(&self) -> MutexGuard<'_, Facts> {
+        self.facts.lock()
     }
 }
 
 impl FactStore for MemoryFactStore {
     async fn head(&self) -> Result<Revision, StoreError> {
-        Ok(Revision(self.facts()?.head))
+        Ok(Revision(self.facts().head))
     }
 
     async fn contains(
@@ -222,7 +208,7 @@ impl FactStore for MemoryFactStore {
         subject: &Subject,
         revision: Revision,
     ) -> Result<bool, StoreError> {
-        Ok(self.facts()?.contains(set, subject, revision))
+        Ok(self.facts().contains(set, subject, revision))
     }
 
     async fn subjectsets(
@@ -231,7 +217,7 @@ impl FactStore for MemoryFactStore {
         revision: Revision,
     ) -> Result<Vec<Subjectset>, StoreError> {
         Ok(self
-            .facts()?
+            .facts()
             .visible(set, revision)
             .filter_map(|subject| match subject {
                 Subject::Subjectset(nested) => Some(nested),
@@ -245,13 +231,13 @@ impl FactStore for MemoryFactStore {
         set: &Subjectset,
         revision: Revision,
     ) -> Result<Vec<Subject>, StoreError> {
-        Ok(self.facts()?.visible(set, revision).collect())
+        Ok(self.facts().visible(set, revision).collect())
     }
 }
 
 impl FactWriter for MemoryFactStore {
     async fn write(&self, writes: &[FactWrite]) -> Result<Revision, StoreError> {
-        Ok(self.facts()?.write(writes))
+        Ok(self.facts().write(writes))
     }
 }
 
@@ -341,11 +327,8 @@ impl MemoryNamespaceStore {
             .map(|version| Arc::clone(version.namespace()))
     }
 
-    /// A lock is poisoned only by a panic while it's held, and nothing under
-    /// this one panics. Each write ends with one push, so even then the
-    /// histories are whole and are used as is.
     fn versions(&self) -> MutexGuard<'_, Versions> {
-        self.versions.lock().unwrap_or_else(PoisonError::into_inner)
+        self.versions.lock()
     }
 }
 

@@ -14,12 +14,14 @@ use std::{
     io,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
     sync::{
-        Arc, Mutex, PoisonError,
+        Arc,
         atomic::{AtomicU64, Ordering},
     },
     thread,
     time::{Duration, Instant},
 };
+
+use parking_lot::Mutex;
 
 use crate::{Clock, ClockFault, Reading};
 use rustls::ClientConfig;
@@ -201,9 +203,9 @@ impl<T: TimeSource> NtpClock<T> {
     /// [`ClockFault::Drifted`] when the sample disagrees with the window,
     /// which the clock then replaces with the sample alone.
     pub fn resync(&self) -> Result<(), ClockError> {
-        let mut peers = self.peers.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut peers = self.peers.lock();
         let (sample, report) = sync(&self.servers, &mut peers, self.sampled.time());
-        *self.last.lock().unwrap_or_else(PoisonError::into_inner) = report;
+        *self.last.lock() = report;
         let Ok(sample) = sample else {
             self.failed_syncs.fetch_add(1, Ordering::Relaxed);
             return sample.map(|_| ());
@@ -225,10 +227,7 @@ impl<T: TimeSource> NtpClock<T> {
 
     /// What the last sync found, whether it succeeded or not.
     pub fn last_sync(&self) -> SyncReport {
-        self.last
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+        self.last.lock().clone()
     }
 }
 

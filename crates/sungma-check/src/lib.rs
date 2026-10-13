@@ -7,9 +7,10 @@
 
 use std::{
     future::Future,
-    sync::Mutex,
     time::{Duration, Instant, SystemTime},
 };
+
+use parking_lot::Mutex;
 
 use thiserror::Error;
 
@@ -87,16 +88,13 @@ pub struct MemoryAuditLog {
 
 impl MemoryAuditLog {
     pub fn records(&self) -> Vec<AuditRecord> {
-        self.records.lock().expect("audit log poisoned").clone()
+        self.records.lock().clone()
     }
 }
 
 impl AuditLog for MemoryAuditLog {
     async fn append(&self, record: AuditRecord) -> Result<(), StoreError> {
-        self.records
-            .lock()
-            .map_err(|_| StoreError("audit log poisoned".to_owned()))?
-            .push(record);
+        self.records.lock().push(record);
         Ok(())
     }
 }
