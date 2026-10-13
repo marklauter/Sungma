@@ -290,7 +290,7 @@ impl Versions {
         id: NamespaceId,
         write: NamespaceWrite,
     ) -> Result<Revision, NamespaceWriteError> {
-        let current = self.current(id).map(|version| version.revision());
+        let current = self.current(id).cloned();
         let (expected, next) = match write {
             NamespaceWrite::Create(namespace) => (None, Some(namespace)),
             NamespaceWrite::NewVersion {
@@ -299,17 +299,24 @@ impl Versions {
             } => (Some(based_on), Some(namespace)),
             NamespaceWrite::Retire { based_on } => (Some(based_on), None),
         };
-        if current != expected {
-            return Err(NamespaceWriteError::Conflict { current });
+        let at = current.as_deref().map(Version::revision);
+        if at != expected {
+            return Err(NamespaceWriteError::Conflict { current: at });
         }
-        Ok(self.store(id, next)?)
+        Ok(self.store(id, current.as_deref(), next)?)
     }
 
-    /// Stores `next` as the version after the current one, or retires the
-    /// namespace when there's none, at the next revision.
-    fn store(&mut self, id: NamespaceId, next: Option<Namespace>) -> Result<Revision, StoreError> {
+    /// Stores `next` as the version after `current`, which must be the
+    /// namespace's current version, or retires the namespace when there's
+    /// none, at the next revision.
+    fn store(
+        &mut self,
+        id: NamespaceId,
+        current: Option<&Version>,
+        next: Option<Namespace>,
+    ) -> Result<Revision, StoreError> {
         let revision = Revision(self.head + 1);
-        let entry = match (next, self.current(id)) {
+        let entry = match (next, current) {
             (Some(namespace), Some(current)) => Entry::Version(Arc::new(
                 current
                     .next(namespace, revision)
@@ -344,7 +351,9 @@ impl MemoryNamespaceStore {
     /// Stores `namespace` as the namespace's next version, or its first,
     /// whatever version is current, and returns its revision.
     pub fn declare(&self, id: NamespaceId, namespace: Namespace) -> Result<Revision, StoreError> {
-        self.versions()?.store(id, Some(namespace))
+        let mut versions = self.versions()?;
+        let current = versions.current(id).cloned();
+        versions.store(id, current.as_deref(), Some(namespace))
     }
 
     /// The current version, `None` when the namespace was never created or

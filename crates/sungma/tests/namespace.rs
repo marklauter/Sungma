@@ -5,10 +5,11 @@ mod common;
 use std::time::{Duration, Instant};
 
 use sungma::{
-    id::RelationId,
+    id::{NamespaceId, RelationId},
     namespace::{MAX_CYCLE_NAMES, MAX_REWRITE_DEPTH, Namespace, NamespaceError, Problem},
     nonempty,
     rewrite::Rewrite::{self, Computed, Exclusion, This, Union},
+    store::Pool,
 };
 use sungma_lang::namespace::{ErrorKind, LoadError, load_namespaces, parse};
 use sungma_memory::{MemoryDictionary, MemoryNamespaceStore};
@@ -35,6 +36,20 @@ fn names(cycle: &[&str]) -> NamespaceError {
         path: cycle.iter().map(|name| (*name).to_owned()).collect(),
         omitted: 0,
     }
+}
+
+#[test]
+fn a_refused_document_stores_no_namespace() {
+    let dictionary = MemoryDictionary::default();
+    let namespaces = MemoryNamespaceStore::default();
+    let documents = [
+        r#"{ "file": { "owner": "this" } }"#,
+        r#"{ "folder": { "viewer": "editor" } }"#,
+    ];
+    let refused = load_namespaces(&documents, &dictionary, &namespaces);
+    assert!(matches!(refused, Err(LoadError::Refused(_))));
+    let file = NamespaceId(dictionary.intern(Pool::Namespaces, "file"));
+    assert!(namespaces.namespace(file).unwrap().is_none());
 }
 
 #[test]

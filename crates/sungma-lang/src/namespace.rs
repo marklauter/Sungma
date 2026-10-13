@@ -223,13 +223,14 @@ pub enum LoadError {
     Store(#[from] StoreError),
 }
 
-/// Parses each document in turn and declares its namespace, interning its
-/// names in `dictionary`.
+/// Parses and checks every document, interning its names in `dictionary`,
+/// and then declares each namespace, so a refused document stores none.
 pub fn load_namespaces(
     documents: &[&str],
     dictionary: &MemoryDictionary,
     namespaces: &MemoryNamespaceStore,
 ) -> Result<(), LoadError> {
+    let mut checked = Vec::with_capacity(documents.len());
     for document in documents {
         let document = parse(document).map_err(Refusal)?;
         let id = NamespaceId(dictionary.intern(Pool::Namespaces, document.namespace.as_str()));
@@ -238,6 +239,9 @@ pub fn load_namespaces(
             .relations
             .map(|name| RelationId(dictionary.intern(Pool::Relations, name.as_str())))
             .map_err(|kind| Refusal(vec![error(None, None, ErrorKind::Namespace(kind))]))?;
+        checked.push((id, relations));
+    }
+    for (id, relations) in checked {
         namespaces.declare(id, relations)?;
     }
     Ok(())

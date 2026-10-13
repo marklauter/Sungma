@@ -46,7 +46,7 @@ use sungma_check::{
 };
 use sungma_lang::{
     fact::{self, FactError},
-    namespace::{self},
+    namespace,
 };
 use sungma_memory::{MemoryDictionary, MemoryFactStore, MemoryNamespaceStore};
 use thiserror::Error;
