@@ -324,8 +324,14 @@ impl Versions {
 }
 
 /// Every namespace's versions. Reads see each namespace's current version;
-/// reading at a revision comes with the readers. Revisions here are the
-/// store's own and don't share a timeline with a [`MemoryFactStore`]'s.
+/// reading at a revision comes with the readers.
+///
+/// For the reader: revisions here come from the store's own `head`, not
+/// from the fact store's, so epochs and fact revisions aren't on one
+/// timeline yet. A relation added back at namespace revision 4 sits
+/// beside facts at fact revision 500, so every old fact would pass its
+/// epoch. Facts and namespaces need one revision source before reads
+/// apply epochs.
 #[derive(Debug, Default)]
 pub struct MemoryNamespaceStore {
     versions: Mutex<Versions>,
@@ -366,6 +372,16 @@ impl MemoryNamespaceStore {
     }
 }
 
+/// For the reader: `rewrite` reads the current version, so it neither
+/// applies epochs nor reads at a revision.
+///
+/// - A relation dropped and then declared again returns its rewrite, and
+///   facts written before the new epoch count again. In the sample in
+///   `docs/specs/one-timeline.md`, Bob's ban comes back at revision 35.
+/// - Older versions and closed spans are stored but never read. After a
+///   retirement `rewrite` returns `None`, so replaying a decision made
+///   before it denies what was granted. Spec tests 5, 7 and 8 need a read
+///   at the version whose span covers the revision.
 impl NamespaceStore for MemoryNamespaceStore {
     async fn rewrite(
         &self,
