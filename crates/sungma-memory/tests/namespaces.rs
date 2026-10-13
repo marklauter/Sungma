@@ -9,6 +9,7 @@ use sungma::{
     revision::Revision,
     rewrite::Rewrite::{self, This},
     store::NamespaceStore,
+    version::Version,
 };
 use sungma_memory::MemoryNamespaceStore;
 use sungma_write::store::{
@@ -36,6 +37,10 @@ fn conflict(result: Result<Revision, NamespaceWriteError>) -> Option<Revision> {
         Err(NamespaceWriteError::Conflict { current }) => current,
         other => panic!("expected a conflict, got {other:?}"),
     }
+}
+
+fn current(store: &MemoryNamespaceStore) -> Option<Arc<Version>> {
+    store.version(FILE).unwrap()
 }
 
 async fn rewrite(store: &MemoryNamespaceStore, relation: RelationId) -> Option<Arc<Rewrite>> {
@@ -68,7 +73,7 @@ async fn a_new_version_closes_the_current_one() {
     .await
     .unwrap();
     assert_eq!(second, Revision(2));
-    let current = store.version(FILE).unwrap();
+    let current = current(&store).unwrap();
     assert_eq!(current.revision(), second);
     assert_eq!(current.epoch(OWNER), Some(first));
     assert!(rewrite(&store, OWNER).await.is_some());
@@ -88,7 +93,7 @@ async fn a_write_based_on_an_older_version_stores_nothing() {
     assert_eq!(conflict(refused), Some(second));
     let refused = write(&store, Retire { based_on: first }).await;
     assert_eq!(conflict(refused), Some(second));
-    assert_eq!(store.version(FILE).unwrap().revision(), second);
+    assert_eq!(current(&store).unwrap().revision(), second);
     assert!(rewrite(&store, BANNED).await.is_none());
 }
 
@@ -124,7 +129,7 @@ async fn a_retired_namespace_declares_nothing_until_it_is_created_again() {
     let store = MemoryNamespaceStore::default();
     let first = write(&store, Create(declaring(&[OWNER]))).await.unwrap();
     let retired = write(&store, Retire { based_on: first }).await.unwrap();
-    assert!(store.version(FILE).is_none());
+    assert!(current(&store).is_none());
     assert!(rewrite(&store, OWNER).await.is_none());
     let refused = write(
         &store,
@@ -139,20 +144,30 @@ async fn a_retired_namespace_declares_nothing_until_it_is_created_again() {
     assert_eq!(conflict(refused), None);
     let again = write(&store, Create(declaring(&[OWNER]))).await.unwrap();
     assert!(again > retired);
-    assert_eq!(store.version(FILE).unwrap().epoch(OWNER), Some(again));
+    assert_eq!(current(&store).unwrap().epoch(OWNER), Some(again));
 }
 
 #[test]
 fn declaring_writes_the_next_version() {
-    let mut store = MemoryNamespaceStore::default();
-    store.declare(FILE, declaring(&[OWNER]));
-    store.declare(FILE, declaring(&[OWNER, BANNED]));
-    let current = store.version(FILE).unwrap();
+    let store = MemoryNamespaceStore::default();
+    assert_eq!(
+        store.declare(FILE, declaring(&[OWNER])).unwrap(),
+        Revision(1)
+    );
+    store.declare(FILE, declaring(&[OWNER, BANNED])).unwrap();
+    let current = current(&store).unwrap();
     assert_eq!(current.revision(), Revision(2));
     assert_eq!(current.epoch(OWNER), Some(Revision(1)));
     assert_eq!(current.epoch(BANNED), Some(Revision(2)));
-    assert!(store.namespace(FILE).unwrap().rewrite(&BANNED).is_some());
-    assert!(store.namespace(NamespaceId(1)).is_none());
+    assert!(
+        store
+            .namespace(FILE)
+            .unwrap()
+            .unwrap()
+            .rewrite(&BANNED)
+            .is_some()
+    );
+    assert!(store.namespace(NamespaceId(1)).unwrap().is_none());
 }
 
 #[test]

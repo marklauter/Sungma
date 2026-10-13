@@ -10,13 +10,13 @@ use sungma::{
     nonempty,
     rewrite::Rewrite::{self, Computed, Exclusion, This, Union},
 };
-use sungma_lang::namespace::{ErrorKind, Refusal, load_namespaces, parse};
+use sungma_lang::namespace::{ErrorKind, LoadError, load_namespaces, parse};
 use sungma_memory::{MemoryDictionary, MemoryNamespaceStore};
 
-fn load(json: &str) -> Result<(), Refusal> {
+fn load(json: &str) -> Result<(), LoadError> {
     let dictionary = MemoryDictionary::default();
-    let mut namespaces = MemoryNamespaceStore::default();
-    load_namespaces(&[json], &dictionary, &mut namespaces)
+    let namespaces = MemoryNamespaceStore::default();
+    load_namespaces(&[json], &dictionary, &namespaces)
 }
 
 /// The one namespace error a document is refused with.
@@ -155,8 +155,8 @@ fn nested_in(
 
 fn declare(rewrite: Rewrite<&str>) -> Result<(), NamespaceError> {
     let dictionary = MemoryDictionary::default();
-    let mut namespaces = MemoryNamespaceStore::default();
-    common::declare(&mut namespaces, &dictionary, "file", "deep", rewrite)
+    let namespaces = MemoryNamespaceStore::default();
+    common::declare(&namespaces, &dictionary, "file", "deep", rewrite)
 }
 
 #[test]
@@ -193,10 +193,9 @@ fn a_deeper_excluded_operand_is_refused() {
 #[test]
 fn redeclaring_a_relation_checks_the_whole_namespace_by_id() {
     let dictionary = MemoryDictionary::default();
-    let mut namespaces = MemoryNamespaceStore::default();
-    let mut declare = |relation, rewrite| {
-        common::declare(&mut namespaces, &dictionary, "file", relation, rewrite)
-    };
+    let namespaces = MemoryNamespaceStore::default();
+    let declare =
+        |relation, rewrite| common::declare(&namespaces, &dictionary, "file", relation, rewrite);
     declare("owner", This).unwrap();
     declare("editor", Computed("owner")).unwrap();
     // Relations have their own pool, so owner is 0 and editor is 1. The

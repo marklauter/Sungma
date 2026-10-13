@@ -570,12 +570,12 @@ async fn an_operand_that_settles_the_check_outweighs_a_store_error() {
 
 #[tokio::test]
 async fn a_store_error_anywhere_in_the_tree_fails_expand() {
-    let mut world = world();
+    let world = world();
     // The docs namespaces exclude only computed subjectsets, which expand
     // leaves as references without a read.
     let unowned = Exclusion(Box::new(Computed("owner")), Box::new(This));
     declare(
-        &mut world.namespaces,
+        &world.namespaces,
         &world.dictionary,
         "file",
         "unowned",

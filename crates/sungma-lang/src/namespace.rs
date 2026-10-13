@@ -37,7 +37,7 @@ use sungma::{
     namespace::{MAX_REWRITE_DEPTH, Namespace, NamespaceError, Problem},
     non_empty::NonEmpty,
     rewrite::Rewrite,
-    store::Pool,
+    store::{Pool, StoreError},
 };
 use sungma_memory::{MemoryDictionary, MemoryNamespaceStore};
 
@@ -214,13 +214,22 @@ pub fn parse(text: &str) -> Result<NamespaceDocument, Vec<DocumentError>> {
 #[error("{}", .0.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
 pub struct Refusal(pub Vec<DocumentError>);
 
+/// Why namespace documents weren't loaded.
+#[derive(Debug, Error)]
+pub enum LoadError {
+    #[error(transparent)]
+    Refused(#[from] Refusal),
+    #[error(transparent)]
+    Store(#[from] StoreError),
+}
+
 /// Parses each document in turn and declares its namespace, interning its
 /// names in `dictionary`.
 pub fn load_namespaces(
     documents: &[&str],
     dictionary: &MemoryDictionary,
-    namespaces: &mut MemoryNamespaceStore,
-) -> Result<(), Refusal> {
+    namespaces: &MemoryNamespaceStore,
+) -> Result<(), LoadError> {
     for document in documents {
         let document = parse(document).map_err(Refusal)?;
         let id = NamespaceId(dictionary.intern(Pool::Namespaces, document.namespace.as_str()));
@@ -229,7 +238,7 @@ pub fn load_namespaces(
             .relations
             .map(|name| RelationId(dictionary.intern(Pool::Relations, name.as_str())))
             .map_err(|kind| Refusal(vec![error(None, None, ErrorKind::Namespace(kind))]))?;
-        namespaces.declare(id, relations);
+        namespaces.declare(id, relations)?;
     }
     Ok(())
 }

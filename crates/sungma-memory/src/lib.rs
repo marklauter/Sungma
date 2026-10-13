@@ -280,33 +280,39 @@ impl Versions {
             .map(|stored| &stored.version)
     }
 
+    /// Refuses a write the namespace isn't at the version of, then stores it.
     fn write(
         &mut self,
         id: NamespaceId,
         write: NamespaceWrite,
     ) -> Result<Revision, NamespaceWriteError> {
-        let current = self.current(id).cloned();
-        let revision = Revision(self.head + 1);
-        let expected = match &write {
-            NamespaceWrite::Create(_) => None,
-            NamespaceWrite::NewVersion { based_on, .. } | NamespaceWrite::Retire { based_on } => {
-                Some(*based_on)
-            }
+        let current = self.current(id).map(|version| version.revision());
+        let (expected, next) = match write {
+            NamespaceWrite::Create(namespace) => (None, Some(namespace)),
+            NamespaceWrite::NewVersion {
+                based_on,
+                namespace,
+            } => (Some(based_on), Some(namespace)),
+            NamespaceWrite::Retire { based_on } => (Some(based_on), None),
         };
-        if current.as_deref().map(Version::revision) != expected {
-            return Err(NamespaceWriteError::Conflict {
-                current: current.as_deref().map(Version::revision),
-            });
+        if current != expected {
+            return Err(NamespaceWriteError::Conflict { current });
         }
-        let next = match write {
-            NamespaceWrite::Create(namespace) => Some(Version::first(namespace, revision)),
-            NamespaceWrite::NewVersion { namespace, .. } => Some(
+        Ok(self.store(id, next)?)
+    }
+
+    /// Closes the current version's span, if one is open, and stores `next`
+    /// as the version after it, at the next revision.
+    fn store(&mut self, id: NamespaceId, next: Option<Namespace>) -> Result<Revision, StoreError> {
+        let revision = Revision(self.head + 1);
+        let next = match (next, self.current(id)) {
+            (Some(namespace), Some(current)) => Some(
                 current
-                    .expect("checked against based_on above")
                     .next(namespace, revision)
-                    .expect("each write's revision is past the last"),
+                    .map_err(|refused| StoreError(refused.to_string()))?,
             ),
-            NamespaceWrite::Retire { .. } => None,
+            (Some(namespace), None) => Some(Version::first(namespace, revision)),
+            (None, _) => None,
         };
         self.head += 1;
         let versions = self.namespaces.entry(id).or_default();
@@ -339,32 +345,22 @@ pub struct MemoryNamespaceStore {
 
 impl MemoryNamespaceStore {
     /// Stores `namespace` as the namespace's next version, or its first,
-    /// whatever version is current.
-    pub fn declare(&mut self, id: NamespaceId, namespace: Namespace) {
-        let versions = self.versions.get_mut().expect("namespace store poisoned");
-        let write = match versions.current(id) {
-            Some(current) => NamespaceWrite::NewVersion {
-                based_on: current.revision(),
-                namespace,
-            },
-            None => NamespaceWrite::Create(namespace),
-        };
-        versions
-            .write(id, write)
-            .expect("a write based on the current version is stored");
+    /// whatever version is current, and returns its revision.
+    pub fn declare(&self, id: NamespaceId, namespace: Namespace) -> Result<Revision, StoreError> {
+        self.versions()?.store(id, Some(namespace))
     }
 
     /// The current version, `None` when the namespace was never created or
     /// is retired.
-    pub fn version(&self, id: NamespaceId) -> Option<Arc<Version>> {
-        let versions = self.versions.lock().expect("namespace store poisoned");
-        versions.current(id).cloned()
+    pub fn version(&self, id: NamespaceId) -> Result<Option<Arc<Version>>, StoreError> {
+        Ok(self.versions()?.current(id).cloned())
     }
 
     /// The current version's namespace.
-    pub fn namespace(&self, id: NamespaceId) -> Option<Arc<Namespace>> {
-        self.version(id)
-            .map(|version| Arc::clone(version.namespace()))
+    pub fn namespace(&self, id: NamespaceId) -> Result<Option<Arc<Namespace>>, StoreError> {
+        Ok(self
+            .version(id)?
+            .map(|version| Arc::clone(version.namespace())))
     }
 
     fn versions(&self) -> Result<MutexGuard<'_, Versions>, StoreError> {
