@@ -60,15 +60,14 @@ const COOKIES: usize = 8;
 
 /// The TLS settings for key exchange: TLS 1.3 only, ALPN `ntske/1`, and
 /// the roots that sign the servers' certificates.
-pub(crate) fn tls(roots: RootCertStore) -> Arc<ClientConfig> {
+pub(crate) fn tls(roots: RootCertStore) -> Result<Arc<ClientConfig>, NtsError> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let mut config = ClientConfig::builder_with_provider(provider)
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .expect("ring supports TLS 1.3")
+        .with_protocol_versions(&[&rustls::version::TLS13])?
         .with_root_certificates(roots)
         .with_no_client_auth();
     config.alpn_protocols = vec![ALPN.to_vec()];
-    Arc::new(config)
+    Ok(Arc::new(config))
 }
 
 /// Mozilla's roots, which the public NTS servers' certificates chain to.
@@ -83,7 +82,7 @@ pub(crate) fn public_roots() -> RootCertStore {
 pub(crate) struct Association {
     c2s: Aes128SivAead,
     s2c: Aes128SivAead,
-    pub(crate) cookies: Vec<Vec<u8>>,
+    pub(crate) cookies: Vec<Cookie>,
     pub(crate) server: String,
 }
 
@@ -96,10 +95,30 @@ impl std::fmt::Debug for Association {
     }
 }
 
-/// One key exchange record: the critical bit and type, then the body.
-fn record(kind: u16, body: &[u8]) -> Vec<u8> {
-    let length = u16::try_from(body.len()).expect("a record body fits 64 KiB");
-    let mut record = Vec::with_capacity(4 + body.len());
+/// A cookie, with the length of the field that sends it back. One too long
+/// for a field is dropped when it arrives, so every one kept can be sent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Cookie {
+    pub(crate) bytes: Vec<u8>,
+    length: u16,
+}
+
+impl Cookie {
+    /// `None` when `bytes` won't fit a field.
+    pub(crate) fn new(bytes: Vec<u8>) -> Option<Self> {
+        let length = length(bytes.len())?;
+        Some(Self { bytes, length })
+    }
+}
+
+/// One key exchange record: the critical bit and type, then the body. A
+/// body past 64 KiB doesn't compile.
+fn record<const N: usize>(kind: u16, body: &[u8; N]) -> Vec<u8> {
+    let length = const {
+        assert!(N <= u16::MAX as usize, "a record body fits 64 KiB");
+        N as u16
+    };
+    let mut record = Vec::with_capacity(4 + N);
     record.extend_from_slice(&kind.to_be_bytes());
     record.extend_from_slice(&length.to_be_bytes());
     record.extend_from_slice(body);
@@ -120,13 +139,14 @@ pub(crate) fn ke_request() -> Vec<u8> {
 /// What a server's key exchange response says.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Negotiated {
-    pub(crate) cookies: Vec<Vec<u8>>,
+    pub(crate) cookies: Vec<Cookie>,
     pub(crate) server: Option<String>,
     pub(crate) port: Option<u16>,
 }
 
 /// Reads key exchange records from `stream` until the end record, keeping
-/// at most eight cookies, and refusing a response past 64 KiB.
+/// at most eight cookies that fit a field, and refusing a response past
+/// 64 KiB.
 pub(crate) fn ke_response(stream: &mut impl Read) -> Result<Negotiated, ClockError> {
     let mut negotiated = Negotiated::default();
     let (mut protocol, mut aead) = (false, false);
@@ -156,8 +176,10 @@ pub(crate) fn ke_response(stream: &mut impl Read) -> Result<Negotiated, ClockErr
                 return Err(NtsError::Refused { code }.into());
             }
             NEW_COOKIE => {
-                if negotiated.cookies.len() < COOKIES {
-                    negotiated.cookies.push(body);
+                if negotiated.cookies.len() < COOKIES
+                    && let Some(cookie) = Cookie::new(body)
+                {
+                    negotiated.cookies.push(cookie);
                 }
             }
             SERVER => {
@@ -321,16 +343,26 @@ fn tls_failure(failed: ClockError) -> ClockError {
     failed
 }
 
+/// The length of a field with a `body`-byte body: the 4-byte header and
+/// the body padded to a multiple of four bytes. `None` past 64 KiB.
+fn length(body: usize) -> Option<u16> {
+    u16::try_from(body.checked_next_multiple_of(4)?.checked_add(4)?).ok()
+}
+
 /// An NTP extension field: type, length, and the body padded to a
-/// multiple of four bytes.
-pub(crate) fn field(kind: u16, body: &[u8]) -> Vec<u8> {
-    let padded = body.len().next_multiple_of(4);
-    let length = u16::try_from(4 + padded).expect("a field fits 64 KiB");
-    let mut field = Vec::with_capacity(4 + padded);
+/// multiple of four bytes. `None` when it won't fit 64 KiB.
+pub(crate) fn field(kind: u16, body: &[u8]) -> Option<Vec<u8>> {
+    Some(encode(kind, length(body.len())?, body))
+}
+
+/// A field `length` long, at least `length(body.len())`, the body padded
+/// with zeros.
+fn encode(kind: u16, length: u16, body: &[u8]) -> Vec<u8> {
+    let mut field = Vec::with_capacity(usize::from(length));
     field.extend_from_slice(&kind.to_be_bytes());
     field.extend_from_slice(&length.to_be_bytes());
     field.extend_from_slice(body);
-    field.resize(4 + padded, 0);
+    field.resize(usize::from(length), 0);
     field
 }
 
@@ -353,13 +385,14 @@ pub(crate) fn fields(bytes: &[u8]) -> Option<Vec<(usize, u16, &[u8])>> {
 }
 
 /// The authenticator field over everything before it: the nonce, and the
-/// AEAD's output for `plaintext`.
+/// AEAD's output for `plaintext`. [`NtsError::Seal`] when the AEAD refuses,
+/// or its output won't fit a field.
 pub(crate) fn authenticator(
     cipher: &Aes128SivAead,
     nonce: [u8; 16],
     before: &[u8],
     plaintext: &[u8],
-) -> Vec<u8> {
+) -> Result<Vec<u8>, NtsError> {
     let sealed = cipher
         .encrypt(
             &Nonce::<Aes128SivAead>::from(nonce),
@@ -368,17 +401,14 @@ pub(crate) fn authenticator(
                 aad: before,
             },
         )
-        .expect("AES-SIV seals any message");
+        .map_err(|_| NtsError::Seal)?;
+    let sealed_length = u16::try_from(sealed.len()).map_err(|_| NtsError::Seal)?;
     let mut body = Vec::new();
     body.extend_from_slice(&16u16.to_be_bytes());
-    body.extend_from_slice(
-        &u16::try_from(sealed.len())
-            .expect("a seal fits")
-            .to_be_bytes(),
-    );
+    body.extend_from_slice(&sealed_length.to_be_bytes());
     body.extend_from_slice(&nonce);
     body.extend_from_slice(&sealed);
-    field(AUTHENTICATOR, &body)
+    field(AUTHENTICATOR, &body).ok_or(NtsError::Seal)
 }
 
 /// Opens an authenticator field's body over `before`, giving the
@@ -401,6 +431,11 @@ pub(crate) fn open(cipher: &Aes128SivAead, body: &[u8], before: &[u8]) -> Option
         .ok()
 }
 
+/// The unique identifier field.
+pub(crate) fn unique_id(unique: &[u8; 32]) -> Vec<u8> {
+    encode(UNIQUE_ID, 36, unique)
+}
+
 /// Random bytes for an identifier or a nonce.
 pub(crate) fn random<const N: usize>() -> Result<[u8; N], NtsError> {
     let mut bytes = [0; N];
@@ -421,12 +456,12 @@ impl Association {
         let nonce = random()?;
         let cookie = self.cookies.pop().ok_or(NtsError::NoCookieLeft)?;
         let mut packet = header.to_vec();
-        packet.extend(field(UNIQUE_ID, &unique));
-        packet.extend(field(COOKIE, &cookie));
+        packet.extend(unique_id(&unique));
+        packet.extend(encode(COOKIE, cookie.length, &cookie.bytes));
         for _ in self.cookies.len() + 1..COOKIES {
-            packet.extend(field(PLACEHOLDER, &vec![0; cookie.len()]));
+            packet.extend(encode(PLACEHOLDER, cookie.length, &[]));
         }
-        let sealed = authenticator(&self.c2s, nonce, &packet, &[]);
+        let sealed = authenticator(&self.c2s, nonce, &packet, &[])?;
         packet.extend(sealed);
         Ok(packet)
     }
@@ -448,8 +483,10 @@ impl Association {
         }
         let plaintext = open(&self.s2c, body, &reply[..48 + at])?;
         for (_, kind, cookie) in fields(&plaintext)? {
-            if kind == COOKIE {
-                self.cookies.push(cookie.to_vec());
+            if kind == COOKIE
+                && let Some(cookie) = Cookie::new(cookie.to_vec())
+            {
+                self.cookies.push(cookie);
             }
         }
         // A server that sends more than were asked for doesn't grow the
@@ -492,16 +529,18 @@ pub fn fuzz_verify(data: &[u8]) {
     let mut association = Association {
         c2s: key(1),
         s2c: key(2),
-        cookies: vec![vec![7; 8]],
+        cookies: Cookie::new(vec![7; 8]).into_iter().collect(),
         server: "fuzz.test:123".to_owned(),
     };
     let unique = [4; 32];
     let reply = if mode % 2 == 1 {
         let mut reply = vec![0x24; 48];
-        reply.extend(field(UNIQUE_ID, &unique));
+        reply.extend(unique_id(&unique));
         // A sealed plaintext past this wouldn't fit a field's length.
         let plaintext = &rest[..rest.len().min(60_000)];
-        let sealed = authenticator(&association.s2c, [0; 16], &reply, plaintext);
+        let Ok(sealed) = authenticator(&association.s2c, [0; 16], &reply, plaintext) else {
+            return;
+        };
         reply.extend(sealed);
         reply
     } else {
@@ -519,11 +558,15 @@ mod tests {
         Aes128SivAead::new(&Key::<Aes128SivAead>::from([byte; 32]))
     }
 
+    fn cookie(bytes: &[u8]) -> Cookie {
+        Cookie::new(bytes.to_vec()).unwrap()
+    }
+
     fn association() -> Association {
         Association {
             c2s: cipher(1),
             s2c: cipher(2),
-            cookies: vec![vec![7; 8], vec![9; 8]],
+            cookies: vec![cookie(&[7; 8]), cookie(&[9; 8])],
             server: "ntp.test:123".to_owned(),
         }
     }
@@ -562,7 +605,7 @@ mod tests {
         assert_eq!(
             response(&records).unwrap(),
             Negotiated {
-                cookies: vec![b"one".to_vec(), b"two".to_vec()],
+                cookies: vec![cookie(b"one"), cookie(b"two")],
                 server: Some("ntp.test".to_owned()),
                 port: Some(12_345),
             }
@@ -621,7 +664,7 @@ mod tests {
         let negotiated = response(&records).unwrap();
         assert_eq!(
             negotiated.cookies,
-            (0..8).map(|n| vec![n]).collect::<Vec<_>>()
+            (0..8).map(|n| cookie(&[n])).collect::<Vec<_>>()
         );
         // A 4-byte header and 1,020-byte body is 1,024 bytes a record.
         let mut flood = agreed();
@@ -633,9 +676,9 @@ mod tests {
         }
         // Exactly 64 KiB is read.
         let mut full = agreed();
-        let used = full.iter().map(Vec::len).sum::<usize>() + 4;
         full.extend((0..63).map(|_| record(NEW_COOKIE, &[0; 1_020])));
-        full.push(record(NEW_COOKIE, &vec![0; 1_024 - used - 4]));
+        // What the agreement and end records leave of the last 1,024 bytes.
+        full.push(record(NEW_COOKIE, &[0; 1_024 - 16 - 4]));
         full.push(record(CRITICAL | END, &[]));
         assert_eq!(full.iter().map(Vec::len).sum::<usize>(), KE_LIMIT);
         assert!(response(&full).is_ok());
@@ -658,7 +701,7 @@ mod tests {
                 (EXPORTER.to_vec(), vec![0, 0, 0, 15, 1]),
             ]
         );
-        let sealed = authenticator(&to_server, random().unwrap(), b"ad", b"");
+        let sealed = authenticator(&to_server, random().unwrap(), b"ad", b"").unwrap();
         assert!(open(&cipher(0), &sealed[4..], b"ad").is_some());
         assert!(open(&to_client, &sealed[4..], b"ad").is_none());
         let failed = exported(|_, _, _| Err(rustls::Error::HandshakeNotComplete), 0);
@@ -692,7 +735,7 @@ mod tests {
     fn an_invalid_host_name_fails_before_a_lookup() {
         let lookups =
             Lookups::new(|_: &str| -> io::Result<Vec<SocketAddr>> { panic!("no lookup") });
-        let tls = tls(public_roots());
+        let tls = tls(public_roots()).unwrap();
         assert!(matches!(
             exchange("bad host!", &lookups, &tls),
             Err(ClockError::Nts(NtsError::HostName(host))) if host == "bad host!"
@@ -709,14 +752,28 @@ mod tests {
 
     #[test]
     fn a_field_is_padded_to_four_bytes() {
+        let field = |kind, body: &[u8]| field(kind, body).unwrap();
         assert_eq!(field(0x0104, &[1, 2, 3]), [1, 4, 0, 8, 1, 2, 3, 0]);
         assert_eq!(field(0x0204, &[1, 2, 3, 4]), [2, 4, 0, 8, 1, 2, 3, 4]);
         assert_eq!(field(0x0304, &[]), [3, 4, 0, 4]);
     }
 
     #[test]
+    fn a_body_past_64_kib_has_no_field() {
+        assert_eq!(length(65_528), Some(65_532));
+        assert_eq!(length(65_529), None);
+        assert_eq!(length(usize::MAX), None);
+        assert!(field(1, &vec![0; 65_529]).is_none());
+        assert!(Cookie::new(vec![0; 65_529]).is_none());
+        assert_eq!(
+            authenticator(&cipher(1), random().unwrap(), b"", &vec![0; 65_500]),
+            Err(NtsError::Seal)
+        );
+    }
+
+    #[test]
     fn fields_are_read_until_one_is_malformed() {
-        let bytes = [field(1, &[5; 4]), field(2, &[])].concat();
+        let bytes = [field(1, &[5; 4]).unwrap(), field(2, &[]).unwrap()].concat();
         assert_eq!(
             fields(&bytes),
             Some(vec![(0, 1, &[5u8; 4][..]), (8, 2, &[][..])])
@@ -730,7 +787,7 @@ mod tests {
 
     #[test]
     fn a_sealed_message_opens_only_unaltered() {
-        let sealed = authenticator(&cipher(1), random().unwrap(), b"before", b"secret");
+        let sealed = authenticator(&cipher(1), random().unwrap(), b"before", b"secret").unwrap();
         let body = &sealed[4..];
         assert_eq!(open(&cipher(1), body, b"before"), Some(b"secret".to_vec()));
         assert_eq!(open(&cipher(1), body, b"altered"), None);
@@ -748,7 +805,7 @@ mod tests {
     fn a_request_spends_a_cookie_and_asks_for_the_rest() {
         let mut association = association();
         let packet = association.request([0; 48], [4; 32]).unwrap();
-        assert_eq!(association.cookies, [vec![7; 8]]);
+        assert_eq!(association.cookies, [cookie(&[7; 8])]);
         let fields = fields(&packet[48..]).unwrap();
         let kinds: Vec<_> = fields.iter().map(|&(_, kind, _)| kind).collect();
         // One cookie left, so six placeholders refill eight.
@@ -771,12 +828,12 @@ mod tests {
     /// authenticator sealing `cookies` with `key`.
     fn reply(unique: [u8; 32], key: &Aes128SivAead, cookies: &[&[u8]]) -> Vec<u8> {
         let mut packet = vec![0x24; 48];
-        packet.extend(field(UNIQUE_ID, &unique));
+        packet.extend(unique_id(&unique));
         let plaintext: Vec<u8> = cookies
             .iter()
-            .flat_map(|cookie| field(COOKIE, cookie))
+            .flat_map(|cookie| field(COOKIE, cookie).unwrap())
             .collect();
-        let sealed = authenticator(key, random().unwrap(), &packet, &plaintext);
+        let sealed = authenticator(key, random().unwrap(), &packet, &plaintext).unwrap();
         packet.extend(sealed);
         packet
     }
@@ -787,7 +844,7 @@ mod tests {
         let packet = reply([4; 32], &cipher(2), &[b"new1", b"new2"]);
         assert_eq!(association.verify(&packet, &[4; 32]), Some(&packet[..48]));
         assert_eq!(association.cookies.len(), 4);
-        assert_eq!(association.cookies[3], b"new2");
+        assert_eq!(association.cookies[3].bytes, b"new2");
     }
 
     #[test]
@@ -819,14 +876,14 @@ mod tests {
         refused(&malformed, &mut association);
         // The identifier must come before the authenticator, not after.
         let mut late = vec![0x24; 48];
-        let sealed = authenticator(&cipher(2), random().unwrap(), &late, &[]);
+        let sealed = authenticator(&cipher(2), random().unwrap(), &late, &[]).unwrap();
         late.extend(sealed);
-        late.extend(field(UNIQUE_ID, &[4; 32]));
+        late.extend(unique_id(&[4; 32]));
         refused(&late, &mut association);
         // Plaintext that isn't fields gives no cookies.
         let mut garbled = vec![0x24; 48];
-        garbled.extend(field(UNIQUE_ID, &[4; 32]));
-        let sealed = authenticator(&cipher(2), random().unwrap(), &garbled, &[0, 1, 0, 3]);
+        garbled.extend(unique_id(&[4; 32]));
+        let sealed = authenticator(&cipher(2), random().unwrap(), &garbled, &[0, 1, 0, 3]).unwrap();
         garbled.extend(sealed);
         refused(&garbled, &mut association);
     }

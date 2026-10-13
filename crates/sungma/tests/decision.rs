@@ -138,18 +138,12 @@ async fn replay_at_the_recorded_revision_ignores_later_writes() {
 
 #[tokio::test]
 async fn replay_differs_when_a_namespace_changes() {
-    let mut world = world();
+    let world = world();
     let decision = decide(&world, "file:design.md#viewer", "alice", head(&world).await).await;
 
-    // Namespaces aren't versioned yet, so this edit reaches the past revision.
-    declare(
-        &mut world.namespaces,
-        &world.dictionary,
-        "file",
-        "viewer",
-        This,
-    )
-    .unwrap();
+    // `rewrite` reads only the current version, so this edit reaches the
+    // past revision.
+    declare(&world.namespaces, &world.dictionary, "file", "viewer", This).unwrap();
 
     let replayed = replay(&decision, &world.namespaces, &world.facts).await;
     let Replay::Differs { now } = replayed.unwrap() else {

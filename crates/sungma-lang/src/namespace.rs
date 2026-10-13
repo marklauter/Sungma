@@ -38,8 +38,10 @@ use sungma::{
     non_empty::NonEmpty,
     rewrite::Rewrite,
     store::Pool,
+    version::HistoryError,
 };
 use sungma_memory::{MemoryDictionary, MemoryNamespaceStore};
+use sungma_write::store::InternError;
 
 pub const MAX_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_RELATIONS: usize = 500;
@@ -214,22 +216,47 @@ pub fn parse(text: &str) -> Result<NamespaceDocument, Vec<DocumentError>> {
 #[error("{}", .0.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
 pub struct Refusal(pub Vec<DocumentError>);
 
-/// Parses each document in turn and declares its namespace, interning its
-/// names in `dictionary`.
+/// Why namespace documents weren't loaded.
+#[derive(Debug, Error)]
+pub enum LoadError {
+    #[error(transparent)]
+    Refused(#[from] Refusal),
+    #[error(transparent)]
+    History(#[from] HistoryError),
+    #[error(transparent)]
+    Intern(#[from] InternError),
+}
+
+/// A rename that gives two relations one name refuses the namespace.
+impl From<NamespaceError> for LoadError {
+    fn from(kind: NamespaceError) -> Self {
+        Refusal(vec![error(None, None, ErrorKind::Namespace(kind))]).into()
+    }
+}
+
+/// Parses and checks every document, then interns their names in
+/// `dictionary` and declares each namespace, so a refused document stores
+/// nothing, not even a name.
 pub fn load_namespaces(
     documents: &[&str],
     dictionary: &MemoryDictionary,
-    namespaces: &mut MemoryNamespaceStore,
-) -> Result<(), Refusal> {
-    for document in documents {
-        let document = parse(document).map_err(Refusal)?;
-        let id = NamespaceId(dictionary.intern(Pool::Namespaces, document.namespace.as_str()));
-        // The interner gives each name its own id, so no rename collides.
-        let relations = document
-            .relations
-            .map(|name| RelationId(dictionary.intern(Pool::Relations, name.as_str())))
-            .map_err(|kind| Refusal(vec![error(None, None, ErrorKind::Namespace(kind))]))?;
-        namespaces.declare(id, relations);
+    namespaces: &MemoryNamespaceStore,
+) -> Result<(), LoadError> {
+    let parsed = documents
+        .iter()
+        .map(|document| parse(document).map_err(Refusal))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut interned = Vec::with_capacity(parsed.len());
+    for document in parsed {
+        let id = NamespaceId(dictionary.intern(Pool::Namespaces, document.namespace.as_str())?);
+        let relations = document.relations.try_map(|name| {
+            let id = dictionary.intern(Pool::Relations, name.as_str())?;
+            Ok::<_, LoadError>(RelationId(id))
+        })?;
+        interned.push((id, relations));
+    }
+    for (id, relations) in interned {
+        namespaces.declare(id, relations)?;
     }
     Ok(())
 }
@@ -676,25 +703,31 @@ fn relation(lexeme: Lexeme<'_>) -> Result<RelationName, Failure> {
         .map_err(|error| (Some(lexeme.column), ErrorKind::Name(error)))
 }
 
+/// Why [`print()`] refused a namespace: no document can declare it.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum PrintError {
+    /// A name made with `new_unchecked` that breaks the grammar, such as
+    /// `this`.
+    #[error(transparent)]
+    Name(#[from] NameError),
+    #[error("a union or intersection has one operand")]
+    OneOperand,
+}
+
 /// Writes a namespace as a document that [`parse`] reads back as an equal
 /// namespace: relations sorted by name, two-space indents, `\n` line ends.
-///
-/// # Panics
-///
-/// On a caller defect, a namespace no document can declare: a name made with
-/// `new_unchecked` that breaks the grammar, including `this`, or a union or
-/// intersection with one operand.
-pub fn print(namespace: &NamespaceName, relations: &Namespace<RelationName>) -> String {
-    if let Err(error) = namespace.as_str().parse::<NamespaceName>() {
-        panic!("{error}");
-    }
+pub fn print(
+    namespace: &NamespaceName,
+    relations: &Namespace<RelationName>,
+) -> Result<String, PrintError> {
+    namespace.as_str().parse::<NamespaceName>()?;
     let mut relations: Vec<_> = relations.relations().collect();
     relations.sort_by_key(|(name, _)| *name);
     let mut text = format!("{{\n  \"{namespace}\": {{");
     for (i, (name, rewrite)) in relations.iter().enumerate() {
         let separator = if i == 0 { "\n" } else { ",\n" };
-        let _ = write!(text, "{separator}    \"{}\": \"", printable(name));
-        expression(&mut text, rewrite);
+        let _ = write!(text, "{separator}    \"{}\": \"", printable(name)?);
+        expression(&mut text, rewrite)?;
         text.push('"');
     }
     if relations.is_empty() {
@@ -702,31 +735,31 @@ pub fn print(namespace: &NamespaceName, relations: &Namespace<RelationName>) -> 
     } else {
         text.push_str("\n  }\n}\n");
     }
-    text
+    Ok(text)
 }
 
-fn expression(text: &mut String, rewrite: &Rewrite<RelationName>) {
+fn expression(text: &mut String, rewrite: &Rewrite<RelationName>) -> Result<(), PrintError> {
     match rewrite {
         Rewrite::This => text.push_str("this"),
-        Rewrite::Computed(relation) => text.push_str(printable(relation)),
+        Rewrite::Computed(relation) => text.push_str(printable(relation)?),
         Rewrite::FactTo { factset, computed } => {
-            let _ = write!(text, "({}, {})", printable(factset), printable(computed));
+            let _ = write!(text, "({}, {})", printable(factset)?, printable(computed)?);
         }
         Rewrite::Union(operands) | Rewrite::Intersection(operands) if operands.len() < 2 => {
-            panic!("an operator with {} operands", operands.len())
+            return Err(PrintError::OneOperand);
         }
         Rewrite::Union(operands) => operator(text, operands, " | ", |operand| {
             matches!(operand, Rewrite::Union(_))
-        }),
+        })?,
         Rewrite::Intersection(operands) => operator(text, operands, " & ", |operand| {
             matches!(operand, Rewrite::Union(_) | Rewrite::Intersection(_))
-        }),
+        })?,
         Rewrite::Exclusion(base, excluded) => {
             grouped(
                 text,
                 base,
                 matches!(**base, Rewrite::Union(_) | Rewrite::Intersection(_)),
-            );
+            )?;
             text.push_str(" ! ");
             grouped(
                 text,
@@ -735,17 +768,16 @@ fn expression(text: &mut String, rewrite: &Rewrite<RelationName>) {
                     **excluded,
                     Rewrite::Union(_) | Rewrite::Intersection(_) | Rewrite::Exclusion(..)
                 ),
-            );
+            )?;
         }
     }
+    Ok(())
 }
 
 /// `name`, if a document can declare a relation by it.
-fn printable(name: &RelationName) -> &str {
-    if let Err(error) = name.as_str().parse::<RelationName>() {
-        panic!("{error}");
-    }
-    name.as_str()
+fn printable(name: &RelationName) -> Result<&str, NameError> {
+    name.as_str().parse::<RelationName>()?;
+    Ok(name.as_str())
 }
 
 fn operator(
@@ -753,21 +785,27 @@ fn operator(
     operands: &[Rewrite<RelationName>],
     symbol: &str,
     needs_parentheses: fn(&Rewrite<RelationName>) -> bool,
-) {
+) -> Result<(), PrintError> {
     for (i, operand) in operands.iter().enumerate() {
         if i > 0 {
             text.push_str(symbol);
         }
-        grouped(text, operand, needs_parentheses(operand));
+        grouped(text, operand, needs_parentheses(operand))?;
     }
+    Ok(())
 }
 
-fn grouped(text: &mut String, rewrite: &Rewrite<RelationName>, parenthesize: bool) {
+fn grouped(
+    text: &mut String,
+    rewrite: &Rewrite<RelationName>,
+    parenthesize: bool,
+) -> Result<(), PrintError> {
     if parenthesize {
         text.push('(');
-        expression(text, rewrite);
+        expression(text, rewrite)?;
         text.push(')');
     } else {
-        expression(text, rewrite);
+        expression(text, rewrite)?;
     }
+    Ok(())
 }

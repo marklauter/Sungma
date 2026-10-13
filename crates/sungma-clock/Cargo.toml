@@ -12,6 +12,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
 test-util = ["tokio/sync"]
 
 [dependencies]
+parking_lot.workspace = true
 aes-siv.workspace = true
 getrandom.workspace = true
 rustls.workspace = true

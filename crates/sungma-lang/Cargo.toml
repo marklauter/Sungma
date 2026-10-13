@@ -8,6 +8,7 @@ serde.workspace = true
 serde_json.workspace = true
 sungma.workspace = true
 sungma-memory.workspace = true
+sungma-write.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

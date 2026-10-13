@@ -2,11 +2,9 @@
 //! `maxerror` current through `adjtimex`, and the kernel grows it by
 //! 500 ppm between their updates.
 
-use std::{
-    future::Future,
-    sync::{Mutex, PoisonError},
-    time::Duration,
-};
+use std::{future::Future, time::Duration};
+
+use parking_lot::Mutex;
 
 use crate::{Clock, ClockFault, Reading};
 use libc::{c_int, c_long};
@@ -95,7 +93,7 @@ impl<T: TimeSource> LinuxClock<T> {
     /// disturbing jump detection.
     pub fn status(&self) -> ClockStatus {
         let (state, status, maxerror) = read();
-        let last = *self.last.lock().unwrap_or_else(PoisonError::into_inner);
+        let last = *self.last.lock();
         let carried = last.carry.at(self.time.monotonic());
         let reading = assess(state, status, maxerror, carried)
             .and_then(|bound| wall::reading(self.time.wall(), bound));
@@ -107,7 +105,7 @@ impl<T: TimeSource> LinuxClock<T> {
         // are stored in the order they were taken. Out of order, a reading
         // from before the kernel's once-a-second growth of its bound would
         // follow one from after it, and read as chrony updating the bound.
-        let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut last = self.last.lock();
         let (state, status, maxerror) = read();
         let kernel = bound(state, maxerror);
         let now = self.time.moment();

@@ -1,7 +1,8 @@
 //! The write ports. Where a guarantee spans nodes, Sungma runs the protocol
 //! and a store only supplies primitives every store has: a [`FactWriter`]
-//! keeps the history of each fact, and [`crate::intern::LeasingInterner`]
-//! mints ids over a [`NameStore`].
+//! keeps the history of each fact, a [`NamespaceWriter`] keeps the versions
+//! of each namespace, and [`crate::intern::LeasingInterner`] mints ids over
+//! a [`NameStore`].
 //!
 //! `fn ... -> impl Future<Output = ...> + Send` is an `async fn` in a trait
 //! that also promises its future can move between threads. Implementations
@@ -13,8 +14,11 @@ use thiserror::Error;
 
 use sungma::{
     graph::Fact,
+    id::NamespaceId,
+    namespace::Namespace,
     revision::Revision,
-    store::{Dictionary, FactStore, Pool, StoreError},
+    store::{Dictionary, FactStore, NamespaceStore, Pool, StoreError},
+    version::HistoryError,
 };
 
 #[derive(Debug, Error)]
@@ -87,4 +91,52 @@ pub trait FactWriter: FactStore {
         &self,
         writes: &[FactWrite],
     ) -> impl Future<Output = Result<Revision, StoreError>> + Send;
+}
+
+/// One change to a namespace. See `docs/specs/namespace-writes.md`.
+///
+/// A write that follows a version names it by its revision, the version the
+/// caller read, as an etag names what a write expects to replace.
+#[derive(Debug)]
+pub enum NamespaceWrite {
+    /// Stores the first version of a namespace that has no current version.
+    Create(Namespace),
+    /// Stores the next version, closing the current version's span.
+    NewVersion {
+        based_on: Revision,
+        namespace: Namespace,
+    },
+    /// Closes the current version's span and stores no new version.
+    Retire { based_on: Revision },
+}
+
+#[derive(Debug, Error)]
+pub enum NamespaceWriteError {
+    /// The namespace isn't at the version the write was based on. `current`
+    /// is its current version's revision, `None` when it has none. The
+    /// caller reads the current version and tries again.
+    #[error("the namespace isn't at the version the write was based on")]
+    Conflict { current: Option<Revision> },
+    /// The namespace's history refuses the revision the store stamped.
+    #[error(transparent)]
+    History(#[from] HistoryError),
+    #[error(transparent)]
+    Store(#[from] StoreError),
+}
+
+/// Writes namespace versions. A stored version is never edited: a write
+/// stores a new version, closes the current version's span, or both, and a
+/// read at any earlier revision still finds the version it found before.
+///
+/// Each write is a conditional write on the namespace, so of two writes
+/// based on the same version, exactly one succeeds. A namespace write never
+/// reads or rewrites facts.
+pub trait NamespaceWriter: NamespaceStore {
+    /// Applies `write` to `namespace` atomically and returns the revision it's
+    /// stamped with, or refuses it and stores nothing.
+    fn write_namespace(
+        &self,
+        namespace: NamespaceId,
+        write: NamespaceWrite,
+    ) -> impl Future<Output = Result<Revision, NamespaceWriteError>> + Send;
 }

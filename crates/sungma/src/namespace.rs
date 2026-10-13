@@ -85,7 +85,12 @@ pub struct Namespace<R = RelationId> {
 impl<R: Eq + Hash + Clone + Display> Namespace<R> {
     /// The relations, or every problem with them, in declaration order.
     pub fn new(relations: Vec<(R, Rewrite<R>)>) -> Result<Self, Vec<Problem>> {
-        let problems = problems(&relations);
+        // Each relation at its first declaration; a later one is a problem.
+        let mut index = HashMap::new();
+        for (at, (relation, _)) in relations.iter().enumerate() {
+            index.entry(relation.clone()).or_insert(at);
+        }
+        let problems = problems(&relations, &index);
         if !problems.is_empty() {
             return Err(problems);
         }
@@ -93,7 +98,7 @@ impl<R: Eq + Hash + Clone + Display> Namespace<R> {
             .into_iter()
             .map(|(relation, rewrite)| (relation, Arc::new(rewrite)))
             .collect();
-        Ok(Self::indexed(relations).expect("duplicate relations were refused above"))
+        Ok(Self { relations, index })
     }
 
     /// Refuses a relation named twice.
@@ -131,38 +136,56 @@ impl<R: Eq + Hash + Clone + Display> Namespace<R> {
         &self,
         mut rename: impl FnMut(&R) -> S,
     ) -> Result<Namespace<S>, NamespaceError> {
+        self.try_map(|relation| Ok(rename(relation)))
+    }
+
+    /// Like [`Namespace::map`], with a rename that can fail, as interning
+    /// can. The first error stops the rename and is returned.
+    pub fn try_map<S, E>(
+        &self,
+        mut rename: impl FnMut(&R) -> Result<S, E>,
+    ) -> Result<Namespace<S>, E>
+    where
+        S: Eq + Hash + Clone + Display,
+        E: From<NamespaceError>,
+    {
         let mut renamed = HashMap::new();
-        let mut name = |relation: &R| -> S {
-            renamed
-                .entry(relation.clone())
-                .or_insert_with(|| rename(relation))
-                .clone()
+        let mut name = |relation: &R| -> Result<S, E> {
+            if let Some(name) = renamed.get(relation) {
+                return Ok(S::clone(name));
+            }
+            let name = rename(relation)?;
+            renamed.insert(relation.clone(), name.clone());
+            Ok(name)
         };
         let relations = self
             .relations
             .iter()
             .map(|(relation, rewrite)| {
-                let declared = name(relation);
-                let rewrite = (**rewrite).clone().map(&mut |reference| name(&reference));
-                (declared, Arc::new(rewrite))
+                let declared = name(relation)?;
+                let rewrite = (**rewrite)
+                    .clone()
+                    .try_map(&mut |reference| name(&reference))?;
+                Ok((declared, Arc::new(rewrite)))
             })
-            .collect();
-        Namespace::indexed(relations)
+            .collect::<Result<_, E>>()?;
+        Ok(Namespace::indexed(relations)?)
     }
 }
 
 /// Every problem in a whole namespace, as the [module](self) describes, in
 /// declaration order. A relation's dangling targets are each reported once,
 /// and a cycle at the relation of its component the check meets first.
-fn problems<R: Eq + Hash + Display>(relations: &[(R, Rewrite<R>)]) -> Vec<Problem> {
+/// `declared` holds each relation at its first declaration.
+fn problems<R: Eq + Hash + Display>(
+    relations: &[(R, Rewrite<R>)],
+    declared: &HashMap<R, usize>,
+) -> Vec<Problem> {
     let mut problems = Vec::new();
     let mut problem = |at, error| problems.push(Problem { at, error });
-    let mut declared = HashMap::new();
     for (at, (relation, _)) in relations.iter().enumerate() {
-        if declared.contains_key(relation) {
+        if declared.get(relation) != Some(&at) {
             problem(at, NamespaceError::DuplicateRelation(relation.to_string()));
-        } else {
-            declared.insert(relation, at);
         }
     }
     let mut edges = vec![Vec::new(); relations.len()];
@@ -178,7 +201,7 @@ fn problems<R: Eq + Hash + Display>(relations: &[(R, Rewrite<R>)]) -> Vec<Proble
         named(rewrite, &mut computed, &mut factsets);
         let mut dangling = HashSet::new();
         for target in computed.iter().chain(&factsets) {
-            if !declared.contains_key(*target) && dangling.insert(*target) {
+            if !declared.contains_key(target) && dangling.insert(*target) {
                 problem(
                     at,
                     NamespaceError::DanglingReference {
@@ -188,10 +211,10 @@ fn problems<R: Eq + Hash + Display>(relations: &[(R, Rewrite<R>)]) -> Vec<Proble
                 );
             }
         }
-        if declared[relation] == at {
+        if declared.get(relation) == Some(&at) {
             edges[at] = computed
                 .iter()
-                .filter_map(|target| declared.get(*target).copied())
+                .filter_map(|target| declared.get(target).copied())
                 .collect();
         }
     }
@@ -328,36 +351,42 @@ impl<'e> Components<'e> {
     /// Pops the component `root` met first, keeping a cycle through it.
     fn close_component(&mut self, root: usize) {
         let mut members = HashSet::new();
-        loop {
-            let member = self.open.pop().expect("a component's root is open");
+        while let Some(member) = self.open.pop() {
             self.on_open[member] = false;
             members.insert(member);
             if member == root {
                 break;
             }
         }
-        if members.len() > 1 || self.edges[root].contains(&root) {
-            self.cycles.push(cycle_through(self.edges, root, &members));
+        if let Some(cycle) = cycle_through(self.edges, root, &members) {
+            self.cycles.push(cycle);
         }
     }
 }
 
 /// The shortest path from `root` back to itself, searching only the
 /// `members` of its component, so the search costs no more than the
-/// component.
-fn cycle_through(edges: &[Vec<usize>], root: usize, members: &HashSet<usize>) -> Vec<usize> {
+/// component. `None` when there's none: a lone relation that doesn't name
+/// itself.
+fn cycle_through(
+    edges: &[Vec<usize>],
+    root: usize,
+    members: &HashSet<usize>,
+) -> Option<Vec<usize>> {
     let mut from = HashMap::new();
     let mut queue = VecDeque::from([root]);
     while let Some(at) = queue.pop_front() {
         for &target in &edges[at] {
             if target == root {
                 let mut path = vec![at];
-                while let Some(&previous) = from.get(path.last().unwrap()) {
+                let mut step = at;
+                while let Some(&previous) = from.get(&step) {
                     path.push(previous);
+                    step = previous;
                 }
                 path.reverse();
                 path.push(root);
-                return path;
+                return Some(path);
             }
             if !members.contains(&target) {
                 continue;
@@ -368,7 +397,7 @@ fn cycle_through(edges: &[Vec<usize>], root: usize, members: &HashSet<usize>) ->
             }
         }
     }
-    unreachable!("a component with a cycle has a path back to its root")
+    None
 }
 
 #[cfg(test)]

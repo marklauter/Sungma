@@ -46,7 +46,7 @@ use sungma_check::{
 };
 use sungma_lang::{
     fact::{self, FactError},
-    namespace::{self, Refusal},
+    namespace,
 };
 use sungma_memory::{MemoryDictionary, MemoryFactStore, MemoryNamespaceStore};
 use thiserror::Error;
@@ -55,7 +55,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum LoadError {
     #[error(transparent)]
-    Namespace(#[from] Refusal),
+    Namespace(#[from] namespace::LoadError),
     #[error(transparent)]
     Fact(#[from] FactError),
 }
@@ -75,8 +75,8 @@ impl AppState {
     /// Loads namespace documents and fact JSON in the [`namespace`] and [`fact`]
     /// forms.
     pub fn load(namespaces: &[&str], facts: &str) -> Result<Self, LoadError> {
-        let mut state = Self::default();
-        namespace::load_namespaces(namespaces, &state.dictionary, &mut state.namespaces)?;
+        let state = Self::default();
+        namespace::load_namespaces(namespaces, &state.dictionary, &state.namespaces)?;
         fact::load_facts(facts, &state.dictionary, &state.facts)?;
         Ok(state)
     }

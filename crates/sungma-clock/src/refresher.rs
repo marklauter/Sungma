@@ -78,7 +78,7 @@ pub(crate) fn panic_message(panic: Box<dyn Any + Send>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Mutex, PoisonError};
+    use parking_lot::Mutex;
 
     use super::*;
 
@@ -88,7 +88,7 @@ mod tests {
 
     impl Refresh for Counting {
         fn refresh(&self) -> Result<(), ClockError> {
-            let mut count = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut count = self.0.lock();
             *count += 1;
             if count.is_multiple_of(2) {
                 return Err(ClockError::NoServers);
@@ -103,16 +103,16 @@ mod tests {
         let results = Arc::new(Mutex::new(Vec::new()));
         let seen = results.clone();
         let task = refresher(clock.clone(), move |result| {
-            seen.lock().unwrap().push(result.is_ok());
+            seen.lock().push(result.is_ok());
         });
-        let refreshes = || *clock.0.lock().unwrap();
+        let refreshes = || *clock.0.lock();
         time::sleep(POLL - Duration::from_secs(1)).await;
         assert_eq!(refreshes(), 0);
         time::sleep(Duration::from_secs(2)).await;
         assert_eq!(refreshes(), 1);
         time::sleep(2 * POLL).await;
         assert_eq!(refreshes(), 3);
-        assert_eq!(*results.lock().unwrap(), vec![true, false, true]);
+        assert_eq!(*results.lock(), vec![true, false, true]);
         task.abort();
     }
 
@@ -122,7 +122,7 @@ mod tests {
 
     impl Refresh for Panicking {
         fn refresh(&self) -> Result<(), ClockError> {
-            let mut count = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut count = self.0.lock();
             *count += 1;
             if *count == 1 {
                 drop(count);
@@ -137,13 +137,11 @@ mod tests {
         let results = Arc::new(Mutex::new(Vec::new()));
         let seen = results.clone();
         let task = refresher(Arc::new(Panicking::default()), move |result| {
-            seen.lock()
-                .unwrap()
-                .push(result.map_err(|error| error.to_string()));
+            seen.lock().push(result.map_err(|error| error.to_string()));
         });
         time::sleep(2 * POLL + Duration::from_secs(1)).await;
         assert_eq!(
-            *results.lock().unwrap(),
+            *results.lock(),
             vec![
                 Err("a refresh panicked: the first refresh".to_owned()),
                 Ok(())

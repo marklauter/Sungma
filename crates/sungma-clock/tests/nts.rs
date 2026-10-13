@@ -382,6 +382,7 @@ fn servers(nts: &[&NtsServer], certificate: &[u8]) -> Servers {
         .local_addr()
         .unwrap();
     Servers::nts(hosts)
+        .unwrap()
         .trusting_only(certificate)
         .unwrap()
         .resolving_with(move |name: &str| match addresses.get(name) {
@@ -545,7 +546,7 @@ fn public_nts_servers_sync() {
         "ptbtime1.ptb.de",
         "nts.time.nl",
     ];
-    let clock = NtpClock::sync(Servers::nts(hosts)).unwrap();
+    let clock = NtpClock::sync(Servers::nts(hosts).unwrap()).unwrap();
     let report = clock.last_sync();
     let now = clock.now().unwrap();
     println!("{report:?}");
@@ -605,6 +606,7 @@ fn an_address_that_drops_packets_gives_the_next_its_share_of_the_deadline() {
         .collect();
     let hosts: Vec<_> = nts.iter().map(|server| server.host).collect();
     let servers = Servers::nts(hosts)
+        .unwrap()
         .trusting_only(&certificate)
         .unwrap()
         .resolving_with(move |name: &str| match addresses.get(name) {

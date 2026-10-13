@@ -8,12 +8,9 @@
 //! Skipped ids and the unused rest of a block when a node stops are gaps,
 //! which ids may have.
 
-use std::{
-    collections::HashMap,
-    num::NonZeroU32,
-    ops::Range,
-    sync::{Mutex, MutexGuard, PoisonError},
-};
+use std::{collections::HashMap, num::NonZeroU32, ops::Range};
+
+use parking_lot::{Mutex, MutexGuard};
 
 use sungma::store::{Dictionary, Pool, StoreError};
 
@@ -38,9 +35,8 @@ impl<S> LeasingInterner<S> {
         }
     }
 
-    /// A poisoned lock still holds whole ranges, so they're used as is.
     fn leases(&self) -> MutexGuard<'_, HashMap<Pool, Range<u32>>> {
-        self.leases.lock().unwrap_or_else(PoisonError::into_inner)
+        self.leases.lock()
     }
 
     /// The next id of `pool`'s current block, `None` once it's spent.

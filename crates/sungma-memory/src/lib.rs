@@ -3,8 +3,10 @@
 use std::{
     collections::{BTreeMap, HashMap},
     ops::Range,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::Arc,
 };
+
+use parking_lot::{Mutex, MutexGuard};
 
 use sungma::{
     graph::{Fact, Subject, Subjectset},
@@ -13,17 +15,12 @@ use sungma::{
     revision::Revision,
     rewrite::Rewrite,
     store::{Dictionary, FactStore, NamespaceStore, Pool, StoreError},
+    version::{History, HistoryError, Version},
 };
-use sungma_write::store::{FactWrite, FactWriter, NameStore};
-
-/// The ports take `&self` so a store can be shared across concurrent
-/// requests, so its contents sit behind a mutex. Setup code calls the
-/// synchronous inherent methods, which share the ports' code.
-fn lock<'a, T>(mutex: &'a Mutex<T>, what: &str) -> Result<MutexGuard<'a, T>, StoreError> {
-    mutex
-        .lock()
-        .map_err(|_| StoreError(format!("{what} poisoned")))
-}
+use sungma_write::store::{
+    FactWrite, FactWriter, InternError, NameStore, NamespaceWrite, NamespaceWriteError,
+    NamespaceWriter,
+};
 
 /// One pool's names and ids both ways, and the counter its leases advance.
 #[derive(Debug, Default)]
@@ -60,25 +57,25 @@ pub struct MemoryDictionary {
 
 impl MemoryDictionary {
     /// Returns the name's id in `pool`, minting the next one if it's new.
-    pub fn intern(&self, pool: Pool, name: &str) -> u32 {
-        let mut pools = self.pools.lock().expect("dictionary poisoned");
+    /// [`InternError::Exhausted`] when the pool has no ids left.
+    pub fn intern(&self, pool: Pool, name: &str) -> Result<u32, InternError> {
+        let mut pools = self.pools();
         let names = pools.entry(pool).or_default();
         if let Some(&id) = names.ids.get(name) {
-            return id;
+            return Ok(id);
         }
-        let id = names.lease(1);
-        assert!(!id.is_empty(), "{pool:?} exceeds u32 ids");
-        names.insert_if_absent(name, id.start)
+        let id = names.lease(1).next().ok_or(InternError::Exhausted(pool))?;
+        Ok(names.insert_if_absent(name, id))
     }
 
-    fn pools(&self) -> Result<MutexGuard<'_, HashMap<Pool, Names>>, StoreError> {
-        lock(&self.pools, "dictionary")
+    fn pools(&self) -> MutexGuard<'_, HashMap<Pool, Names>> {
+        self.pools.lock()
     }
 }
 
 impl Dictionary for MemoryDictionary {
     async fn lookup(&self, pool: Pool, name: &str) -> Result<Option<u32>, StoreError> {
-        let pools = self.pools()?;
+        let pools = self.pools();
         Ok(pools
             .get(&pool)
             .and_then(|names| names.ids.get(name))
@@ -86,7 +83,7 @@ impl Dictionary for MemoryDictionary {
     }
 
     async fn name(&self, pool: Pool, id: u32) -> Result<Option<String>, StoreError> {
-        let pools = self.pools()?;
+        let pools = self.pools();
         Ok(pools
             .get(&pool)
             .and_then(|names| names.names.get(&id))
@@ -97,14 +94,14 @@ impl Dictionary for MemoryDictionary {
 impl NameStore for MemoryDictionary {
     async fn insert_if_absent(&self, pool: Pool, name: &str, id: u32) -> Result<u32, StoreError> {
         Ok(self
-            .pools()?
+            .pools()
             .entry(pool)
             .or_default()
             .insert_if_absent(name, id))
     }
 
     async fn lease(&self, pool: Pool, count: u32) -> Result<Range<u32>, StoreError> {
-        Ok(self.pools()?.entry(pool).or_default().lease(count))
+        Ok(self.pools().entry(pool).or_default().lease(count))
     }
 }
 
@@ -138,23 +135,26 @@ impl Facts {
         for write in writes {
             match write {
                 FactWrite::Insert(fact) => {
-                    // A key is cloned only when it is stored the first time.
-                    if !self.spans.contains_key(&fact.subjectset) {
-                        self.spans.insert(fact.subjectset.clone(), BTreeMap::new());
-                    }
-                    let subjects = self
-                        .spans
-                        .get_mut(&fact.subjectset)
-                        .expect("inserted above");
-                    if !subjects.contains_key(&fact.subject) {
-                        subjects.insert(fact.subject.clone(), Vec::new());
-                    }
-                    let spans = subjects.get_mut(&fact.subject).expect("inserted above");
-                    if spans.last().is_none_or(|span| span.deleted.is_some()) {
-                        spans.push(Span {
-                            written: revision,
-                            deleted: None,
-                        });
+                    let open = Span {
+                        written: revision,
+                        deleted: None,
+                    };
+                    // The keys are cloned only for a fact not stored before.
+                    match self.spans.get_mut(&fact.subjectset) {
+                        Some(subjects) => match subjects.get_mut(&fact.subject) {
+                            Some(spans) => {
+                                if spans.last().is_none_or(|span| span.deleted.is_some()) {
+                                    spans.push(open);
+                                }
+                            }
+                            None => {
+                                subjects.insert(fact.subject.clone(), vec![open]);
+                            }
+                        },
+                        None => {
+                            let subjects = BTreeMap::from([(fact.subject.clone(), vec![open])]);
+                            self.spans.insert(fact.subjectset.clone(), subjects);
+                        }
                     }
                 }
                 FactWrite::Delete(fact) => {
@@ -199,18 +199,17 @@ pub struct MemoryFactStore {
 impl MemoryFactStore {
     /// Stores the fact at the next revision and returns it.
     pub fn insert(&self, fact: Fact) -> Revision {
-        let mut facts = self.facts.lock().expect("fact store poisoned");
-        facts.write(&[FactWrite::Insert(fact)])
+        self.facts().write(&[FactWrite::Insert(fact)])
     }
 
-    fn facts(&self) -> Result<MutexGuard<'_, Facts>, StoreError> {
-        lock(&self.facts, "fact store")
+    fn facts(&self) -> MutexGuard<'_, Facts> {
+        self.facts.lock()
     }
 }
 
 impl FactStore for MemoryFactStore {
     async fn head(&self) -> Result<Revision, StoreError> {
-        Ok(Revision(self.facts()?.head))
+        Ok(Revision(self.facts().head))
     }
 
     async fn contains(
@@ -219,7 +218,7 @@ impl FactStore for MemoryFactStore {
         subject: &Subject,
         revision: Revision,
     ) -> Result<bool, StoreError> {
-        Ok(self.facts()?.contains(set, subject, revision))
+        Ok(self.facts().contains(set, subject, revision))
     }
 
     async fn subjectsets(
@@ -228,7 +227,7 @@ impl FactStore for MemoryFactStore {
         revision: Revision,
     ) -> Result<Vec<Subjectset>, StoreError> {
         Ok(self
-            .facts()?
+            .facts()
             .visible(set, revision)
             .filter_map(|subject| match subject {
                 Subject::Subjectset(nested) => Some(nested),
@@ -242,43 +241,141 @@ impl FactStore for MemoryFactStore {
         set: &Subjectset,
         revision: Revision,
     ) -> Result<Vec<Subject>, StoreError> {
-        Ok(self.facts()?.visible(set, revision).collect())
+        Ok(self.facts().visible(set, revision).collect())
     }
 }
 
 impl FactWriter for MemoryFactStore {
     async fn write(&self, writes: &[FactWrite]) -> Result<Revision, StoreError> {
-        Ok(self.facts()?.write(writes))
+        Ok(self.facts().write(writes))
     }
 }
 
-/// Every namespace, by id.
+/// Each namespace's history.
+#[derive(Debug, Default)]
+struct Versions {
+    namespaces: HashMap<NamespaceId, History>,
+    head: u64,
+}
+
+impl Versions {
+    /// The version whose span is still open, `None` when the namespace was
+    /// never created or is retired.
+    fn current(&self, id: NamespaceId) -> Option<&Arc<Version>> {
+        self.namespaces.get(&id)?.current()
+    }
+
+    /// Refuses a write the namespace isn't at the version of, and a
+    /// retirement of a namespace with no current version, then stores it.
+    fn write(
+        &mut self,
+        id: NamespaceId,
+        write: NamespaceWrite,
+    ) -> Result<Revision, NamespaceWriteError> {
+        let current = self.current(id).map(|version| version.revision());
+        let (expected, next) = match write {
+            NamespaceWrite::Create(namespace) => (None, Some(namespace)),
+            NamespaceWrite::NewVersion {
+                based_on,
+                namespace,
+            } => (Some(based_on), Some(namespace)),
+            NamespaceWrite::Retire { .. } if current.is_none() => {
+                return Err(HistoryError::NothingToRetire.into());
+            }
+            NamespaceWrite::Retire { based_on } => (Some(based_on), None),
+        };
+        if current != expected {
+            return Err(NamespaceWriteError::Conflict { current });
+        }
+        Ok(self.store(id, next)?)
+    }
+
+    /// Stores `next` as the namespace's next version, or retires it when
+    /// there's none, at the next revision.
+    fn store(
+        &mut self,
+        id: NamespaceId,
+        next: Option<Namespace>,
+    ) -> Result<Revision, HistoryError> {
+        let revision = Revision(self.head + 1);
+        let history = self.namespaces.entry(id).or_default();
+        match next {
+            Some(namespace) => history.write(namespace, revision),
+            None => history.retire(revision),
+        }?;
+        self.head += 1;
+        Ok(revision)
+    }
+}
+
+/// Every namespace's versions. Reads see each namespace's current version;
+/// reading at a revision comes with the readers.
+///
+/// For the reader: revisions here come from the store's own `head`, not
+/// from the fact store's, so epochs and fact revisions aren't on one
+/// timeline yet. A relation added back at namespace revision 4 sits
+/// beside facts at fact revision 500, so every old fact would pass its
+/// epoch. Facts and namespaces need one revision source before reads
+/// apply epochs.
 #[derive(Debug, Default)]
 pub struct MemoryNamespaceStore {
-    namespaces: HashMap<NamespaceId, Namespace>,
+    versions: Mutex<Versions>,
 }
 
 impl MemoryNamespaceStore {
-    /// Declares a namespace whole, replacing any earlier declaration.
-    pub fn declare(&mut self, id: NamespaceId, namespace: Namespace) {
-        self.namespaces.insert(id, namespace);
+    /// Stores `namespace` as the namespace's next version, or its first,
+    /// whatever version is current, and returns its revision.
+    pub fn declare(&self, id: NamespaceId, namespace: Namespace) -> Result<Revision, HistoryError> {
+        self.versions().store(id, Some(namespace))
     }
 
-    /// The namespace as declared, `None` when it never was.
-    pub fn namespace(&self, id: NamespaceId) -> Option<&Namespace> {
-        self.namespaces.get(&id)
+    /// The current version, `None` when the namespace was never created or
+    /// is retired.
+    pub fn version(&self, id: NamespaceId) -> Option<Arc<Version>> {
+        self.versions().current(id).cloned()
+    }
+
+    /// The current version's namespace.
+    pub fn namespace(&self, id: NamespaceId) -> Option<Arc<Namespace>> {
+        self.version(id)
+            .map(|version| Arc::clone(version.namespace()))
+    }
+
+    fn versions(&self) -> MutexGuard<'_, Versions> {
+        self.versions.lock()
     }
 }
 
+/// For the reader: `rewrite` reads the current version, so it neither
+/// applies epochs nor reads at a revision.
+///
+/// - A relation dropped and then declared again returns its rewrite, and
+///   facts written before the new epoch count again. In the sample in
+///   `docs/specs/one-timeline.md`, Bob's ban comes back at revision 35.
+/// - Older versions and closed spans are stored but never read. After a
+///   retirement `rewrite` returns `None`, so replaying a decision made
+///   before it denies what was granted. Spec tests 5, 7 and 8 need a read
+///   at the version whose span covers the revision.
 impl NamespaceStore for MemoryNamespaceStore {
     async fn rewrite(
         &self,
         namespace: NamespaceId,
         relation: RelationId,
     ) -> Result<Option<Arc<Rewrite>>, StoreError> {
-        let namespace = self.namespaces.get(&namespace);
-        Ok(namespace
-            .and_then(|namespace| namespace.rewrite(&relation))
+        Ok(self
+            .versions()
+            .current(namespace)
+            .and_then(|version| version.namespace().rewrite(&relation))
             .cloned())
+    }
+}
+
+impl NamespaceWriter for MemoryNamespaceStore {
+    async fn write_namespace(
+        &self,
+        namespace: NamespaceId,
+        write: NamespaceWrite,
+    ) -> Result<Revision, NamespaceWriteError> {
+        self.versions().write(namespace, write)
     }
 }

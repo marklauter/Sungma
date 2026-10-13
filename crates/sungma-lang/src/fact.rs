@@ -33,11 +33,17 @@ use sungma::{
     store::Pool,
 };
 use sungma_memory::{MemoryDictionary, MemoryFactStore};
+use sungma_write::store::InternError;
 
-/// Why a fact document was refused, with its line and column.
+/// Why a fact document wasn't loaded.
 #[derive(Debug, Error)]
-#[error(transparent)]
-pub struct FactError(#[from] serde_json::Error);
+pub enum FactError {
+    /// The document was refused, with its line and column.
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Intern(#[from] InternError),
+}
 
 /// One fact as written: its subjectset and its subject.
 struct FactDto {
@@ -176,40 +182,54 @@ impl<'de> Deserialize<'de> for SubjectDto {
     }
 }
 
-/// Parses a fact document whole, then interns each fact's namespace and
-/// relation names and inserts it.
+/// Parses a fact document whole, then interns every fact's namespace and
+/// relation names, and then inserts the facts, so a refused document
+/// stores no fact.
 pub fn load_facts(
     json: &str,
     dictionary: &MemoryDictionary,
     store: &MemoryFactStore,
 ) -> Result<(), FactError> {
-    for dto in serde_json::from_str::<Vec<FactDto>>(json)? {
-        let subjectset = intern_subjectset(dictionary, &dto.set);
+    let dtos = serde_json::from_str::<Vec<FactDto>>(json)?;
+    let mut facts = Vec::with_capacity(dtos.len());
+    for dto in dtos {
+        let subjectset = intern_subjectset(dictionary, &dto.set)?;
         let subject = match dto.subject {
             SubjectDto::Identity(identity) => Subject::Identity(identity),
             SubjectDto::Resource(resource) => {
-                Subject::ResourceMember(intern_resource(dictionary, &resource))
+                Subject::ResourceMember(intern_resource(dictionary, &resource)?)
             }
-            SubjectDto::Subjectset(set) => Subject::Subjectset(intern_subjectset(dictionary, &set)),
+            SubjectDto::Subjectset(set) => {
+                Subject::Subjectset(intern_subjectset(dictionary, &set)?)
+            }
         };
-        store.insert(Fact {
+        facts.push(Fact {
             subjectset,
             subject,
         });
     }
+    for fact in facts {
+        store.insert(fact);
+    }
     Ok(())
 }
 
-fn intern_resource(dictionary: &MemoryDictionary, name: &ResourceName) -> Resource {
-    Resource {
-        namespace: NamespaceId(dictionary.intern(Pool::Namespaces, name.namespace().as_str())),
+fn intern_resource(
+    dictionary: &MemoryDictionary,
+    name: &ResourceName,
+) -> Result<Resource, InternError> {
+    Ok(Resource {
+        namespace: NamespaceId(dictionary.intern(Pool::Namespaces, name.namespace().as_str())?),
         id: name.id().clone(),
-    }
+    })
 }
 
-fn intern_subjectset(dictionary: &MemoryDictionary, name: &SubjectsetName) -> Subjectset {
-    Subjectset {
-        resource: intern_resource(dictionary, name.resource()),
-        relation: RelationId(dictionary.intern(Pool::Relations, name.relation().as_str())),
-    }
+fn intern_subjectset(
+    dictionary: &MemoryDictionary,
+    name: &SubjectsetName,
+) -> Result<Subjectset, InternError> {
+    Ok(Subjectset {
+        resource: intern_resource(dictionary, name.resource())?,
+        relation: RelationId(dictionary.intern(Pool::Relations, name.relation().as_str())?),
+    })
 }

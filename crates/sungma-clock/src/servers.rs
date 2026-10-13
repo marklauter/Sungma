@@ -4,10 +4,12 @@ use std::{
     collections::HashMap,
     fmt, io,
     net::{SocketAddr, ToSocketAddrs},
-    sync::{Arc, Condvar, Mutex, PoisonError},
+    sync::Arc,
     thread,
     time::{Duration, Instant},
 };
+
+use parking_lot::{Condvar, Mutex};
 
 use rustls::{ClientConfig, RootCertStore, pki_types::CertificateDer};
 
@@ -101,12 +103,11 @@ impl Lookups {
         deadline: Instant,
     ) -> Result<Vec<SocketAddr>, ClockError> {
         let lookup = self.start(server)?;
-        let found = lookup.found.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut found = lookup.found.lock();
         let left = deadline.saturating_duration_since(Instant::now());
-        let (found, _) = lookup
+        lookup
             .finished
-            .wait_timeout_while(found, left, |found| found.is_none())
-            .unwrap_or_else(PoisonError::into_inner);
+            .wait_while_for(&mut found, |found| found.is_none(), left);
         match &*found {
             Some(Ok(addresses)) => Ok(addresses.clone()),
             Some(Err((kind, message))) => Err(io::Error::new(*kind, message.clone()).into()),
@@ -122,7 +123,7 @@ impl Lookups {
     /// stuck and the name has room for another thread, or a new one. The
     /// error when the system can't start a thread.
     fn start(&self, server: &str) -> io::Result<Arc<Lookup>> {
-        let mut running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut running = self.running.lock();
         if let Some(entry) = running.get(server)
             && let Some(lookup) = &entry.current
             && (lookup.started.elapsed() < self.stale || entry.threads >= MOST)
@@ -180,14 +181,10 @@ impl Drop for Finish {
                 "the resolver stopped without an answer".to_owned(),
             ))
         });
-        *self
-            .lookup
-            .found
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(found);
+        *self.lookup.found.lock() = Some(found);
         self.lookup.finished.notify_all();
         // The next caller starts afresh, so a pool's addresses can change.
-        let mut names = self.names.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut names = self.names.lock();
         if let Some(running) = names.get_mut(&self.name) {
             running.threads = running.threads.saturating_sub(1);
             if running
@@ -230,10 +227,11 @@ impl Servers {
     }
 
     /// NTS servers, by host, whose certificates chain to Mozilla's roots.
-    pub fn nts<S: ToString>(hosts: impl IntoIterator<Item = S>) -> Self {
+    /// [`NtsError::Tls`] when TLS 1.3 can't be set up.
+    pub fn nts<S: ToString>(hosts: impl IntoIterator<Item = S>) -> Result<Self, ClockError> {
         let mut servers = Self::new(hosts);
-        servers.tls.fill(Some(nts::tls(nts::public_roots())));
-        servers
+        servers.tls.fill(Some(nts::tls(nts::public_roots())?));
+        Ok(servers)
     }
 
     /// These servers and `others`, resolved through this list's resolver.
@@ -252,7 +250,7 @@ impl Servers {
         roots
             .add(CertificateDer::from(certificate.to_vec()))
             .map_err(NtsError::Certificate)?;
-        let pinned = nts::tls(roots);
+        let pinned = nts::tls(roots)?;
         for tls in self.tls.iter_mut().flatten() {
             *tls = pinned.clone();
         }
@@ -331,7 +329,7 @@ mod tests {
         let counted = calls.clone();
         let hung = Lookups::new(move |_: &str| {
             counted.fetch_add(1, Ordering::SeqCst);
-            let _ = released.lock().unwrap().recv();
+            let _ = released.lock().recv();
             Ok(vec![address])
         });
         let soon = || Instant::now() + Duration::from_millis(20);
@@ -358,7 +356,7 @@ mod tests {
         let counted = calls.clone();
         let mut hung = Lookups::new(move |_: &str| {
             counted.fetch_add(1, Ordering::SeqCst);
-            let _ = released.lock().unwrap().recv();
+            let _ = released.lock().recv();
             Ok(vec![address])
         });
         hung.stale = Duration::from_millis(30);
@@ -381,10 +379,10 @@ mod tests {
         let later = Instant::now() + Duration::from_secs(5);
         assert_eq!(hung.resolve_by("hung.test:123", later).unwrap(), [address]);
         let gone = Instant::now() + Duration::from_secs(5);
-        while !hung.running.lock().unwrap().is_empty() && Instant::now() < gone {
+        while !hung.running.lock().is_empty() && Instant::now() < gone {
             thread::yield_now();
         }
-        assert!(hung.running.lock().unwrap().is_empty());
+        assert!(hung.running.lock().is_empty());
     }
 
     #[test]
@@ -404,10 +402,10 @@ mod tests {
         );
         // The lookup that panicked leaves the running set once it has ended.
         let gone = Instant::now() + Duration::from_secs(5);
-        while !lookups.running.lock().unwrap().is_empty() && Instant::now() < gone {
+        while !lookups.running.lock().is_empty() && Instant::now() < gone {
             thread::yield_now();
         }
-        assert!(lookups.running.lock().unwrap().is_empty());
+        assert!(lookups.running.lock().is_empty());
         assert_eq!(lookups.resolve_by("a.test:123", later()).unwrap().len(), 1);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
@@ -435,18 +433,19 @@ mod tests {
             .der()
             .to_vec();
         let private = Servers::nts(["p.test"])
+            .unwrap()
             .trusting_only(&certificate)
             .unwrap();
         let servers = Servers::new(["a:123"])
             .and(private)
-            .and(Servers::nts(["q.test"]));
+            .and(Servers::nts(["q.test"]).unwrap());
         let tls: Vec<_> = servers.tls.iter().map(Option::as_ref).collect();
         assert!(tls[0].is_none());
         let (pinned, public) = (tls[1].unwrap(), tls[2].unwrap());
         assert!(!Arc::ptr_eq(pinned, public));
         // Pinning a joined list pins its NTS servers and leaves plain ones.
         let pinned = Servers::new(["a:123"])
-            .and(Servers::nts(["q.test"]))
+            .and(Servers::nts(["q.test"]).unwrap())
             .trusting_only(&certificate)
             .unwrap();
         assert!(pinned.tls[0].is_none());
@@ -455,13 +454,14 @@ mod tests {
 
     #[test]
     fn nts_servers_join_plain_ones_and_bring_their_tls() {
-        let servers = Servers::new(["a:123"]).and(Servers::nts(["b", "c"]));
+        let servers = Servers::new(["a:123"]).and(Servers::nts(["b", "c"]).unwrap());
         assert_eq!(servers.names, ["a:123", "b", "c"]);
         let nts: Vec<bool> = servers.tls.iter().map(Option::is_some).collect();
         assert_eq!(nts, [false, true, true]);
         assert!(Servers::new(["a:123"]).tls.iter().all(Option::is_none));
         assert!(
             Servers::nts(["b"])
+                .unwrap()
                 .trusting_only(b"not a certificate")
                 .is_err()
         );

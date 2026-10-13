@@ -14,12 +14,14 @@ use std::{
     io,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
     sync::{
-        Arc, Mutex, PoisonError,
+        Arc,
         atomic::{AtomicU64, Ordering},
     },
     thread,
     time::{Duration, Instant},
 };
+
+use parking_lot::Mutex;
 
 use crate::{Clock, ClockFault, Reading};
 use rustls::ClientConfig;
@@ -201,9 +203,9 @@ impl<T: TimeSource> NtpClock<T> {
     /// [`ClockFault::Drifted`] when the sample disagrees with the window,
     /// which the clock then replaces with the sample alone.
     pub fn resync(&self) -> Result<(), ClockError> {
-        let mut peers = self.peers.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut peers = self.peers.lock();
         let (sample, report) = sync(&self.servers, &mut peers, self.sampled.time());
-        *self.last.lock().unwrap_or_else(PoisonError::into_inner) = report;
+        *self.last.lock() = report;
         let Ok(sample) = sample else {
             self.failed_syncs.fetch_add(1, Ordering::Relaxed);
             return sample.map(|_| ());
@@ -225,10 +227,7 @@ impl<T: TimeSource> NtpClock<T> {
 
     /// What the last sync found, whether it succeeded or not.
     pub fn last_sync(&self) -> SyncReport {
-        self.last
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+        self.last.lock().clone()
     }
 }
 
@@ -700,11 +699,14 @@ fn answer(reply: &[u8], sent: u64, received: u64) -> Result<Answer, ClockError> 
 /// past that check is reached too.
 #[cfg(fuzzing)]
 pub fn fuzz_answer(data: &[u8]) {
-    let Some((times, reply)) = data.split_first_chunk::<16>() else {
+    let Some((sent, rest)) = data.split_first_chunk::<8>() else {
         return;
     };
-    let sent = u64::from_le_bytes(times[..8].try_into().expect("8 bytes"));
-    let received = u64::from_le_bytes(times[8..].try_into().expect("8 bytes"));
+    let Some((received, reply)) = rest.split_first_chunk::<8>() else {
+        return;
+    };
+    let sent = u64::from_le_bytes(*sent);
+    let received = u64::from_le_bytes(*received);
     let mut reply = reply.to_vec();
     if sent % 2 == 1 && reply.len() >= 32 {
         reply[24..32].copy_from_slice(&to_ntp(sent).to_be_bytes());
@@ -1082,8 +1084,7 @@ mod tests {
         header[0] = 0xe4;
         header[1] = 0;
         header[12..16].copy_from_slice(b"NTSN");
-        let with =
-            |unique: [u8; 32]| [header.to_vec(), nts::field(nts::UNIQUE_ID, &unique)].concat();
+        let with = |unique: [u8; 32]| [header.to_vec(), nts::unique_id(&unique)].concat();
         assert!(nak(&with([4; 32]), NOW, &[4; 32]));
         assert!(!nak(&with([5; 32]), NOW, &[4; 32]));
         assert!(!nak(&header, NOW, &[4; 32]));

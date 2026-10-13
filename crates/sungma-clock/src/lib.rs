@@ -98,6 +98,9 @@ pub enum NtsError {
     Tls(#[from] rustls::Error),
     #[error("no cookie is left")]
     NoCookieLeft,
+    /// AES-SIV refused to seal a request, or its output won't fit a field.
+    #[error("the request couldn't be sealed")]
+    Seal,
     /// The system couldn't give random bytes for a request's identifier
     /// or nonce.
     #[error("the system gave no random bytes: {0}")]
