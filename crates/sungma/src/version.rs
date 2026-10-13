@@ -2,21 +2,13 @@
 //! the epoch of each relation it declares. See `docs/specs/one-timeline.md`.
 //!
 //! A version's span opens at its revision. The next version, or the
-//! namespace's retirement, closes it, so the store keeps the close.
+//! namespace's retirement, closes it, so the store keeps the close. A
+//! version doesn't know its place in that history: the store orders it,
+//! stamping each entry with a revision from its own clock.
 
 use std::{collections::HashMap, sync::Arc};
 
-use thiserror::Error;
-
 use crate::{id::RelationId, namespace::Namespace, revision::Revision};
-
-/// A version must come after the one it follows.
-#[derive(Debug, Error, PartialEq, Eq)]
-#[error("a version at {next:?} can't follow the version at {current:?}")]
-pub struct NotLater {
-    pub current: Revision,
-    pub next: Revision,
-}
 
 /// A stored namespace version.
 #[derive(Debug)]
@@ -44,22 +36,16 @@ impl Version {
 
     /// The version after this one. A relation this version declares keeps
     /// its epoch, and any other gets `revision`.
-    pub fn next(&self, namespace: Namespace, revision: Revision) -> Result<Self, NotLater> {
-        if revision <= self.revision {
-            return Err(NotLater {
-                current: self.revision,
-                next: revision,
-            });
-        }
+    pub fn next(&self, namespace: Namespace, revision: Revision) -> Self {
         let epochs = namespace
             .relations()
             .map(|(relation, _)| (*relation, self.epoch(*relation).unwrap_or(revision)))
             .collect();
-        Ok(Self {
+        Self {
             namespace: Arc::new(namespace),
             revision,
             epochs,
-        })
+        }
     }
 
     pub fn namespace(&self) -> &Arc<Namespace> {

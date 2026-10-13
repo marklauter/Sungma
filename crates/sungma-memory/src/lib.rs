@@ -303,25 +303,24 @@ impl Versions {
         if at != expected {
             return Err(NamespaceWriteError::Conflict { current: at });
         }
-        Ok(self.store(id, current.as_deref(), next)?)
+        Ok(self.store(id, current.as_deref(), next))
     }
 
     /// Stores `next` as the version after `current`, which must be the
     /// namespace's current version, or retires the namespace when there's
-    /// none, at the next revision.
+    /// none, at the next revision. `head` is the only source of revisions
+    /// and only moves forward, so each entry comes after the one before it.
     fn store(
         &mut self,
         id: NamespaceId,
         current: Option<&Version>,
         next: Option<Namespace>,
-    ) -> Result<Revision, StoreError> {
+    ) -> Revision {
         let revision = Revision(self.head + 1);
         let entry = match (next, current) {
-            (Some(namespace), Some(current)) => Entry::Version(Arc::new(
-                current
-                    .next(namespace, revision)
-                    .map_err(|refused| StoreError(refused.to_string()))?,
-            )),
+            (Some(namespace), Some(current)) => {
+                Entry::Version(Arc::new(current.next(namespace, revision)))
+            }
             (Some(namespace), None) => {
                 Entry::Version(Arc::new(Version::first(namespace, revision)))
             }
@@ -329,7 +328,7 @@ impl Versions {
         };
         self.head += 1;
         self.namespaces.entry(id).or_default().push(entry);
-        Ok(revision)
+        revision
     }
 }
 
@@ -353,7 +352,7 @@ impl MemoryNamespaceStore {
     pub fn declare(&self, id: NamespaceId, namespace: Namespace) -> Result<Revision, StoreError> {
         let mut versions = self.versions()?;
         let current = versions.current(id).cloned();
-        versions.store(id, current.as_deref(), Some(namespace))
+        Ok(versions.store(id, current.as_deref(), Some(namespace)))
     }
 
     /// The current version, `None` when the namespace was never created or
