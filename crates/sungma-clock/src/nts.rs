@@ -766,7 +766,7 @@ mod tests {
         assert!(field(1, &vec![0; 65_529]).is_none());
         assert!(Cookie::new(vec![0; 65_529]).is_none());
         assert_eq!(
-            authenticator(&cipher(1), [0; 16], b"", &vec![0; 65_500]),
+            authenticator(&cipher(1), random().unwrap(), b"", &vec![0; 65_500]),
             Err(NtsError::Seal)
         );
     }
