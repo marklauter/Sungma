@@ -9,7 +9,7 @@ use sungma::{
     revision::Revision,
     rewrite::Rewrite::{self, This},
     store::NamespaceStore,
-    version::Version,
+    version::{HistoryError, Version},
 };
 use sungma_memory::MemoryNamespaceStore;
 use sungma_write::store::{
@@ -141,7 +141,16 @@ async fn a_retired_namespace_declares_nothing_until_it_is_created_again() {
     .await;
     assert_eq!(conflict(refused), None);
     let refused = write(&store, Retire { based_on: first }).await;
-    assert_eq!(conflict(refused), None);
+    assert!(matches!(
+        refused,
+        Err(NamespaceWriteError::History(HistoryError::NothingToRetire))
+    ));
+    let never = MemoryNamespaceStore::default();
+    let refused = write(&never, Retire { based_on: first }).await;
+    assert!(matches!(
+        refused,
+        Err(NamespaceWriteError::History(HistoryError::NothingToRetire))
+    ));
     let again = write(&store, Create(declaring(&[OWNER]))).await.unwrap();
     assert!(again > retired);
     assert_eq!(current(&store).unwrap().epoch(OWNER), Some(again));

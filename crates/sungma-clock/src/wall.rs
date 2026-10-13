@@ -117,13 +117,13 @@ impl Drift {
     }
 
     /// The drift of a window of `samples`, in the order they were taken.
-    fn of(samples: &VecDeque<Taken>) -> Self {
-        let Some(measured) = measure(samples) else {
+    fn of<'a>(samples: impl Iterator<Item = &'a Taken> + Clone) -> Self {
+        let Some(measured) = measure(samples.clone()) else {
             return Self::UNMEASURED;
         };
         let measured = Some(measured);
         let span = |taken: Option<&Taken>| taken.map_or(0, |taken| taken.at.monotonic);
-        let baseline = span(samples.back()).saturating_sub(span(samples.front()));
+        let baseline = span(samples.clone().last()).saturating_sub(span(samples.clone().next()));
         let allowance = measured.map_or(MAX_DRIFT_PPB, |(low, high)| {
             let worst = low.unsigned_abs().max(high.unsigned_abs());
             let worst = u64::try_from(worst).unwrap_or(u64::MAX);
@@ -147,13 +147,13 @@ fn clamp_i64(value: i128) -> i64 {
 /// time minus monotonic time moved between them, give or take their bounds
 /// and their moments' uncertainty. `None` with fewer than two samples, or
 /// when the pairs don't agree, as when the rate changed.
-fn measure(samples: &VecDeque<Taken>) -> Option<(i128, i128)> {
+fn measure<'a>(samples: impl Iterator<Item = &'a Taken> + Clone) -> Option<(i128, i128)> {
     let offset = |taken: &Taken| {
         i128::from(taken.at.wall) + i128::from(taken.sample.offset) - i128::from(taken.at.monotonic)
     };
     let mut pairs = Vec::new();
-    for (at, later) in samples.iter().enumerate() {
-        for earlier in samples.iter().take(at) {
+    for (at, later) in samples.clone().enumerate() {
+        for earlier in samples.clone().take(at) {
             let span = i128::from(later.at.monotonic) - i128::from(earlier.at.monotonic);
             if span <= 0 {
                 continue;
@@ -374,7 +374,7 @@ struct Window {
 
 impl Window {
     fn of(older: VecDeque<Taken>, newest: Taken) -> Self {
-        let drift = Drift::of(&older.iter().copied().chain([newest]).collect());
+        let drift = Drift::of(older.iter().chain([&newest]));
         Self {
             older,
             newest,
@@ -635,10 +635,7 @@ mod tests {
         let mut later = taken(1_000_000_007, 1_000_000_002, 1_500, 200);
         earlier.at.uncertainty = 30;
         later.at.uncertainty = 70;
-        assert_eq!(
-            measure(&VecDeque::from([earlier, later])),
-            Some((600, 1_400))
-        );
+        assert_eq!(measure([earlier, later].iter()), Some((600, 1_400)));
     }
 
     #[test]
@@ -649,7 +646,7 @@ mod tests {
         let samples: VecDeque<_> = (0..3)
             .map(|n| taken(n * 100 * second, n * 100 * second, (n * MS) as i64, MS))
             .collect();
-        let drift = Drift::of(&samples);
+        let drift = Drift::of(samples.iter());
         // Pairs 100 s apart allow -10..30 ppm; the pair 200 s apart, 0..20.
         assert_eq!(drift.measured, Some((0, 20_000)));
         // 20 ppm, half again, plus 20 ppm.
@@ -667,17 +664,17 @@ mod tests {
             taken(100 * second + MS, 100 * second, -(MS as i64), MS / 10),
         ]
         .into();
-        assert_eq!(Drift::of(&samples).measured, Some((-2_000, 2_000)));
+        assert_eq!(Drift::of(samples.iter()).measured, Some((-2_000, 2_000)));
     }
 
     #[test]
     fn a_window_that_cant_measure_falls_back_to_500_ppm() {
         let one: VecDeque<_> = [taken(0, 0, 0, MS)].into();
         let unmeasured = Drift::UNMEASURED;
-        assert_eq!(Drift::of(&one), unmeasured);
+        assert_eq!(Drift::of(one.iter()), unmeasured);
         // Samples a moment apart can't beat 500 ppm.
         let close: VecDeque<_> = [taken(0, 0, 0, MS), taken(0, MS, 0, MS)].into();
-        assert_eq!(Drift::of(&close).allowance, MAX_DRIFT_PPB);
+        assert_eq!(Drift::of(close.iter()).allowance, MAX_DRIFT_PPB);
         // Pairs that don't agree, as when the rate changed.
         let second = 1_000_000_000;
         let changed: VecDeque<_> = [
@@ -686,10 +683,10 @@ mod tests {
             taken(0, 200 * second, (50 * MS) as i64, 0),
         ]
         .into();
-        assert_eq!(Drift::of(&changed), unmeasured);
+        assert_eq!(Drift::of(changed.iter()), unmeasured);
         // Samples taken at the same moment measure nothing.
         let same: VecDeque<_> = [taken(0, 5, 0, MS), taken(0, 5, 0, MS)].into();
-        assert_eq!(Drift::of(&same), unmeasured);
+        assert_eq!(Drift::of(same.iter()), unmeasured);
     }
 
     #[test]
@@ -703,7 +700,7 @@ mod tests {
                 taken(at, at, (n * 640_000) as i64, MS / 10)
             })
             .collect();
-        let drift = Drift::of(&samples);
+        let drift = Drift::of(samples.iter());
         assert_eq!(drift.baseline, 448 * second);
         assert!(drift.allowance < 100_000, "{drift:?}");
         // A thousand seconds after the newest: the measured allowance for

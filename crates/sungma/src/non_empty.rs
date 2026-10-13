@@ -68,6 +68,13 @@ impl<T> NonEmpty<T> {
     pub fn map<U>(self, f: impl FnMut(T) -> U) -> NonEmpty<U> {
         NonEmpty(self.0.into_iter().map(f).collect())
     }
+
+    /// Like [`NonEmpty::map`], stopping at the first error.
+    pub fn try_map<U, E>(self, f: impl FnMut(T) -> Result<U, E>) -> Result<NonEmpty<U>, E> {
+        Ok(NonEmpty(
+            self.0.into_iter().map(f).collect::<Result<_, _>>()?,
+        ))
+    }
 }
 
 impl<T> Deref for NonEmpty<T> {

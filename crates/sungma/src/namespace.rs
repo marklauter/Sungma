@@ -136,23 +136,40 @@ impl<R: Eq + Hash + Clone + Display> Namespace<R> {
         &self,
         mut rename: impl FnMut(&R) -> S,
     ) -> Result<Namespace<S>, NamespaceError> {
+        self.try_map(|relation| Ok(rename(relation)))
+    }
+
+    /// Like [`Namespace::map`], with a rename that can fail, as interning
+    /// can. The first error stops the rename and is returned.
+    pub fn try_map<S, E>(
+        &self,
+        mut rename: impl FnMut(&R) -> Result<S, E>,
+    ) -> Result<Namespace<S>, E>
+    where
+        S: Eq + Hash + Clone + Display,
+        E: From<NamespaceError>,
+    {
         let mut renamed = HashMap::new();
-        let mut name = |relation: &R| -> S {
-            renamed
-                .entry(relation.clone())
-                .or_insert_with(|| rename(relation))
-                .clone()
+        let mut name = |relation: &R| -> Result<S, E> {
+            if let Some(name) = renamed.get(relation) {
+                return Ok(S::clone(name));
+            }
+            let name = rename(relation)?;
+            renamed.insert(relation.clone(), name.clone());
+            Ok(name)
         };
         let relations = self
             .relations
             .iter()
             .map(|(relation, rewrite)| {
-                let declared = name(relation);
-                let rewrite = (**rewrite).clone().map(&mut |reference| name(&reference));
-                (declared, Arc::new(rewrite))
+                let declared = name(relation)?;
+                let rewrite = (**rewrite)
+                    .clone()
+                    .try_map(&mut |reference| name(&reference))?;
+                Ok((declared, Arc::new(rewrite)))
             })
-            .collect();
-        Namespace::indexed(relations)
+            .collect::<Result<_, E>>()?;
+        Ok(Namespace::indexed(relations)?)
     }
 }
 

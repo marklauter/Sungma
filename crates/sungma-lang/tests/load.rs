@@ -1,6 +1,9 @@
 //! Loading documents into the in-memory stores.
 
-use sungma::store::Pool;
+use sungma::{
+    revision::Revision,
+    store::{Dictionary, FactStore, Pool},
+};
 use sungma_lang::{
     fact::{FactError, load_facts},
     namespace::{LoadError, load_namespaces},
@@ -40,5 +43,38 @@ async fn a_fact_whose_names_find_no_ids_is_not_loaded() {
             matches!(loaded, Err(FactError::Intern(InternError::Exhausted(p))) if p == pool),
             "{loaded:?}"
         );
+    }
+}
+
+#[tokio::test]
+async fn a_fact_document_that_runs_out_of_ids_part_way_stores_no_fact() {
+    let dictionary = MemoryDictionary::default();
+    dictionary
+        .lease(Pool::Relations, u32::MAX - 1)
+        .await
+        .unwrap();
+    let json = r#"[
+        { "namespace": "file", "resource": "a", "relation": "owner",
+          "subject": { "identity": "alice" } },
+        { "namespace": "file", "resource": "a", "relation": "viewer",
+          "subject": { "identity": "bob" } }
+    ]"#;
+    let facts = MemoryFactStore::default();
+    let loaded = load_facts(json, &dictionary, &facts);
+    assert!(matches!(loaded, Err(FactError::Intern(_))), "{loaded:?}");
+    assert_eq!(facts.head().await.unwrap(), Revision(0));
+}
+
+#[tokio::test]
+async fn a_refused_namespace_document_interns_no_name() {
+    let dictionary = MemoryDictionary::default();
+    let documents = [
+        r#"{ "file": { "owner": "this" } }"#,
+        r#"{ "folder": { "viewer": "editor" } }"#,
+    ];
+    let loaded = load_namespaces(&documents, &dictionary, &MemoryNamespaceStore::default());
+    assert!(matches!(loaded, Err(LoadError::Refused(_))), "{loaded:?}");
+    for (pool, name) in [(Pool::Namespaces, "file"), (Pool::Relations, "owner")] {
+        assert_eq!(dictionary.lookup(pool, name).await.unwrap(), None);
     }
 }

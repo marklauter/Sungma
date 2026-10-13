@@ -227,34 +227,35 @@ pub enum LoadError {
     Intern(#[from] InternError),
 }
 
-/// Parses and checks every document, interning its names in `dictionary`,
-/// and then declares each namespace, so a refused document stores none.
+/// A rename that gives two relations one name refuses the namespace.
+impl From<NamespaceError> for LoadError {
+    fn from(kind: NamespaceError) -> Self {
+        Refusal(vec![error(None, None, ErrorKind::Namespace(kind))]).into()
+    }
+}
+
+/// Parses and checks every document, then interns their names in
+/// `dictionary` and declares each namespace, so a refused document stores
+/// nothing, not even a name.
 pub fn load_namespaces(
     documents: &[&str],
     dictionary: &MemoryDictionary,
     namespaces: &MemoryNamespaceStore,
 ) -> Result<(), LoadError> {
-    let mut checked = Vec::with_capacity(documents.len());
-    for document in documents {
-        let document = parse(document).map_err(Refusal)?;
+    let parsed = documents
+        .iter()
+        .map(|document| parse(document).map_err(Refusal))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut interned = Vec::with_capacity(parsed.len());
+    for document in parsed {
         let id = NamespaceId(dictionary.intern(Pool::Namespaces, document.namespace.as_str())?);
-        // A rename can't fail, so the first name the pool has no id for is
-        // kept, and the rest are named 0 until it's returned.
-        let mut exhausted = Ok(());
-        let relations = document.relations.map(|name| {
-            let id = dictionary.intern(Pool::Relations, name.as_str());
-            RelationId(id.unwrap_or_else(|error| {
-                exhausted = Err(error);
-                0
-            }))
-        });
-        exhausted?;
-        // The interner gives each name its own id, so no rename collides.
-        let relations = relations
-            .map_err(|kind| Refusal(vec![error(None, None, ErrorKind::Namespace(kind))]))?;
-        checked.push((id, relations));
+        let relations = document.relations.try_map(|name| {
+            let id = dictionary.intern(Pool::Relations, name.as_str())?;
+            Ok::<_, LoadError>(RelationId(id))
+        })?;
+        interned.push((id, relations));
     }
-    for (id, relations) in checked {
+    for (id, relations) in interned {
         namespaces.declare(id, relations)?;
     }
     Ok(())

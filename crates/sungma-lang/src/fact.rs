@@ -182,14 +182,17 @@ impl<'de> Deserialize<'de> for SubjectDto {
     }
 }
 
-/// Parses a fact document whole, then interns each fact's namespace and
-/// relation names and inserts it.
+/// Parses a fact document whole, then interns every fact's namespace and
+/// relation names, and then inserts the facts, so a refused document
+/// stores no fact.
 pub fn load_facts(
     json: &str,
     dictionary: &MemoryDictionary,
     store: &MemoryFactStore,
 ) -> Result<(), FactError> {
-    for dto in serde_json::from_str::<Vec<FactDto>>(json)? {
+    let dtos = serde_json::from_str::<Vec<FactDto>>(json)?;
+    let mut facts = Vec::with_capacity(dtos.len());
+    for dto in dtos {
         let subjectset = intern_subjectset(dictionary, &dto.set)?;
         let subject = match dto.subject {
             SubjectDto::Identity(identity) => Subject::Identity(identity),
@@ -200,10 +203,13 @@ pub fn load_facts(
                 Subject::Subjectset(intern_subjectset(dictionary, &set)?)
             }
         };
-        store.insert(Fact {
+        facts.push(Fact {
             subjectset,
             subject,
         });
+    }
+    for fact in facts {
+        store.insert(fact);
     }
     Ok(())
 }

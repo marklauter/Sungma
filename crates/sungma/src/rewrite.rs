@@ -1,5 +1,7 @@
 //! The rewrite tree a relation evaluates.
 
+use std::convert::Infallible;
+
 use crate::{id::RelationId, non_empty::NonEmpty};
 
 /// A relation's rewrite.
@@ -30,18 +32,26 @@ pub enum Rewrite<R = RelationId> {
 impl<R> Rewrite<R> {
     /// Rebuilds the tree with every relation name passed through `f`.
     pub fn map<S>(self, f: &mut impl FnMut(R) -> S) -> Rewrite<S> {
-        match self {
+        let Ok(rewrite) = self.try_map(&mut |relation| Ok::<_, Infallible>(f(relation)));
+        rewrite
+    }
+
+    /// Like [`Rewrite::map`], stopping at the first error.
+    pub fn try_map<S, E>(self, f: &mut impl FnMut(R) -> Result<S, E>) -> Result<Rewrite<S>, E> {
+        Ok(match self {
             Rewrite::This => Rewrite::This,
-            Rewrite::Computed(relation) => Rewrite::Computed(f(relation)),
+            Rewrite::Computed(relation) => Rewrite::Computed(f(relation)?),
             Rewrite::FactTo { factset, computed } => Rewrite::FactTo {
-                factset: f(factset),
-                computed: f(computed),
+                factset: f(factset)?,
+                computed: f(computed)?,
             },
-            Rewrite::Union(operands) => Rewrite::Union(operands.map(|r| r.map(f))),
-            Rewrite::Intersection(operands) => Rewrite::Intersection(operands.map(|r| r.map(f))),
-            Rewrite::Exclusion(base, excluded) => {
-                Rewrite::Exclusion(Box::new(base.map(f)), Box::new(excluded.map(f)))
+            Rewrite::Union(operands) => Rewrite::Union(operands.try_map(|r| r.try_map(f))?),
+            Rewrite::Intersection(operands) => {
+                Rewrite::Intersection(operands.try_map(|r| r.try_map(f))?)
             }
-        }
+            Rewrite::Exclusion(base, excluded) => {
+                Rewrite::Exclusion(Box::new(base.try_map(f)?), Box::new(excluded.try_map(f)?))
+            }
+        })
     }
 }

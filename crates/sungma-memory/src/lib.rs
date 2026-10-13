@@ -135,17 +135,26 @@ impl Facts {
         for write in writes {
             match write {
                 FactWrite::Insert(fact) => {
-                    let spans = self
-                        .spans
-                        .entry(fact.subjectset.clone())
-                        .or_default()
-                        .entry(fact.subject.clone())
-                        .or_default();
-                    if spans.last().is_none_or(|span| span.deleted.is_some()) {
-                        spans.push(Span {
-                            written: revision,
-                            deleted: None,
-                        });
+                    let open = Span {
+                        written: revision,
+                        deleted: None,
+                    };
+                    // The keys are cloned only for a fact not stored before.
+                    match self.spans.get_mut(&fact.subjectset) {
+                        Some(subjects) => match subjects.get_mut(&fact.subject) {
+                            Some(spans) => {
+                                if spans.last().is_none_or(|span| span.deleted.is_some()) {
+                                    spans.push(open);
+                                }
+                            }
+                            None => {
+                                subjects.insert(fact.subject.clone(), vec![open]);
+                            }
+                        },
+                        None => {
+                            let subjects = BTreeMap::from([(fact.subject.clone(), vec![open])]);
+                            self.spans.insert(fact.subjectset.clone(), subjects);
+                        }
                     }
                 }
                 FactWrite::Delete(fact) => {
@@ -256,7 +265,8 @@ impl Versions {
         self.namespaces.get(&id)?.current()
     }
 
-    /// Refuses a write the namespace isn't at the version of, then stores it.
+    /// Refuses a write the namespace isn't at the version of, and a
+    /// retirement of a namespace with no current version, then stores it.
     fn write(
         &mut self,
         id: NamespaceId,
@@ -269,6 +279,9 @@ impl Versions {
                 based_on,
                 namespace,
             } => (Some(based_on), Some(namespace)),
+            NamespaceWrite::Retire { .. } if current.is_none() => {
+                return Err(HistoryError::NothingToRetire.into());
+            }
             NamespaceWrite::Retire { based_on } => (Some(based_on), None),
         };
         if current != expected {
