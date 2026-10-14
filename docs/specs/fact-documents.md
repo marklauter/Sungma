@@ -71,6 +71,8 @@ A fact is never changed. A write adds facts and retires facts, and a retired fac
 
 A namespace name and a [[relation]] name follow the grammar in [Namespace documents](namespace-documents.md#names).
 
+Every namespace and relation a fact names, in its subjectset or its subject, must have been interned; a relation must be one the namespace's current version declares. A fact document never interns a name.
+
 A resource and an identity are owned by the caller: a natural key, a surrogate key, a GUID, a path or an email address. Sungma compares them and never interprets them. Each one:
 
 - is at least one character;
@@ -106,7 +108,7 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 4. **Resources and identities.** Printable ASCII is accepted, any other character and empty text are refused, and case is kept.
 5. **Limits.** Each limit at its value and one past it.
 6. **Errors.** Each error carries the line and column of the value at fault, and quoted text is bounded and escaped.
-7. **All or nothing.** A refused document declares no facts and interns no names.
+7. **All or nothing.** A refused document declares no facts. No fact document interns a name.
 8. **Round trips.** Generated documents load, and each fact is found under the names it was written with.
 9. **Hostile input.** Deeply nested values and large documents are refused or accepted without a crash and within a time bound.
 10. **Text and encoding.** JSON escapes, NUL and a byte-order mark.
@@ -162,7 +164,7 @@ The cases each class covers, at minimum.
 #### All or nothing
 
 1. A document whose last fact is refused declares none of its facts.
-2. No name from a refused document is interned.
+2. No name from any fact document is interned.
 
 #### Round trips
 
