@@ -52,7 +52,7 @@ The epoch exists for one purpose: when a later namespace version re-declares a d
 - Re-applying a fact whose span started before the epoch has to open a new span. Today an insert of a live fact is a no-op (`crates/sungma-memory/src/lib.rs`, `Span`), which would leave a re-asserted grant dead.
 - Every reader of the graph applies the same epoch filter: Check, Expand, Read, Watch and dumps. A reader that skips it shows orphans as live.
 - The eager alternative closes the orphans' spans in the namespace write. It gives the same visible facts at every revision and needs no reader filter, but the write costs as much as there are orphans.
-- This replaces the namespace-write half of idea 4, which refuses a namespace write that strands live facts. It depends on idea 5: `replay` reads the current namespaces today ([[namespace-writes-wait-on-namespace-versioning]]).
+- This replaces the namespace-write half of idea 4, which refuses a namespace write that strands live facts. It depends on idea 5: `replay` reads the namespaces of the decision's revision ([[namespace-writes-wait-on-namespace-versioning]]).
 - **Sungma: missing.** `Namespace` has no epochs, and `crates/sungma/src/closure.rs` treats an undeclared relation as the empty set with no epoch check.
 - Source: decided in conversation on 2026-10-04. It departs from Kingo's `docs/decisions/preventing-drift-between-facts-and-theories.md`, which refuses the namespace write, and keeps that decision's rule that facts carry no namespace version.
 
