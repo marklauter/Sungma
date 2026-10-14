@@ -17,7 +17,7 @@ use sungma::{
     },
     namespace::Namespace,
     rewrite::Rewrite::This,
-    store::{FactStore, Pool},
+    store::{Dictionary, FactStore, Pool},
 };
 use sungma_check::resolve;
 use sungma_lang::fact;
@@ -200,23 +200,50 @@ fn an_empty_resource_or_identity_is_refused() {
     assert!(error.contains("a resource is empty"), "{error}");
 }
 
-/// A fact under a relation no current version declares refuses the whole
-/// document, as does a subject naming one.
+/// A name never interned, or a relation no current version declares,
+/// refuses the whole document, whether the fact or its subject names it.
 #[tokio::test]
-async fn a_fact_under_an_undeclared_relation_is_refused() {
-    let declared = with_subject(r#"{ "identity": "alice" }"#);
-    for undeclared in [
-        r#"{ "namespace": "file", "resource": "a", "relation": "owenr", "subject": { "identity": "bob" } }"#,
-        r#"{ "namespace": "file", "resource": "a", "relation": "owner", "subject": { "namespace": "group", "resource": "eng", "relation": "member" } }"#,
+async fn a_fact_naming_what_no_namespace_declares_is_refused() {
+    let declared =
+        with_subject(r#"{ "namespace": "group", "resource": "eng", "relation": "member" }"#);
+    let fact = |namespace: &str, relation: &str, subject: &str| {
+        format!(
+            r#"{{ "namespace": "{namespace}", "resource": "a", "relation": "{relation}", "subject": {subject} }}"#
+        )
+    };
+    let alice = r#"{ "identity": "alice" }"#;
+    for (refused, error) in [
+        (
+            fact("file", "owenr", alice),
+            "relation 'owenr' was never declared",
+        ),
+        (
+            fact("drive", "owner", alice),
+            "namespace 'drive' was never declared",
+        ),
+        (fact("file", "member", alice), "doesn't declare"),
+        (
+            fact(
+                "file",
+                "owner",
+                r#"{ "namespace": "group", "resource": "eng", "relation": "owner" }"#,
+            ),
+            "doesn't declare",
+        ),
     ] {
         let dictionary = MemoryDictionary::default();
         let facts = MemoryStore::default();
         let head = declare_all(&declared, &dictionary, &facts);
         let declared = declared.strip_suffix(']').unwrap();
-        let json = format!("{declared}, {undeclared}]");
-        let error = fact::load_facts(&json, &dictionary, &facts).unwrap_err();
-        assert!(error.to_string().contains("doesn't declare"), "{error}");
+        let json = format!("{declared}, {refused}]");
+        let message = fact::load_facts(&json, &dictionary, &facts)
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains(error), "{refused}: {message}");
         assert_eq!(facts.head().await.unwrap().0, head);
+        for (pool, name) in [(Pool::Namespaces, "drive"), (Pool::Relations, "owenr")] {
+            assert_eq!(dictionary.lookup(pool, name).await.unwrap(), None);
+        }
     }
 }
 
@@ -284,36 +311,42 @@ fn fact_json(namespace: &str, resource: &str, relation: &str, subject: &Who) -> 
 
 /// Declares every namespace a fact or subjectset subject in the document
 /// names, with each relation named under it as `this`, so the document's
-/// facts are declared. Gives how many namespaces it declared, each at its
-/// own revision.
+/// facts are declared, and interns the namespace of each resource member.
+/// Gives how many namespaces it declared, each at its own revision.
 fn declare_all(json: &str, dictionary: &MemoryDictionary, store: &MemoryStore) -> u64 {
     let Ok(Value::Array(facts)) = serde_json::from_str(json) else {
         return 0;
     };
     let mut relations: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    let mut declared = 0;
     for fact in &facts {
         for part in [fact, &fact["subject"]] {
-            if let (Some(namespace), Some(relation)) =
-                (part["namespace"].as_str(), part["relation"].as_str())
-            {
-                relations.entry(namespace).or_default().insert(relation);
+            let Some(namespace) = part["namespace"].as_str() else {
+                continue;
+            };
+            let names = relations.entry(namespace).or_default();
+            if let Some(relation) = part["relation"].as_str() {
+                names.insert(relation);
             }
         }
     }
     for (namespace, names) in &relations {
         let id = NamespaceId(dictionary.intern(Pool::Namespaces, namespace).unwrap());
-        let declared = names
+        // A namespace only resource members name needs only its name.
+        if names.is_empty() {
+            continue;
+        }
+        let rules = names
             .iter()
             .map(|name| {
                 let relation = dictionary.intern(Pool::Relations, name).unwrap();
                 (RelationId(relation), This)
             })
             .collect();
-        store
-            .declare(id, Namespace::new(declared).unwrap())
-            .unwrap();
+        store.declare(id, Namespace::new(rules).unwrap()).unwrap();
+        declared += 1;
     }
-    relations.len() as u64
+    declared
 }
 
 /// The document loaded into a store that declares its namespaces.

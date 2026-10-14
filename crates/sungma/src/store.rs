@@ -60,7 +60,8 @@ pub trait Dictionary {
 /// the span covering the read opened. Which facts count is the reader's
 /// rule, not the store's: see [`Version::counts`].
 pub trait FactStore {
-    /// The revision of the latest write.
+    /// The revision of the latest write, of a fact or of a namespace
+    /// version: both share one timeline, so a read at the head sees both.
     fn head(&self) -> impl Future<Output = Result<Revision, StoreError>> + Send;
 
     /// Point lookup: the revision that wrote `set@subject`, `None` when it

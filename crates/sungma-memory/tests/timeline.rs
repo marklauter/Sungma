@@ -2,13 +2,13 @@
 //! and namespace versions on one timeline, read at each revision.
 
 use sungma::{
-    closure::Closure,
+    closure::{Closure, Expansion},
     graph::{Fact, Resource, Subject, Subjectset},
     id::{NamespaceId, RelationId},
     name::{Identity, ResourceId},
     namespace::Namespace,
     revision::Revision,
-    rewrite::Rewrite::This,
+    rewrite::Rewrite::{self, FactTo, This},
 };
 use sungma_memory::MemoryStore;
 use sungma_write::store::{
@@ -122,4 +122,140 @@ async fn the_one_timeline_sample() {
     assert_eq!(counted(&store, version_4).await, [false; 3]);
     // Read at 65: Bob's fact, written again, opened a new span after 50.
     assert_eq!(counted(&store, bob_again).await, [false, true, false]);
+}
+
+const GROUP: NamespaceId = NamespaceId(1);
+const VIEWER: RelationId = RelationId(2);
+const PARENT: RelationId = RelationId(3);
+const INHERITED: RelationId = RelationId(4);
+const MEMBER: RelationId = RelationId(5);
+
+fn resource(namespace: NamespaceId, id: &str) -> Resource {
+    Resource {
+        namespace,
+        id: ResourceId::new_unchecked(id),
+    }
+}
+
+fn at(resource: Resource, relation: RelationId) -> Subjectset {
+    Subjectset { resource, relation }
+}
+
+/// `viewer` and `parent` hold facts, and `inherited` is the viewers of
+/// each parent.
+fn file(relations: &[RelationId]) -> Namespace {
+    let rule = |relation| match relation {
+        INHERITED => FactTo {
+            factset: PARENT,
+            computed: VIEWER,
+        },
+        _ => This,
+    };
+    let relations: Vec<(RelationId, Rewrite)> = relations
+        .iter()
+        .map(|&relation| (relation, rule(relation)))
+        .collect();
+    Namespace::new(relations).unwrap()
+}
+
+/// Whether Alice, a member of `group:eng`, views `file:a` through the
+/// nested fact `file:a#viewer@group:eng#member`, and whether Bob, a viewer
+/// of `file:root`, inherits `file:a` through the fact
+/// `file:a#parent@file:root`. The expansion of `file:a#viewer` lists the
+/// facts that count under it.
+async fn reached(store: &MemoryStore, revision: Revision) -> (bool, bool, Expansion) {
+    let viewer = at(resource(FILE, "a"), VIEWER);
+    let inherited = at(resource(FILE, "a"), INHERITED);
+    let alice = Closure::new(store, store, &viewer, revision)
+        .contains(&person("alice"))
+        .await
+        .unwrap();
+    let bob = Closure::new(store, store, &inherited, revision)
+        .contains(&person("bob"))
+        .await
+        .unwrap();
+    let expanded = Closure::new(store, store, &viewer, revision)
+        .expand()
+        .await
+        .unwrap()
+        .unwrap();
+    (alice, bob, expanded)
+}
+
+/// A nested subjectset and a parent link written before their relation's
+/// epoch don't count, though the facts they lead to do.
+#[tokio::test]
+async fn a_path_through_a_fact_from_before_its_epoch_is_closed() {
+    let store = MemoryStore::default();
+    store
+        .write_namespace(GROUP, Create(declaring(&[MEMBER])))
+        .await
+        .unwrap();
+    let declared = file(&[VIEWER, PARENT, INHERITED]);
+    let first = store.write_namespace(FILE, Create(declared)).await.unwrap();
+    let eng = Subject::Subjectset(at(resource(GROUP, "eng"), MEMBER));
+    let nested = Fact {
+        subjectset: at(resource(FILE, "a"), VIEWER),
+        subject: eng.clone(),
+    };
+    let parent = Fact {
+        subjectset: at(resource(FILE, "a"), PARENT),
+        subject: Subject::ResourceMember(resource(FILE, "root")),
+    };
+    let grants = [
+        Insert(Fact {
+            subjectset: at(resource(GROUP, "eng"), MEMBER),
+            subject: person("alice"),
+        }),
+        Insert(nested.clone()),
+        Insert(parent.clone()),
+        Insert(Fact {
+            subjectset: at(resource(FILE, "root"), VIEWER),
+            subject: person("bob"),
+        }),
+    ];
+    let granted = store.write(&grants).await.unwrap();
+    let (alice, bob, expanded) = reached(&store, granted).await;
+    assert!(alice && bob);
+    assert_eq!(expanded, Expansion::Subjects(vec![eng.clone()]));
+
+    // `viewer` and `parent` leave and come back, so their epochs move past
+    // every fact above. Bob's viewer fact on the root is written again, so
+    // only the parent link is from before the epoch.
+    let dropped = store
+        .write_namespace(
+            FILE,
+            NewVersion {
+                based_on: first,
+                namespace: declaring(&[OWNER]),
+            },
+        )
+        .await
+        .unwrap();
+    let back = file(&[VIEWER, PARENT, INHERITED]);
+    store
+        .write_namespace(
+            FILE,
+            NewVersion {
+                based_on: dropped,
+                namespace: back,
+            },
+        )
+        .await
+        .unwrap();
+    let root = Fact {
+        subjectset: at(resource(FILE, "root"), VIEWER),
+        subject: person("bob"),
+    };
+    let rewritten = store.write(&[Insert(root)]).await.unwrap();
+    let (alice, bob, expanded) = reached(&store, rewritten).await;
+    assert!(!alice && !bob);
+    assert_eq!(expanded, Expansion::Subjects(vec![]));
+
+    let again = store
+        .write(&[Insert(nested), Insert(parent)])
+        .await
+        .unwrap();
+    let (alice, bob, _) = reached(&store, again).await;
+    assert!(alice && bob);
 }

@@ -106,7 +106,8 @@ pub enum FactWriteError {
 /// fact's relation and, for a subjectset subject, the subject's relation.
 /// Inserting a fact whose stored span was written before its relation's
 /// epoch closes that span and opens a new one, so a grant asserted again
-/// after its relation comes back counts. See `docs/specs/one-timeline.md`.
+/// after its relation comes back counts. [`crate::fact`] has both rules,
+/// for every store to apply. See `docs/specs/one-timeline.md`.
 pub trait FactWriter: FactStore {
     /// Applies `writes` atomically and returns the revision they're stamped
     /// with, or refuses them all and stores nothing.

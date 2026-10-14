@@ -204,6 +204,13 @@ fn counted<'a, T: 'a>(
         .map(|(item, _)| item)
 }
 
+/// `version` with the rewrite it gives `set`'s relation, `None` when it
+/// doesn't declare the relation.
+fn ruled(version: Arc<Version>, set: &Subjectset) -> Option<(Arc<Version>, Arc<Rewrite>)> {
+    let rewrite = Arc::clone(version.namespace().rewrite(&set.relation)?);
+    Some((version, rewrite))
+}
+
 /// Kleene's or over `items`, judged in turn by `judge` until one holds.
 async fn any<I, P, J>(items: impl IntoIterator<Item = I>, mut judge: impl FnMut(I) -> J) -> Walk<P>
 where
@@ -268,7 +275,7 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
     /// The proof of membership, `None` when there is none.
     async fn judge<P: Proof>(&self, subject: &Subject) -> Result<Option<P>, ClosureError> {
         match self
-            .contains_at(self.subjectset.clone(), subject, None)
+            .contains_at(self.subjectset.clone(), None, subject, None)
             .await?
         {
             Holds(proof) => Ok(Some(proof)),
@@ -300,18 +307,18 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
             .namespaces
             .version(set.resource.namespace, self.revision)
             .await?;
-        Ok(version.and_then(|version| {
-            let rewrite = Arc::clone(version.namespace().rewrite(&set.relation)?);
-            Some((version, rewrite))
-        }))
+        Ok(version.and_then(|version| ruled(version, set)))
     }
 
     /// `path` holds the subjectsets being evaluated, outermost first. The
     /// subject is the same throughout one check, so a subjectset on the
-    /// path is a cycle.
+    /// path is a cycle. `known` is the version of `set`'s namespace when
+    /// the caller already holds it, as a computed step on the same
+    /// resource does, so it isn't read again.
     fn contains_at<'b, P: Proof + 'b>(
         &'b self,
         set: Subjectset,
+        known: Option<&'b Arc<Version>>,
         subject: &'b Subject,
         path: Option<&'b Path<'b>>,
     ) -> BoxFuture<'b, Walk<P>> {
@@ -323,7 +330,11 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
             if depth >= MAX_DEPTH {
                 return Err(ClosureError::DepthExceeded(MAX_DEPTH));
             }
-            let (version, rewrite) = match self.rule(&set).await {
+            let rule = match known {
+                Some(version) => Ok(ruled(Arc::clone(version), &set)),
+                None => self.rule(&set).await,
+            };
+            let (version, rewrite) = match rule {
                 Ok(Some(rule)) => rule,
                 Ok(None) => return Ok(Fails),
                 Err(error) => return Ok(Unknown(error)),
@@ -341,7 +352,7 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
     fn contains_node<'b, P: Proof + 'b>(
         &'b self,
         rewrite: &'b Rewrite,
-        version: &'b Version,
+        version: &'b Arc<Version>,
         set: &'b Subjectset,
         subject: &'b Subject,
         path: Option<&'b Path<'b>>,
@@ -354,7 +365,8 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
                         resource: set.resource.clone(),
                         relation: *relation,
                     };
-                    self.contains_at(computed, subject, path).await
+                    self.contains_at(computed, Some(version), subject, path)
+                        .await
                 }
                 Rewrite::FactTo { factset, computed } => {
                     let factset = &Subjectset {
@@ -366,7 +378,7 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
                         Err(error) => return Ok(Unknown(error)),
                     };
                     any(targets, move |(cited, target)| async move {
-                        let found = self.contains_at(target, subject, path).await?;
+                        let found = self.contains_at(target, None, subject, path).await?;
                         Ok(found.map(|proof| {
                             P::cite(
                                 || Fact {
@@ -442,7 +454,9 @@ impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
                 any(
                     counted(nested, version, set.relation),
                     move |nested| async move {
-                        let found = self.contains_at(nested.clone(), subject, path).await?;
+                        let found = self
+                            .contains_at(nested.clone(), None, subject, path)
+                            .await?;
                         Ok(found.map(|proof| {
                             P::cite(
                                 || Fact {

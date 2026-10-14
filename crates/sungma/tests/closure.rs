@@ -17,7 +17,7 @@ use sungma::{
     non_empty::NonEmpty,
     revision::Revision,
     rewrite::Rewrite::{self, Computed, Exclusion, Intersection, This, Union},
-    store::{FactStore, NamespaceStore, StoreError},
+    store::{FactStore, NamespaceStore, Pool, StoreError},
     version::{History, Version},
 };
 use sungma_lang::fact::load_facts;
@@ -269,6 +269,9 @@ async fn late_bound_relation_missing_on_target_is_empty() {
 #[tokio::test]
 async fn a_parent_of_an_undeclared_namespace_is_empty() {
     let world = world();
+    // `ghost` is a known name that no version declares, as for a retired
+    // namespace.
+    world.dictionary.intern(Pool::Namespaces, "ghost").unwrap();
     let fact = r#"[{ "namespace": "file", "resource": "haunted.md", "relation": "parent", "subject": { "namespace": "ghost", "resource": "attic" } }]"#;
     load_facts(fact, &world.dictionary, &world.store).unwrap();
     assert!(

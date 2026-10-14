@@ -16,10 +16,13 @@ use sungma::{
     store::{Dictionary, FactStore, NamespaceStore, Pool, StoreError},
     version::{History, HistoryError, Version},
 };
-use sungma_clock::{Clock, DevClock, Reading};
-use sungma_write::store::{
-    FactWrite, FactWriteError, FactWriter, InternError, NameStore, NamespaceWrite,
-    NamespaceWriteError, NamespaceWriter,
+use sungma_clock::{Clock, ClockFault, DevClock, Reading};
+use sungma_write::{
+    fact::{check_inserts, opens_span},
+    store::{
+        FactWrite, FactWriteError, FactWriter, InternError, NameStore, NamespaceWrite,
+        NamespaceWriteError, NamespaceWriter,
+    },
 };
 
 /// One pool's names and ids both ways, and the counter its leases advance.
@@ -68,6 +71,12 @@ impl MemoryDictionary {
         Ok(names.insert_if_absent(name, id))
     }
 
+    /// The name's id in `pool`, `None` when it was never interned there.
+    pub fn id(&self, pool: Pool, name: &str) -> Option<u32> {
+        let pools = self.pools();
+        pools.get(&pool)?.ids.get(name).copied()
+    }
+
     fn pools(&self) -> MutexGuard<'_, HashMap<Pool, Names>> {
         self.pools.lock()
     }
@@ -75,11 +84,7 @@ impl MemoryDictionary {
 
 impl Dictionary for MemoryDictionary {
     async fn lookup(&self, pool: Pool, name: &str) -> Result<Option<u32>, StoreError> {
-        let pools = self.pools();
-        Ok(pools
-            .get(&pool)
-            .and_then(|names| names.ids.get(name))
-            .copied())
+        Ok(self.id(pool, name))
     }
 
     async fn name(&self, pool: Pool, id: u32) -> Result<Option<String>, StoreError> {
@@ -128,9 +133,10 @@ struct Facts {
 }
 
 impl Facts {
-    /// Opens a span for `fact` at `revision` unless one is open whose
-    /// write still `counts`. An open span that doesn't count closes there.
-    fn insert(&mut self, fact: &Fact, revision: Revision, counts: impl Fn(Revision) -> bool) {
+    /// Opens a span for `fact` at `revision` when [`opens_span`] says so
+    /// under `current`, its namespace's current version, closing any open
+    /// span there.
+    fn insert(&mut self, fact: &Fact, revision: Revision, current: Option<&Version>) {
         let open = Span {
             written: revision,
             deleted: None,
@@ -145,14 +151,14 @@ impl Facts {
             subjects.insert(fact.subject.clone(), vec![open]);
             return;
         };
-        match spans.last_mut().filter(|span| span.deleted.is_none()) {
-            Some(span) if counts(span.written) => {}
-            Some(span) => {
-                span.deleted = Some(revision);
-                spans.push(open);
-            }
-            None => spans.push(open),
+        let last = spans.last_mut().filter(|span| span.deleted.is_none());
+        if !opens_span(fact, last.as_ref().map(|span| span.written), current) {
+            return;
         }
+        if let Some(span) = last {
+            span.deleted = Some(revision);
+        }
+        spans.push(open);
     }
 
     fn delete(&mut self, fact: &Fact, revision: Revision) {
@@ -194,67 +200,44 @@ impl Facts {
     }
 }
 
-/// The version of namespace `id` whose span is still open. It takes the
-/// histories alone, so a caller can borrow the facts mutably beside it.
-fn current(namespaces: &HashMap<NamespaceId, History>, id: NamespaceId) -> Option<&Arc<Version>> {
-    namespaces.get(&id)?.current()
+/// Each namespace's history.
+#[derive(Debug, Default)]
+struct Namespaces(HashMap<NamespaceId, History>);
+
+impl Namespaces {
+    /// The version whose span is still open, `None` when the namespace was
+    /// never created or is retired.
+    fn current(&self, id: NamespaceId) -> Option<&Arc<Version>> {
+        self.0.get(&id)?.current()
+    }
 }
 
 /// Facts and namespace histories on one timeline.
 #[derive(Debug, Default)]
 struct State {
     facts: Facts,
-    namespaces: HashMap<NamespaceId, History>,
+    namespaces: Namespaces,
     head: u64,
 }
 
 impl State {
-    /// The version whose span is still open, `None` when the namespace was
-    /// never created or is retired.
-    fn current(&self, id: NamespaceId) -> Option<&Arc<Version>> {
-        current(&self.namespaces, id)
-    }
-
-    /// Whether the current versions declare the relation of the subjectset
-    /// `set`.
-    fn declares(&self, set: &Subjectset) -> bool {
-        self.current(set.resource.namespace)
-            .is_some_and(|version| version.declares(set.relation))
-    }
-
-    /// Refuses an insert whose relation, or whose subjectset subject's
-    /// relation, the current versions don't declare.
     fn check_facts(&self, writes: &[FactWrite]) -> Result<(), FactWriteError> {
-        for write in writes {
-            let FactWrite::Insert(fact) = write else {
-                continue;
-            };
-            let subject = match &fact.subject {
-                Subject::Subjectset(subject) => self.declares(subject),
-                Subject::Identity(_) | Subject::ResourceMember(_) => true,
-            };
-            if !(self.declares(&fact.subjectset) && subject) {
-                return Err(FactWriteError::Undeclared(fact.clone()));
-            }
-        }
-        Ok(())
+        check_inserts(writes, |id| self.namespaces.current(id).map(Arc::as_ref))
     }
 
     fn write_facts(&mut self, writes: &[FactWrite], revision: Revision) {
+        let Self {
+            facts, namespaces, ..
+        } = self;
         for write in writes {
             match write {
                 FactWrite::Insert(fact) => {
-                    let set = &fact.subjectset;
-                    let version = current(&self.namespaces, set.resource.namespace);
-                    let counts = |written| {
-                        version.is_some_and(|version| version.counts(set.relation, written))
-                    };
-                    self.facts.insert(fact, revision, counts);
+                    let current = namespaces.current(fact.subjectset.resource.namespace);
+                    facts.insert(fact, revision, current.map(Arc::as_ref));
                 }
-                FactWrite::Delete(fact) => self.facts.delete(fact, revision),
+                FactWrite::Delete(fact) => facts.delete(fact, revision),
             }
         }
-        self.head = revision.0;
     }
 
     /// Refuses a write the namespace isn't at the version of, and a
@@ -265,7 +248,10 @@ impl State {
         id: NamespaceId,
         write: NamespaceWrite,
     ) -> Result<Option<Namespace>, NamespaceWriteError> {
-        let current = self.current(id).map(|version| version.revision());
+        let current = self
+            .namespaces
+            .current(id)
+            .map(|version| version.revision());
         let (expected, next) = match write {
             NamespaceWrite::Create(namespace) => (None, Some(namespace)),
             NamespaceWrite::NewVersion {
@@ -291,13 +277,11 @@ impl State {
         next: Option<Namespace>,
         revision: Revision,
     ) -> Result<(), HistoryError> {
-        let history = self.namespaces.entry(id).or_default();
+        let history = self.namespaces.0.entry(id).or_default();
         match next {
             Some(namespace) => history.write(namespace, revision),
             None => history.retire(revision),
-        }?;
-        self.head = revision.0;
-        Ok(())
+        }
     }
 }
 
@@ -323,10 +307,11 @@ impl MemoryStore {
         id: NamespaceId,
         namespace: Namespace,
     ) -> Result<Revision, NamespaceWriteError> {
-        let mut state = self.state();
-        let revision = self.clock.now()?.revision;
-        state.store(id, Some(namespace), revision)?;
-        Ok(revision)
+        let reading = self.stamp(
+            |_| Ok::<_, NamespaceWriteError>(()),
+            |state, (), revision| Ok(state.store(id, Some(namespace), revision)?),
+        )?;
+        Ok(reading.revision)
     }
 
     /// Stores the facts at one revision and returns it, or refuses them
@@ -338,17 +323,35 @@ impl MemoryStore {
 
     /// Checks `writes`, then stores them at one reading of the clock.
     fn apply(&self, writes: &[FactWrite]) -> Result<Reading, FactWriteError> {
+        self.stamp(
+            |state| state.check_facts(writes),
+            |state, (), revision| {
+                state.write_facts(writes, revision);
+                Ok(())
+            },
+        )
+    }
+
+    /// Under the store's lock: runs `check`, reads the clock, and runs
+    /// `store` at the reading's revision, which becomes the head. When
+    /// `check` refuses, the clock isn't read.
+    fn stamp<T, E: From<ClockFault>>(
+        &self,
+        check: impl FnOnce(&State) -> Result<T, E>,
+        store: impl FnOnce(&mut State, T, Revision) -> Result<(), E>,
+    ) -> Result<Reading, E> {
         let mut state = self.state();
-        state.check_facts(writes)?;
-        let stamped = self.clock.now()?;
-        state.write_facts(writes, stamped.revision);
-        Ok(stamped)
+        let checked = check(&state)?;
+        let reading = self.clock.now()?;
+        store(&mut state, checked, reading.revision)?;
+        state.head = reading.revision.0;
+        Ok(reading)
     }
 
     /// The current version, `None` when the namespace was never created or
     /// is retired.
     pub fn current(&self, id: NamespaceId) -> Option<Arc<Version>> {
-        self.state().current(id).cloned()
+        self.state().namespaces.current(id).cloned()
     }
 
     /// The current version's namespace.
@@ -403,9 +406,9 @@ impl FactStore for MemoryStore {
 
 impl FactWriter for MemoryStore {
     async fn write(&self, writes: &[FactWrite]) -> Result<Revision, FactWriteError> {
-        let stamped = self.apply(writes)?;
-        self.clock.wait(stamped).await?;
-        Ok(stamped.revision)
+        let reading = self.apply(writes)?;
+        self.clock.wait(reading).await?;
+        Ok(reading.revision)
     }
 }
 
@@ -418,6 +421,7 @@ impl NamespaceStore for MemoryStore {
         Ok(self
             .state()
             .namespaces
+            .0
             .get(&namespace)
             .and_then(|history| history.at(revision))
             .cloned())
@@ -430,14 +434,11 @@ impl NamespaceWriter for MemoryStore {
         namespace: NamespaceId,
         write: NamespaceWrite,
     ) -> Result<Revision, NamespaceWriteError> {
-        let stamped = {
-            let mut state = self.state();
-            let next = state.check_namespace(namespace, write)?;
-            let stamped = self.clock.now()?;
-            state.store(namespace, next, stamped.revision)?;
-            stamped
-        };
-        self.clock.wait(stamped).await?;
-        Ok(stamped.revision)
+        let reading = self.stamp(
+            |state| state.check_namespace(namespace, write),
+            |state, next, revision| Ok(state.store(namespace, next, revision)?),
+        )?;
+        self.clock.wait(reading).await?;
+        Ok(reading.revision)
     }
 }
