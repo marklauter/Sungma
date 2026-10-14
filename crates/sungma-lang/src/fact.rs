@@ -185,8 +185,10 @@ impl<'de> Deserialize<'de> for SubjectDto {
 }
 
 /// Parses a fact document whole, then interns every fact's namespace and
-/// relation names, and then inserts the facts, so a refused document
-/// stores no fact.
+/// relation names, and then inserts the facts in one write at one
+/// revision; an empty document writes nothing. A refused document stores
+/// no fact, and a fact under a relation no current version declares
+/// refuses the document.
 pub fn load_facts(
     json: &str,
     dictionary: &MemoryDictionary,
@@ -210,8 +212,8 @@ pub fn load_facts(
             subject,
         });
     }
-    for fact in facts {
-        store.insert(fact)?;
+    if !facts.is_empty() {
+        store.insert(facts)?;
     }
     Ok(())
 }

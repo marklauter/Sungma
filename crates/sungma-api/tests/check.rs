@@ -42,11 +42,10 @@ async fn check(state: &Arc<AppState>, body: Value) -> (StatusCode, Value) {
     post(router(state.clone()), body, &[]).await
 }
 
-/// Namespaces and facts take revisions from one clock, and every fixture
-/// namespace and fact is a new write, so the head is their count.
+/// Namespaces and facts take revisions from one clock: one for each
+/// fixture namespace, then one for the facts, written together.
 fn head() -> u64 {
-    let facts: Vec<Value> = serde_json::from_str(FACTS).unwrap();
-    (NAMESPACES.len() + facts.len()) as u64
+    NAMESPACES.len() as u64 + 1
 }
 
 #[tokio::test]

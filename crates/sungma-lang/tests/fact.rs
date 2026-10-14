@@ -1,16 +1,22 @@
 //! Fact documents: every part under its own key, and a subject read by
 //! its keys.
 
-use std::time::{Duration, Instant};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::{Duration, Instant},
+};
 
 use proptest::prelude::*;
 use serde_json::{Value, json};
 use sungma::{
     graph::Subject,
+    id::{NamespaceId, RelationId},
     name::{
         MAX_IDENTITY_BYTES, MAX_NAMESPACE_BYTES, MAX_RELATION_BYTES, MAX_RESOURCE_ID_BYTES,
         ResourceName, SubjectsetName,
     },
+    namespace::Namespace,
+    rewrite::Rewrite::This,
     store::{FactStore, Pool},
 };
 use sungma_check::resolve;
@@ -46,8 +52,9 @@ async fn a_subject_is_read_by_its_keys() {
         { "namespace": "file", "resource": "a", "relation": "viewer",
           "subject": { "namespace": "group", "resource": "eng", "relation": "member" } }
     ]"#;
+    let declared = declare_all(json, &dictionary, &facts);
     fact::load_facts(json, &dictionary, &facts).unwrap();
-    assert_eq!(facts.head().await.unwrap().0, 3);
+    assert_eq!(facts.head().await.unwrap().0, declared + 1);
     let folder = resolve::resource(&dictionary, &"folder:root".parse().unwrap()).await;
     assert!(folder.unwrap().is_some());
 }
@@ -193,6 +200,26 @@ fn an_empty_resource_or_identity_is_refused() {
     assert!(error.contains("a resource is empty"), "{error}");
 }
 
+/// A fact under a relation no current version declares refuses the whole
+/// document, as does a subject naming one.
+#[tokio::test]
+async fn a_fact_under_an_undeclared_relation_is_refused() {
+    let declared = with_subject(r#"{ "identity": "alice" }"#);
+    for undeclared in [
+        r#"{ "namespace": "file", "resource": "a", "relation": "owenr", "subject": { "identity": "bob" } }"#,
+        r#"{ "namespace": "file", "resource": "a", "relation": "owner", "subject": { "namespace": "group", "resource": "eng", "relation": "member" } }"#,
+    ] {
+        let dictionary = MemoryDictionary::default();
+        let facts = MemoryStore::default();
+        let head = declare_all(&declared, &dictionary, &facts);
+        let declared = declared.strip_suffix(']').unwrap();
+        let json = format!("{declared}, {undeclared}]");
+        let error = fact::load_facts(&json, &dictionary, &facts).unwrap_err();
+        assert!(error.to_string().contains("doesn't declare"), "{error}");
+        assert_eq!(facts.head().await.unwrap().0, head);
+    }
+}
+
 #[tokio::test]
 async fn a_refused_document_declares_no_facts() {
     let dictionary = MemoryDictionary::default();
@@ -255,9 +282,45 @@ fn fact_json(namespace: &str, resource: &str, relation: &str, subject: &Who) -> 
     json!({ "namespace": namespace, "resource": resource, "relation": relation, "subject": subject.json() })
 }
 
+/// Declares every namespace a fact or subjectset subject in the document
+/// names, with each relation named under it as `this`, so the document's
+/// facts are declared. Gives how many namespaces it declared, each at its
+/// own revision.
+fn declare_all(json: &str, dictionary: &MemoryDictionary, store: &MemoryStore) -> u64 {
+    let Ok(Value::Array(facts)) = serde_json::from_str(json) else {
+        return 0;
+    };
+    let mut relations: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for fact in &facts {
+        for part in [fact, &fact["subject"]] {
+            if let (Some(namespace), Some(relation)) =
+                (part["namespace"].as_str(), part["relation"].as_str())
+            {
+                relations.entry(namespace).or_default().insert(relation);
+            }
+        }
+    }
+    for (namespace, names) in &relations {
+        let id = NamespaceId(dictionary.intern(Pool::Namespaces, namespace).unwrap());
+        let declared = names
+            .iter()
+            .map(|name| {
+                let relation = dictionary.intern(Pool::Relations, name).unwrap();
+                (RelationId(relation), This)
+            })
+            .collect();
+        store
+            .declare(id, Namespace::new(declared).unwrap())
+            .unwrap();
+    }
+    relations.len() as u64
+}
+
+/// The document loaded into a store that declares its namespaces.
 fn loaded(json: &str) -> (MemoryDictionary, MemoryStore) {
     let dictionary = MemoryDictionary::default();
     let facts = MemoryStore::default();
+    declare_all(json, &dictionary, &facts);
     if let Err(error) = fact::load_facts(json, &dictionary, &facts) {
         panic!("refused: {error}");
     }
@@ -410,6 +473,7 @@ async fn case_is_kept() {
         fact_json("file", "a", "owner", &identity("anne")),
     ]);
     let world = loaded(&documents.to_string());
+    // One revision declares `file`, and one writes both facts.
     assert_eq!(world.1.head().await.unwrap().0, 2);
     let owner = ("file", "a", "owner");
     assert!(holds(&world, owner, &identity("Anne")).await);
@@ -536,7 +600,8 @@ async fn a_large_document_loads_within_a_time_bound() {
         "{:?}",
         started.elapsed()
     );
-    assert_eq!(facts.head().await.unwrap().0, 100_000);
+    // One revision declares `file`, and one writes every fact.
+    assert_eq!(facts.head().await.unwrap().0, 2);
 }
 
 #[tokio::test]

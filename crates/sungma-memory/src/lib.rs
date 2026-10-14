@@ -16,7 +16,7 @@ use sungma::{
     store::{Dictionary, FactStore, NamespaceStore, Pool, StoreError},
     version::{History, HistoryError, Version},
 };
-use sungma_clock::{Clock, DevClock};
+use sungma_clock::{Clock, DevClock, Reading};
 use sungma_write::store::{
     FactWrite, FactWriteError, FactWriter, InternError, NameStore, NamespaceWrite,
     NamespaceWriteError, NamespaceWriter,
@@ -194,6 +194,12 @@ impl Facts {
     }
 }
 
+/// The version of namespace `id` whose span is still open. It takes the
+/// histories alone, so a caller can borrow the facts mutably beside it.
+fn current(namespaces: &HashMap<NamespaceId, History>, id: NamespaceId) -> Option<&Arc<Version>> {
+    namespaces.get(&id)?.current()
+}
+
 /// Facts and namespace histories on one timeline.
 #[derive(Debug, Default)]
 struct State {
@@ -206,7 +212,7 @@ impl State {
     /// The version whose span is still open, `None` when the namespace was
     /// never created or is retired.
     fn current(&self, id: NamespaceId) -> Option<&Arc<Version>> {
-        self.namespaces.get(&id)?.current()
+        current(&self.namespaces, id)
     }
 
     /// Whether the current versions declare the relation of the subjectset
@@ -239,10 +245,7 @@ impl State {
             match write {
                 FactWrite::Insert(fact) => {
                     let set = &fact.subjectset;
-                    let version = self
-                        .namespaces
-                        .get(&set.resource.namespace)
-                        .and_then(History::current);
+                    let version = current(&self.namespaces, set.resource.namespace);
                     let counts = |written| {
                         version.is_some_and(|version| version.counts(set.relation, written))
                     };
@@ -303,8 +306,9 @@ impl State {
 /// store's lock, so revisions follow the order writes land in.
 ///
 /// [`MemoryStore::declare`] and [`MemoryStore::insert`] seed a store for
-/// tests and fixtures. They skip the checks the write ports make, and a
-/// `DevClock` never needs a wait.
+/// tests and fixtures without awaiting, since a `DevClock` never needs a
+/// wait. `declare` skips the version check `write_namespace` makes;
+/// `insert` makes the same checks as `write`.
 #[derive(Debug, Default)]
 pub struct MemoryStore {
     state: Mutex<State>,
@@ -325,13 +329,20 @@ impl MemoryStore {
         Ok(revision)
     }
 
-    /// Stores the fact at the next revision and returns it, whether or not
-    /// its relation is declared.
-    pub fn insert(&self, fact: Fact) -> Result<Revision, FactWriteError> {
+    /// Stores the facts at one revision and returns it, or refuses them
+    /// all as [`FactWriter::write`] does.
+    pub fn insert(&self, facts: Vec<Fact>) -> Result<Revision, FactWriteError> {
+        let writes: Vec<FactWrite> = facts.into_iter().map(FactWrite::Insert).collect();
+        Ok(self.apply(&writes)?.revision)
+    }
+
+    /// Checks `writes`, then stores them at one reading of the clock.
+    fn apply(&self, writes: &[FactWrite]) -> Result<Reading, FactWriteError> {
         let mut state = self.state();
-        let revision = self.clock.now()?.revision;
-        state.write_facts(&[FactWrite::Insert(fact)], revision);
-        Ok(revision)
+        state.check_facts(writes)?;
+        let stamped = self.clock.now()?;
+        state.write_facts(writes, stamped.revision);
+        Ok(stamped)
     }
 
     /// The current version, `None` when the namespace was never created or
@@ -392,13 +403,7 @@ impl FactStore for MemoryStore {
 
 impl FactWriter for MemoryStore {
     async fn write(&self, writes: &[FactWrite]) -> Result<Revision, FactWriteError> {
-        let stamped = {
-            let mut state = self.state();
-            state.check_facts(writes)?;
-            let stamped = self.clock.now()?;
-            state.write_facts(writes, stamped.revision);
-            stamped
-        };
+        let stamped = self.apply(writes)?;
         self.clock.wait(stamped).await?;
         Ok(stamped.revision)
     }
