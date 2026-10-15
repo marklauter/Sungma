@@ -61,8 +61,9 @@ impl Table {
         &self,
         pk: &[u8],
         subject: &[u8],
+        consistent: bool,
     ) -> Result<Option<Revision>, StoreError> {
-        let item = self.get(pk.to_vec(), subject.to_vec(), false).await?;
+        let item = self.get(pk.to_vec(), subject.to_vec(), consistent).await?;
         Ok(item
             .map(|item| table::optional_revision(&item, OPEN))
             .transpose()?

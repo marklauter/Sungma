@@ -2,12 +2,12 @@
 //! one table, names and leases, the transaction cap, and items Sungma
 //! didn't write. Runs against DynamoDB Local, as `stores.rs` does.
 
-use std::{
-    num::NonZeroU32,
-    sync::atomic::{AtomicU64, Ordering},
-};
+mod common;
+
+use std::num::NonZeroU32;
 
 use aws_sdk_dynamodb::{primitives::Blob, types::AttributeValue};
+use common::table;
 use sungma::{
     graph::{Fact, Resource, Subject, Subjectset},
     id::{NamespaceId, RelationId},
@@ -18,27 +18,11 @@ use sungma::{
     store::{Dictionary, FactReader, NameReader, NamespaceReader, Pool},
 };
 use sungma_clock::DevClock;
-use sungma_dynamodb::{DynamoReader, DynamoWriter, Table, key, local};
+use sungma_dynamodb::{DynamoReader, DynamoWriter, Table, key};
 use sungma_write::{
     intern::LeasingInterner,
     store::{FactWrite::Insert, FactWriter, Interner, NameWriter, NamespaceWrite, NamespaceWriter},
 };
-
-async fn table() -> Table {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let endpoint =
-        std::env::var("SUNGMA_DYNAMODB_URL").unwrap_or_else(|_| "http://localhost:8000".to_owned());
-    let name = format!(
-        "sungma-dynamo-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    );
-    let table = Table::new(local(&endpoint), name);
-    table.create().await.unwrap_or_else(|error| {
-        panic!("DynamoDB Local at {endpoint} refused a table; run scripts/dynamodb.sh: {error}")
-    });
-    table
-}
 
 fn writer(table: &Table) -> DynamoWriter<DevClock> {
     DynamoWriter::new(table.clone(), DevClock::default())
@@ -78,7 +62,8 @@ fn owner(id: &str, who: &str) -> Fact {
 }
 
 /// A writer whose clock is behind the table's head is refused, moves its
-/// clock past the head, and lands its write after every earlier one.
+/// clock past the head, and lands its write after every earlier one. A
+/// writer opened with `dev` starts after the head.
 #[tokio::test]
 async fn a_writer_behind_the_head_catches_up_in_one_try() {
     let table = table().await;
@@ -109,6 +94,8 @@ async fn a_writer_behind_the_head_catches_up_in_one_try() {
         .await
         .unwrap();
     assert_eq!(version, Revision(8));
+    let opened = DynamoWriter::dev(table).await.unwrap();
+    assert_eq!(opened.write(&[]).await.unwrap(), Revision(9));
 }
 
 /// A transaction holds 100 items; a larger write is refused before it's
@@ -363,4 +350,32 @@ async fn a_namespace_without_names_is_refused() {
         refused.to_string(),
         "store failure: relation 0 has no interned name"
     );
+}
+
+/// Writers on separate nodes, each with its own clock, all based on one
+/// version, race for it: the table's conditions let exactly one through.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn of_nodes_writing_one_version_exactly_one_succeeds() {
+    for _ in 0..10 {
+        let table = table().await;
+        let first = declared(&writer(&table)).await;
+        let racers: Vec<_> = (0..4)
+            .map(|_| {
+                let node = writer(&table);
+                tokio::spawn(async move {
+                    let namespace = Namespace::new(vec![(OWNER, This)]).unwrap();
+                    let write = NamespaceWrite::NewVersion {
+                        based_on: first,
+                        namespace,
+                    };
+                    node.write_namespace(DOC, write).await.is_ok()
+                })
+            })
+            .collect();
+        let mut stored = 0;
+        for racer in racers {
+            stored += usize::from(racer.await.unwrap());
+        }
+        assert_eq!(stored, 1);
+    }
 }

@@ -14,6 +14,9 @@ use crate::{
     table::{self, Item, Refused, Table, failed, number},
 };
 
+/// How many times an insert that keeps meeting another in flight is tried.
+const ATTEMPTS: usize = 16;
+
 const ID: &str = "id";
 const NAME: &str = "name";
 const NEXT: &str = "next";
@@ -36,8 +39,15 @@ impl Table {
     }
 
     /// The name stored for `id` in `pool`.
-    pub(crate) async fn name_of(&self, pool: Pool, id: u32) -> Result<Option<String>, StoreError> {
-        let item = self.get(key::names(pool), key::name_id(id), false).await?;
+    pub(crate) async fn name_of(
+        &self,
+        pool: Pool,
+        id: u32,
+        consistent: bool,
+    ) -> Result<Option<String>, StoreError> {
+        let item = self
+            .get(key::names(pool), key::name_id(id), consistent)
+            .await?;
         item.map(|item| table::required_string(&item, NAME).map(str::to_owned))
             .transpose()
     }
@@ -62,20 +72,36 @@ impl Table {
                     .map_err(failed)?;
                 Ok(TransactWriteItem::builder().put(put).build())
             };
-        let items = vec![
-            put(key::name(name), (ID, number(id.into())))?,
-            put(key::name_id(id), (NAME, AttributeValue::S(name.to_owned())))?,
-        ];
-        match self.transact(items).await {
-            Ok(()) => Ok(id),
-            Err(Refused::Failed(error)) => Err(error),
-            // Another node stored the name first; a consistent read sees it.
-            Err(Refused::Cancelled(_)) => self.id_of(pool, name, true).await?.ok_or_else(|| {
-                StoreError(format!(
-                    "id {id} is taken in {pool:?}, but '{name}' isn't stored"
-                ))
-            }),
+        for _ in 0..ATTEMPTS {
+            let items = vec![
+                put(key::name(name), (ID, number(id.into())))?,
+                put(key::name_id(id), (NAME, AttributeValue::S(name.to_owned())))?,
+            ];
+            match self.transact(items).await {
+                Ok(()) => return Ok(id),
+                Err(Refused::Failed(error)) => return Err(error),
+                // Another node's insert of the name is still in flight.
+                Err(Refused::Cancelled(reasons))
+                    if reasons
+                        .iter()
+                        .flatten()
+                        .any(|reason| reason == "TransactionConflict") =>
+                {
+                    continue;
+                }
+                // Another node stored the name first; a consistent read sees it.
+                Err(Refused::Cancelled(_)) => {
+                    return self.id_of(pool, name, true).await?.ok_or_else(|| {
+                        StoreError(format!(
+                            "id {id} is taken in {pool:?}, but '{name}' isn't stored"
+                        ))
+                    });
+                }
+            }
         }
+        Err(StoreError(format!(
+            "storing '{name}' lost {ATTEMPTS} races in a row"
+        )))
     }
 
     /// Advances `pool`'s counter by up to `count`, and returns the ids it

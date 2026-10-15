@@ -86,6 +86,6 @@ impl NameReader for DynamoReader {
     }
 
     async fn name(&self, pool: Pool, id: u32) -> Result<Option<String>, StoreError> {
-        self.table.name_of(pool, id).await
+        self.table.name_of(pool, id, false).await
     }
 }

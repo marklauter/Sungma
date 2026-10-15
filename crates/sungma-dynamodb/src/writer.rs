@@ -18,7 +18,7 @@ use sungma::{
     store::{Pool, StoreError},
     version::{History, HistoryError, Version},
 };
-use sungma_clock::{Clock, ClockFault, Reading};
+use sungma_clock::{Clock, ClockFault, DevClock, Reading};
 use sungma_write::{
     fact::{check_inserts, opens_span},
     store::{
@@ -85,8 +85,7 @@ pub struct DynamoWriter<C> {
 }
 
 impl<C> DynamoWriter<C> {
-    /// A writer over `table`. A [`sungma_clock::DevClock`] starts after the
-    /// table's head, so it never issues a revision twice.
+    /// A writer over `table` that stamps its writes from `clock`.
     pub fn new(table: Table, clock: C) -> Self {
         Self {
             table,
@@ -96,14 +95,24 @@ impl<C> DynamoWriter<C> {
     }
 }
 
+impl DynamoWriter<DevClock> {
+    /// A writer over `table` whose [`DevClock`] starts after the table's
+    /// head, so it never issues a revision twice.
+    pub async fn dev(table: Table) -> Result<Self, StoreError> {
+        let head = table.head(true).await?;
+        Ok(Self::new(table, DevClock::starting_after(head)))
+    }
+}
+
 /// What a write's transaction does to its items, in order: the head first.
-struct Transaction {
+struct Transaction<'t> {
+    table: &'t Table,
     items: Vec<TransactWriteItem>,
 }
 
-impl Transaction {
+impl<'t> Transaction<'t> {
     /// Starts with moving the head to `revision`.
-    fn new(table: &Table, revision: Revision) -> Result<Self, StoreError> {
+    fn new(table: &'t Table, revision: Revision) -> Result<Self, StoreError> {
         let (pk, sk) = key::head();
         let head = Update::builder()
             .table_name(table.name())
@@ -115,6 +124,7 @@ impl Transaction {
             .build()
             .map_err(failed)?;
         Ok(Self {
+            table,
             items: vec![TransactWriteItem::builder().update(head).build()],
         })
     }
@@ -123,7 +133,6 @@ impl Transaction {
     /// have it when `None`.
     fn check(
         &mut self,
-        table: &Table,
         pk: Vec<u8>,
         sk: Vec<u8>,
         attribute: &str,
@@ -131,7 +140,7 @@ impl Transaction {
     ) -> Result<(), StoreError> {
         let (condition, value) = unchanged(revision);
         let check = ConditionCheck::builder()
-            .table_name(table.name())
+            .table_name(self.table.name())
             .set_key(Some(table::key(pk, sk)))
             .condition_expression(condition)
             .expression_attribute_names("#attribute", attribute)
@@ -145,10 +154,8 @@ impl Transaction {
 
     /// Stores `attributes` at the key, on condition `attribute` still holds
     /// `revision`, or the item has none when `None`.
-    #[allow(clippy::too_many_arguments)]
     fn put(
         &mut self,
-        table: &Table,
         pk: Vec<u8>,
         sk: Vec<u8>,
         attributes: Item,
@@ -159,7 +166,7 @@ impl Transaction {
         item.extend(attributes);
         let (condition, value) = unchanged(revision);
         let put = Put::builder()
-            .table_name(table.name())
+            .table_name(self.table.name())
             .set_item(Some(item))
             .condition_expression(condition)
             .expression_attribute_names("#attribute", attribute)
@@ -172,15 +179,9 @@ impl Transaction {
     }
 
     /// Closes the span at the key at `revision`.
-    fn retire(
-        &mut self,
-        table: &Table,
-        pk: Vec<u8>,
-        sk: Vec<u8>,
-        revision: Revision,
-    ) -> Result<(), StoreError> {
+    fn retire(&mut self, pk: Vec<u8>, sk: Vec<u8>, revision: Revision) -> Result<(), StoreError> {
         let update = Update::builder()
-            .table_name(table.name())
+            .table_name(self.table.name())
             .set_key(Some(table::key(pk, sk)))
             .update_expression("SET #retired = :at")
             .expression_attribute_names("#retired", RETIRED)
@@ -285,7 +286,7 @@ impl<C: Clock + Sync> DynamoWriter<C> {
     /// Sends `transaction`. `Ok(false)` when it lost a race and should be
     /// tried again; when it lost to a later head, the clock moves past it
     /// first.
-    async fn send(&self, transaction: Transaction) -> Result<bool, SendError> {
+    async fn send(&self, transaction: Transaction<'_>) -> Result<bool, SendError> {
         match self.table.transact(transaction.items).await {
             Ok(()) => Ok(true),
             Err(Refused::Failed(error)) => Err(error.into()),
@@ -313,12 +314,17 @@ impl<C: Clock + Sync> DynamoWriter<C> {
             .await
     }
 
-    /// One try at a fact write: `None` when it lost a race.
-    async fn try_write(&self, writes: &[FactWrite]) -> Result<Option<Reading>, FactWriteError> {
+    /// One try at a fact write: `None` when it lost a race. A try after a
+    /// lost race reads `consistent`ly, so it sees what beat it.
+    async fn try_write(
+        &self,
+        writes: &[FactWrite],
+        consistent: bool,
+    ) -> Result<Option<Reading>, FactWriteError> {
         let table = &self.table;
         let mut latest: HashMap<NamespaceId, Option<Latest>> = HashMap::new();
         for namespace in judged(writes) {
-            latest.insert(namespace, table.latest(namespace, false).await?);
+            latest.insert(namespace, table.latest(namespace, consistent).await?);
         }
         let current =
             |namespace: NamespaceId| latest.get(&namespace)?.as_ref()?.current().map(Arc::as_ref);
@@ -327,7 +333,7 @@ impl<C: Clock + Sync> DynamoWriter<C> {
         for (fact, inserts) in grouped(writes) {
             let pk = key::fact(&fact.subjectset);
             let subject = key::subject(&fact.subject);
-            let open = table.open(&pk, &subject).await?;
+            let open = table.open(&pk, &subject, consistent).await?;
             let current = current(fact.subjectset.resource.namespace);
             let change = fold(fact, &inserts, open, current);
             changes.push((pk, subject, open, change));
@@ -345,49 +351,39 @@ impl<C: Clock + Sync> DynamoWriter<C> {
         let at = reading.revision;
         let mut transaction = Transaction::new(table, at)?;
         for (namespace, seen) in &latest {
-            let seen = seen.as_ref().map(|latest| latest.revision);
-            transaction.check(
-                table,
-                key::namespace(*namespace),
-                key::latest(),
-                REVISION,
-                seen,
-            )?;
+            let seen = seen.as_ref().map(Latest::revision);
+            transaction.check(key::namespace(*namespace), key::latest(), REVISION, seen)?;
         }
         for (pk, subject, open, (closed, opened)) in changes {
             if !closed && !opened {
-                transaction.check(table, pk, subject, OPEN, open)?;
+                transaction.check(pk, subject, OPEN, open)?;
                 continue;
             }
             if let (true, Some(written)) = (closed, open) {
-                transaction.retire(table, pk.clone(), key::span(&subject, written), at)?;
+                transaction.retire(pk.clone(), key::span(&subject, written), at)?;
             }
             let mut pointer = Item::new();
             if opened {
                 let span = Item::from([(WRITTEN.to_owned(), number(at.0))]);
-                transaction.put(
-                    table,
-                    pk.clone(),
-                    key::span(&subject, at),
-                    span,
-                    WRITTEN,
-                    None,
-                )?;
+                transaction.put(pk.clone(), key::span(&subject, at), span, WRITTEN, None)?;
                 pointer.insert(OPEN.to_owned(), number(at.0));
             }
-            transaction.put(table, pk, subject, pointer, OPEN, open)?;
+            transaction.put(pk, subject, pointer, OPEN, open)?;
         }
         Ok(self.send(transaction).await?.then_some(reading))
     }
 
-    /// One try at a namespace write: `None` when it lost a race.
+    /// One try at a namespace write: `None` when it lost a race, or when
+    /// a read that wasn't `consistent` found the namespace at another
+    /// version, so the next try reads it again before refusing.
     async fn try_write_namespace(
         &self,
         namespace: NamespaceId,
         write: &NamespaceWrite,
+        consistent: bool,
     ) -> Result<Option<Reading>, NamespaceWriteError> {
         let table = &self.table;
-        let latest = table.latest(namespace, false).await?;
+        let latest = table.latest(namespace, consistent).await?;
         let current = latest
             .as_ref()
             .and_then(Latest::current)
@@ -404,11 +400,14 @@ impl<C: Clock + Sync> DynamoWriter<C> {
             NamespaceWrite::Retire { based_on } => (Some(*based_on), None),
         };
         if current != expected {
+            if !consistent {
+                return Ok(None);
+            }
             return Err(NamespaceWriteError::Conflict { current });
         }
         let reading = self.clock.now()?;
         let at = reading.revision;
-        let seen = latest.as_ref().map(|latest| latest.revision);
+        let seen = latest.as_ref().map(Latest::revision);
         let mut history = latest
             .map(|latest| History::resume(latest.entry))
             .unwrap_or_default();
@@ -430,14 +429,13 @@ impl<C: Clock + Sync> DynamoWriter<C> {
         let mut transaction = Transaction::new(table, at)?;
         let pk = key::namespace(namespace);
         transaction.put(
-            table,
             pk.clone(),
             key::entry(at),
             attributes.clone(),
             REVISION,
             None,
         )?;
-        transaction.put(table, pk, key::latest(), attributes, REVISION, seen)?;
+        transaction.put(pk, key::latest(), attributes, REVISION, seen)?;
         Ok(self.send(transaction).await?.then_some(reading))
     }
 
@@ -461,8 +459,8 @@ fn gave_up() -> StoreError {
 impl<C: Clock + Sync> FactWriter for DynamoWriter<C> {
     async fn write(&self, writes: &[FactWrite]) -> Result<Revision, FactWriteError> {
         let _writing = self.lock.lock().await;
-        for _ in 0..ATTEMPTS {
-            if let Some(reading) = self.try_write(writes).await? {
+        for attempt in 0..ATTEMPTS {
+            if let Some(reading) = self.try_write(writes, attempt > 0).await? {
                 return Ok(self.settle(reading).await?);
             }
         }
@@ -477,8 +475,12 @@ impl<C: Clock + Sync> NamespaceWriter for DynamoWriter<C> {
         write: NamespaceWrite,
     ) -> Result<Revision, NamespaceWriteError> {
         let _writing = self.lock.lock().await;
-        for _ in 0..ATTEMPTS {
-            if let Some(reading) = self.try_write_namespace(namespace, &write).await? {
+        for attempt in 0..ATTEMPTS {
+            let consistent = attempt > 0;
+            if let Some(reading) = self
+                .try_write_namespace(namespace, &write, consistent)
+                .await?
+            {
                 return Ok(self.settle(reading).await?);
             }
         }

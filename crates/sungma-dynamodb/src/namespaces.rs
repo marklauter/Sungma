@@ -26,13 +26,18 @@ const DOCUMENT: &str = "document";
 const EPOCHS: &str = "epochs";
 const RETIRED: &str = "retired";
 
-/// The entry an item holds, and the revision its latest item was at.
+/// The entry a namespace's latest item holds.
 pub(crate) struct Latest {
     pub entry: Entry,
-    pub revision: Revision,
 }
 
 impl Latest {
+    /// Where the latest entry opens: what a write that follows it checks
+    /// the latest item still holds.
+    pub fn revision(&self) -> Revision {
+        self.entry.revision()
+    }
+
     /// The version current at the latest entry, `None` when it's retired.
     pub fn current(&self) -> Option<&Arc<Version>> {
         match &self.entry {
@@ -79,8 +84,7 @@ impl Table {
             return Ok(None);
         };
         Ok(Some(Latest {
-            revision: table::required_revision(&item, REVISION)?,
-            entry: self.entry(&item).await?,
+            entry: self.entry(&item, consistent).await?,
         }))
     }
 
@@ -92,7 +96,9 @@ impl Table {
     ) -> Result<Option<Arc<Version>>, StoreError> {
         match self.latest(namespace, false).await? {
             None => return Ok(None),
-            Some(latest) if latest.revision <= revision => return Ok(latest.current().cloned()),
+            Some(latest) if latest.revision() <= revision => {
+                return Ok(latest.current().cloned());
+            }
             // A newer entry landed after `revision`, so the history answers.
             Some(_) => {}
         }
@@ -107,15 +113,17 @@ impl Table {
         let Some(item) = self.query(query).await?.pop() else {
             return Ok(None);
         };
-        match self.entry(&item).await? {
+        match self.entry(&item, false).await? {
             Entry::Version(version) => Ok(Some(version)),
             Entry::Retired(_) => Ok(None),
         }
     }
 
     /// The entry an item holds, its document parsed and its names mapped to
-    /// ids.
-    async fn entry(&self, item: &Item) -> Result<Entry, StoreError> {
+    /// ids. A name a read that isn't `consistent` misses is read again
+    /// consistently, since names are stored before the versions that use
+    /// them.
+    async fn entry(&self, item: &Item, consistent: bool) -> Result<Entry, StoreError> {
         let revision = table::required_revision(item, REVISION)?;
         if table::flag(item, RETIRED) {
             return Ok(Entry::Retired(revision));
@@ -128,10 +136,13 @@ impl Table {
         })?;
         let mut ids = HashMap::new();
         for name in relations(&document.relations)? {
-            let id = self
-                .id_of(Pool::Relations, name.as_str(), false)
-                .await?
-                .ok_or_else(|| StoreError(format!("relation '{name}' isn't interned")))?;
+            let mut id = self
+                .id_of(Pool::Relations, name.as_str(), consistent)
+                .await?;
+            if id.is_none() && !consistent {
+                id = self.id_of(Pool::Relations, name.as_str(), true).await?;
+            }
+            let id = id.ok_or_else(|| StoreError(format!("relation '{name}' isn't interned")))?;
             ids.insert(name, RelationId(id));
         }
         let namespace = document
@@ -195,13 +206,13 @@ impl Table {
     async fn document(&self, id: NamespaceId, namespace: &Namespace) -> Result<String, StoreError> {
         let unnamed = |what: String| StoreError(format!("{what} has no interned name"));
         let name = self
-            .name_of(Pool::Namespaces, id.0)
+            .name_of(Pool::Namespaces, id.0, true)
             .await?
             .ok_or_else(|| unnamed(format!("namespace {}", id.0)))?;
         let mut names = HashMap::new();
         for relation in relations(namespace)? {
             let name = self
-                .name_of(Pool::Relations, relation.0)
+                .name_of(Pool::Relations, relation.0, true)
                 .await?
                 .ok_or_else(|| unnamed(format!("relation {}", relation.0)))?;
             names.insert(relation, RelationName::new_unchecked(name));

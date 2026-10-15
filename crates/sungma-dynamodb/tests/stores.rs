@@ -2,10 +2,10 @@
 //! Local at `SUNGMA_DYNAMODB_URL`, `http://localhost:8000` by default.
 //! `scripts/dynamodb.sh` starts it. Each test gets a table of its own.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+mod common;
 
 use sungma_clock::DevClock;
-use sungma_dynamodb::{DynamoReader, DynamoWriter, Table, local};
+use sungma_dynamodb::{DynamoReader, DynamoWriter};
 use sungma_write::testkit::Stores;
 
 struct Dynamo {
@@ -31,29 +31,11 @@ impl Stores for Dynamo {
     }
 }
 
-/// A new table, named for this process and a counter so parallel tests
-/// and runs don't share one.
-async fn table() -> Table {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let endpoint =
-        std::env::var("SUNGMA_DYNAMODB_URL").unwrap_or_else(|_| "http://localhost:8000".to_owned());
-    let name = format!(
-        "sungma-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    );
-    let table = Table::new(local(&endpoint), name);
-    table.create().await.unwrap_or_else(|error| {
-        panic!("DynamoDB Local at {endpoint} refused a table; run scripts/dynamodb.sh: {error}")
-    });
-    table
-}
-
 async fn dynamo() -> Dynamo {
-    let table = table().await;
+    let table = common::table().await;
     Dynamo {
         reader: DynamoReader::new(table.clone()),
-        writer: DynamoWriter::new(table, DevClock::default()),
+        writer: DynamoWriter::dev(table).await.unwrap(),
     }
 }
 
