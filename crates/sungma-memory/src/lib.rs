@@ -134,9 +134,9 @@ struct Facts {
 
 impl Facts {
     /// Opens a span for `fact` at `revision` when [`opens_span`] says so
-    /// under `current`, its namespace's current version, closing any open
+    /// under `latest`, its namespace's latest version, closing any open
     /// span there.
-    fn insert(&mut self, fact: &Fact, revision: Revision, current: Option<&Version>) {
+    fn insert(&mut self, fact: &Fact, revision: Revision, latest: Option<&Version>) {
         let open = Span {
             written: revision,
             retired: None,
@@ -152,7 +152,7 @@ impl Facts {
             return;
         };
         let last = spans.last_mut().filter(|span| span.retired.is_none());
-        if !opens_span(fact, last.as_ref().map(|span| span.written), current) {
+        if !opens_span(fact, last.as_ref().map(|span| span.written), latest) {
             return;
         }
         if let Some(span) = last {
@@ -207,8 +207,8 @@ struct Namespaces(HashMap<NamespaceId, History>);
 impl Namespaces {
     /// The version whose span is still open, `None` when the namespace was
     /// never created or is retired.
-    fn current(&self, id: NamespaceId) -> Option<&Arc<Version>> {
-        self.0.get(&id)?.current()
+    fn latest(&self, id: NamespaceId) -> Option<&Arc<Version>> {
+        self.0.get(&id)?.latest()
     }
 }
 
@@ -222,7 +222,7 @@ struct State {
 
 impl State {
     fn check_facts(&self, writes: &[FactWrite]) -> Result<(), FactWriteError> {
-        check_inserts(writes, |id| self.namespaces.current(id).map(Arc::as_ref))
+        check_inserts(writes, |id| self.namespaces.latest(id).map(Arc::as_ref))
     }
 
     fn write_facts(&mut self, writes: &[FactWrite], revision: Revision) {
@@ -232,8 +232,8 @@ impl State {
         for write in writes {
             match write {
                 FactWrite::Insert(fact) => {
-                    let current = namespaces.current(fact.subjectset.resource.namespace);
-                    facts.insert(fact, revision, current.map(Arc::as_ref));
+                    let latest = namespaces.latest(fact.subjectset.resource.namespace);
+                    facts.insert(fact, revision, latest.map(Arc::as_ref));
                 }
                 FactWrite::Retire(fact) => facts.retire(fact, revision),
             }
@@ -241,30 +241,27 @@ impl State {
     }
 
     /// Refuses a write the namespace isn't at the version of, and a
-    /// retirement of a namespace with no current version. Otherwise gives
+    /// retirement of a namespace with no latest version. Otherwise gives
     /// the version to store, `None` for a retirement.
     fn check_namespace(
         &self,
         id: NamespaceId,
         write: NamespaceWrite,
     ) -> Result<Option<Namespace>, NamespaceWriteError> {
-        let current = self
-            .namespaces
-            .current(id)
-            .map(|version| version.revision());
+        let latest = self.namespaces.latest(id).map(|version| version.revision());
         let (expected, next) = match write {
             NamespaceWrite::Create(namespace) => (None, Some(namespace)),
             NamespaceWrite::NewVersion {
                 based_on,
                 namespace,
             } => (Some(based_on), Some(namespace)),
-            NamespaceWrite::Retire { .. } if current.is_none() => {
+            NamespaceWrite::Retire { .. } if latest.is_none() => {
                 return Err(HistoryError::NothingToRetire.into());
             }
             NamespaceWrite::Retire { based_on } => (Some(based_on), None),
         };
-        if current != expected {
-            return Err(NamespaceWriteError::Conflict { current });
+        if latest != expected {
+            return Err(NamespaceWriteError::Conflict { latest });
         }
         Ok(next)
     }
@@ -301,7 +298,7 @@ pub struct MemoryStore {
 
 impl MemoryStore {
     /// Stores `namespace` as the namespace's next version, or its first,
-    /// whatever version is current, and returns its revision.
+    /// whatever version is latest, and returns its revision.
     pub fn declare(
         &self,
         id: NamespaceId,
@@ -348,15 +345,15 @@ impl MemoryStore {
         Ok(reading)
     }
 
-    /// The current version, `None` when the namespace was never created or
+    /// The latest version, `None` when the namespace was never created or
     /// is retired.
-    pub fn current(&self, id: NamespaceId) -> Option<Arc<Version>> {
-        self.state().namespaces.current(id).cloned()
+    pub fn latest(&self, id: NamespaceId) -> Option<Arc<Version>> {
+        self.state().namespaces.latest(id).cloned()
     }
 
-    /// The current version's namespace.
+    /// The latest version's namespace.
     pub fn namespace(&self, id: NamespaceId) -> Option<Arc<Namespace>> {
-        self.current(id)
+        self.latest(id)
             .map(|version| Arc::clone(version.namespace()))
     }
 

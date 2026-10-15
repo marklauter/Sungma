@@ -163,7 +163,7 @@ async fn replay_from_before_a_retirement_still_sees_its_facts() {
     let decision = decide(&world, "file:design.md#viewer", "alice", head(&world).await).await;
 
     let file = NamespaceId(world.dictionary.intern(Pool::Namespaces, "file").unwrap());
-    let based_on = world.store.current(file).unwrap().revision();
+    let based_on = world.store.latest(file).unwrap().revision();
     world
         .store
         .write_namespace(file, Retire { based_on })

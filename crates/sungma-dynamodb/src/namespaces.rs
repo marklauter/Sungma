@@ -38,8 +38,8 @@ impl Latest {
         self.entry.revision()
     }
 
-    /// The version current at the latest entry, `None` when it's retired.
-    pub fn current(&self) -> Option<&Arc<Version>> {
+    /// The latest entry's version, `None` when it's retired.
+    pub fn version(&self) -> Option<&Arc<Version>> {
         match &self.entry {
             Entry::Version(version) => Some(version),
             Entry::Retired(_) => None,
@@ -97,7 +97,7 @@ impl Table {
         match self.latest(namespace, false).await? {
             None => return Ok(None),
             Some(latest) if latest.revision() <= revision => {
-                return Ok(latest.current().cloned());
+                return Ok(latest.version().cloned());
             }
             // A newer entry landed after `revision`, so the history answers.
             Some(_) => {}

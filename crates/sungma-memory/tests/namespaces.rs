@@ -1,5 +1,5 @@
 //! What only the in-memory store does with namespaces: `declare` writes
-//! the next version whatever is current. The tests every store runs are in
+//! the next version whatever is latest. The tests every store runs are in
 //! `stores.rs`.
 
 use sungma::{
@@ -27,10 +27,10 @@ fn declaring_writes_the_next_version() {
         Revision(1)
     );
     store.declare(FILE, declaring(&[OWNER, BANNED])).unwrap();
-    let current = store.current(FILE).unwrap();
-    assert_eq!(current.revision(), Revision(2));
-    assert_eq!(current.epoch(OWNER), Some(Revision(1)));
-    assert_eq!(current.epoch(BANNED), Some(Revision(2)));
+    let latest = store.latest(FILE).unwrap();
+    assert_eq!(latest.revision(), Revision(2));
+    assert_eq!(latest.epoch(OWNER), Some(Revision(1)));
+    assert_eq!(latest.epoch(BANNED), Some(Revision(2)));
     assert!(store.namespace(FILE).unwrap().rewrite(&BANNED).is_some());
     assert!(store.namespace(NamespaceId(1)).is_none());
 }
@@ -38,7 +38,7 @@ fn declaring_writes_the_next_version() {
 #[test]
 fn a_conflict_says_the_namespace_moved_on() {
     let conflict = NamespaceWriteError::Conflict {
-        current: Some(Revision(2)),
+        latest: Some(Revision(2)),
     };
     assert_eq!(
         conflict.to_string(),

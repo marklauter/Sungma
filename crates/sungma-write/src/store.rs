@@ -81,7 +81,7 @@ pub enum FactWrite {
 
 #[derive(Debug, Error)]
 pub enum FactWriteError {
-    /// The namespace version current at the write doesn't declare the
+    /// The latest namespace version at the write doesn't declare the
     /// fact's relation, or a subjectset subject's namespace doesn't declare
     /// the subject's relation. The fact would never count.
     #[error("the fact names a relation its namespace doesn't declare")]
@@ -102,7 +102,7 @@ pub enum FactWriteError {
 /// A write is stamped with a revision. Once it returns revision R, a read
 /// at R sees that write and every write acknowledged before it began.
 ///
-/// An insert is refused unless the current namespace versions declare the
+/// An insert is refused unless the latest namespace versions declare the
 /// fact's relation and, for a subjectset subject, the subject's relation.
 /// Inserting a fact whose stored span was written before its relation's
 /// epoch closes that span and opens a new one, so a grant asserted again
@@ -123,24 +123,24 @@ pub trait FactWriter {
 /// caller read, as an etag names what a write expects to replace.
 #[derive(Debug)]
 pub enum NamespaceWrite {
-    /// Stores the first version of a namespace that has no current version.
+    /// Stores the first version of a namespace that has no latest version.
     Create(Namespace),
-    /// Stores the next version, closing the current version's span.
+    /// Stores the next version, closing the latest version's span.
     NewVersion {
         based_on: Revision,
         namespace: Namespace,
     },
-    /// Closes the current version's span and stores no new version.
+    /// Closes the latest version's span and stores no new version.
     Retire { based_on: Revision },
 }
 
 #[derive(Debug, Error)]
 pub enum NamespaceWriteError {
-    /// The namespace isn't at the version the write was based on. `current`
-    /// is its current version's revision, `None` when it has none. The
-    /// caller reads the current version and tries again.
+    /// The namespace isn't at the version the write was based on. `latest`
+    /// is its latest version's revision, `None` when it has none. The
+    /// caller reads the latest version and tries again.
     #[error("the namespace isn't at the version the write was based on")]
-    Conflict { current: Option<Revision> },
+    Conflict { latest: Option<Revision> },
     /// The namespace's history refuses the revision the store stamped.
     #[error(transparent)]
     History(#[from] HistoryError),
@@ -152,7 +152,7 @@ pub enum NamespaceWriteError {
 }
 
 /// Writes namespace versions. A stored version is never edited: a write
-/// stores a new version, closes the current version's span, or both, and a
+/// stores a new version, closes the latest version's span, or both, and a
 /// read at any earlier revision still finds the version it found before.
 ///
 /// Each write is a conditional write on the namespace, so of two writes

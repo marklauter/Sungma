@@ -45,7 +45,7 @@ Proposed. Every [[fact]] and every [[namespace]] version holds over a [[span]] o
 
 ## Retiring a namespace
 
-- Retiring a namespace closes its current version's span and opens no new one. From then on no version declares its relations, so every fact under it is orphaned.
+- Retiring a namespace closes its latest version's span and opens no new one. From then on no version declares its relations, so every fact under it is orphaned.
 - Writing the namespace again after it was retired declares each of its relations again. Each gets the new version's revision as its epoch, so facts from before the retirement don't resurrect.
 
 ## Sample

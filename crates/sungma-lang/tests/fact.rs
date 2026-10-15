@@ -204,7 +204,7 @@ fn an_empty_resource_or_identity_is_refused() {
     assert!(error.contains("a resource is empty"), "{error}");
 }
 
-/// A name never interned, or a relation no current version declares,
+/// A name never interned, or a relation no latest version declares,
 /// refuses the whole document, whether the fact or its subject names it.
 #[tokio::test]
 async fn a_fact_naming_what_no_namespace_declares_is_refused() {

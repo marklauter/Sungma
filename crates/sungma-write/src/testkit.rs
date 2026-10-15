@@ -304,7 +304,7 @@ pub async fn subjects_are_read_in_order<S: Stores>(stores: S) {
     assert_eq!(stored(&stores, 2).await, subjects);
 }
 
-/// An insert the current versions don't declare is refused with the whole
+/// An insert the latest versions don't declare is refused with the whole
 /// batch, and takes no revision.
 pub async fn an_insert_under_an_undeclared_relation_stores_nothing<S: Stores>(stores: S) {
     let stores = declared(stores).await;
@@ -351,16 +351,16 @@ pub async fn an_insert_under_an_undeclared_relation_stores_nothing<S: Stores>(st
     .await;
 }
 
-/// The current version at the head.
-async fn current<S: Stores>(stores: &S, id: NamespaceId) -> Option<Arc<Version>> {
+/// The latest version at the head.
+async fn latest<S: Stores>(stores: &S, id: NamespaceId) -> Option<Arc<Version>> {
     let reader = stores.reader();
     let head = reader.head().await.unwrap();
     reader.version(id, head).await.unwrap()
 }
 
-/// Writes `namespace` as the next version of whatever is current.
+/// Writes `namespace` as the next version of whatever is latest.
 async fn redeclare<S: Stores>(stores: &S, id: NamespaceId, namespace: Namespace) -> Revision {
-    let based_on = current(stores, id).await.unwrap().revision();
+    let based_on = latest(stores, id).await.unwrap().revision();
     write_namespace(
         stores,
         id,
@@ -495,14 +495,14 @@ const FILE_OWNER: RelationId = RelationId(0);
 
 fn conflict(result: Result<Revision, NamespaceWriteError>) -> Option<Revision> {
     match result {
-        Err(NamespaceWriteError::Conflict { current }) => current,
+        Err(NamespaceWriteError::Conflict { latest }) => latest,
         other => panic!("expected a conflict, got {other:?}"),
     }
 }
 
 /// The relation's rewrite at the latest revision.
 async fn rewrite<S: Stores>(stores: &S, relation: RelationId) -> Option<Arc<Rewrite>> {
-    let version = current(stores, FILE).await?;
+    let version = latest(stores, FILE).await?;
     version.namespace().rewrite(&relation).cloned()
 }
 
@@ -525,9 +525,9 @@ pub async fn a_new_version_closes_the_current_one<S: Stores>(stores: S) {
     let first = create(&stores, FILE, declaring(&[FILE_OWNER, BANNED])).await;
     let second = redeclare(&stores, FILE, declaring(&[FILE_OWNER])).await;
     assert_eq!(second, Revision(2));
-    let current = current(&stores, FILE).await.unwrap();
-    assert_eq!(current.revision(), second);
-    assert_eq!(current.epoch(FILE_OWNER), Some(first));
+    let latest = latest(&stores, FILE).await.unwrap();
+    assert_eq!(latest.revision(), second);
+    assert_eq!(latest.epoch(FILE_OWNER), Some(first));
     assert!(rewrite(&stores, FILE_OWNER).await.is_some());
     assert!(rewrite(&stores, BANNED).await.is_none());
 }
@@ -545,7 +545,7 @@ pub async fn a_write_based_on_an_older_version_stores_nothing<S: Stores>(stores:
     assert_eq!(conflict(refused), Some(second));
     let refused = write_namespace(&stores, FILE, NamespaceWrite::Retire { based_on: first }).await;
     assert_eq!(conflict(refused), Some(second));
-    assert_eq!(current(&stores, FILE).await.unwrap().revision(), second);
+    assert_eq!(latest(&stores, FILE).await.unwrap().revision(), second);
     assert!(rewrite(&stores, BANNED).await.is_none());
 }
 
@@ -586,7 +586,7 @@ pub async fn a_retired_namespace_declares_nothing_until_it_is_created_again<S: S
     let first = create(&stores, FILE, declaring(&[FILE_OWNER])).await;
     let retire = || NamespaceWrite::Retire { based_on: first };
     let retired = write_namespace(&stores, FILE, retire()).await.unwrap();
-    assert!(current(&stores, FILE).await.is_none());
+    assert!(latest(&stores, FILE).await.is_none());
     assert!(rewrite(&stores, FILE_OWNER).await.is_none());
     let refused = write_namespace(
         &stores,
@@ -607,7 +607,7 @@ pub async fn a_retired_namespace_declares_nothing_until_it_is_created_again<S: S
     let again = create(&stores, FILE, declaring(&[FILE_OWNER])).await;
     assert!(again > retired);
     assert_eq!(
-        current(&stores, FILE).await.unwrap().epoch(FILE_OWNER),
+        latest(&stores, FILE).await.unwrap().epoch(FILE_OWNER),
         Some(again)
     );
 }

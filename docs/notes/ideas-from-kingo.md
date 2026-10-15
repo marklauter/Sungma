@@ -58,7 +58,7 @@ The epoch exists for one purpose: when a later namespace version re-declares a d
 
 ### 4. Fact/namespace drift is prevented at write time
 
-Fact writes are checked against the current namespace. A namespace write that would strand live facts is refused, so removal takes two steps.
+Fact writes are checked against the latest namespace version. A namespace write that would strand live facts is refused, so removal takes two steps.
 
 - **Sungma: missing.** There is no namespace write path; this feeds roadmap items 9 and 13.
 - Source: `docs/decisions/preventing-drift-between-facts-and-theories.md`.

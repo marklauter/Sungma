@@ -28,9 +28,9 @@ fn written(history: &mut History, relations: &[RelationId], revision: u64) {
 #[test]
 fn a_first_version_starts_every_epoch() {
     let mut history = History::default();
-    assert!(history.current().is_none());
+    assert!(history.latest().is_none());
     written(&mut history, &[OWNER, BANNED], 10);
-    let version = history.current().unwrap();
+    let version = history.latest().unwrap();
     assert_eq!(version.revision(), Revision(10));
     assert_eq!(version.epoch(OWNER), Some(Revision(10)));
     assert_eq!(version.epoch(BANNED), Some(Revision(10)));
@@ -43,17 +43,17 @@ fn a_relation_brought_back_gets_a_new_epoch() {
     let mut history = History::default();
     written(&mut history, &[OWNER, BANNED], 10);
     written(&mut history, &[OWNER], 20);
-    let dropped = history.current().unwrap();
+    let dropped = history.latest().unwrap();
     assert_eq!(dropped.epoch(OWNER), Some(Revision(10)));
     assert_eq!(dropped.epoch(BANNED), None);
     written(&mut history, &[OWNER, BANNED], 30);
-    let back = history.current().unwrap();
+    let back = history.latest().unwrap();
     assert_eq!(back.epoch(OWNER), Some(Revision(10)));
     assert_eq!(back.epoch(BANNED), Some(Revision(30)));
     history.retire(Revision(40)).unwrap();
-    assert!(history.current().is_none());
+    assert!(history.latest().is_none());
     written(&mut history, &[OWNER, BANNED], 50);
-    let again = history.current().unwrap();
+    let again = history.latest().unwrap();
     assert_eq!(again.epoch(OWNER), Some(Revision(50)));
     assert_eq!(again.epoch(BANNED), Some(Revision(50)));
     let opens: Vec<_> = history.entries().iter().map(Entry::revision).collect();
@@ -102,7 +102,7 @@ fn only_a_current_version_can_be_retired() {
     );
     assert_eq!(
         HistoryError::NothingToRetire.to_string(),
-        "the namespace has no current version to retire"
+        "the namespace has no latest version to retire"
     );
 }
 
@@ -155,7 +155,7 @@ fn a_resumed_history_goes_on_from_its_latest_entry() {
         })
     );
     written(&mut history, &[OWNER, BANNED], 40);
-    let next = history.current().unwrap();
+    let next = history.latest().unwrap();
     assert_eq!(next.epoch(OWNER), Some(Revision(10)));
     assert_eq!(next.epoch(BANNED), Some(Revision(40)));
     let mut retired = History::resume(Entry::Retired(Revision(30)));
@@ -164,5 +164,5 @@ fn a_resumed_history_goes_on_from_its_latest_entry() {
         Err(HistoryError::NothingToRetire)
     );
     written(&mut retired, &[OWNER], 40);
-    assert_eq!(retired.current().unwrap().epoch(OWNER), Some(Revision(40)));
+    assert_eq!(retired.latest().unwrap().epoch(OWNER), Some(Revision(40)));
 }

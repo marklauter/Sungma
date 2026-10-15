@@ -142,8 +142,8 @@ pub enum HistoryError {
     /// Each entry must come after the last.
     #[error("revision {revision:?} doesn't come after {last:?}")]
     NotLater { last: Revision, revision: Revision },
-    /// Only a namespace with a current version can be retired.
-    #[error("the namespace has no current version to retire")]
+    /// Only a namespace with a latest version can be retired.
+    #[error("the namespace has no latest version to retire")]
     NothingToRetire,
 }
 
@@ -164,7 +164,7 @@ impl History {
 
     /// The version whose span is still open, `None` when the namespace was
     /// never created or is retired.
-    pub fn current(&self) -> Option<&Arc<Version>> {
+    pub fn latest(&self) -> Option<&Arc<Version>> {
         match self.entries.last()? {
             Entry::Version(version) => Some(version),
             Entry::Retired(_) => None,
@@ -187,21 +187,21 @@ impl History {
         &self.entries
     }
 
-    /// Stores `namespace` as the version after the current one, or as a
+    /// Stores `namespace` as the version after the latest one, or as a
     /// first version when there's none, opening at `revision`.
     pub fn write(&mut self, namespace: Namespace, revision: Revision) -> Result<(), HistoryError> {
         self.check(revision)?;
-        let version = match self.current() {
-            Some(current) => current.next(namespace, revision),
+        let version = match self.latest() {
+            Some(latest) => latest.next(namespace, revision),
             None => Version::first(namespace, revision),
         };
         self.entries.push(Entry::Version(Arc::new(version)));
         Ok(())
     }
 
-    /// Closes the current version's span at `revision` and opens none.
+    /// Closes the latest version's span at `revision` and opens none.
     pub fn retire(&mut self, revision: Revision) -> Result<(), HistoryError> {
-        if self.current().is_none() {
+        if self.latest().is_none() {
             return Err(HistoryError::NothingToRetire);
         }
         self.check(revision)?;
