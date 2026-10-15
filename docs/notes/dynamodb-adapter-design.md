@@ -50,11 +50,11 @@ This is roadmap item 4. Development runs against DynamoDB Local in a container, 
 1. `pk` is tag `2` and the namespace id. `sk` is tag `1` and the revision the entry opens at.
    1. A version has `revision`, a map from relation id to its rewrite, and a map from relation id to its epoch.
    2. A retirement has `revision` and `retired`, set to true.
-2. Each namespace has one more item, `sk` = tag `0`, its current item: a copy of its latest entry, as `:latest` names the newest image of a container. A namespace write stores the new entry and overwrites the current item in one transaction, on condition the current item's `revision` is the write's `based_on`, which gives `based_on` its etag behaviour.
+2. Each namespace has one more item, `sk` = tag `0`, its latest item: a copy of its latest entry, as `:latest` names the newest image of a container. It is the latest the reader has seen, not a promise that no newer write is on its way. A namespace write stores the new entry and overwrites the latest item in one transaction, on condition the latest item's `revision` is the write's `based_on`, which gives `based_on` its etag behaviour.
 3. Reads:
-   1. `version(namespace, R)` at the head is a point read of the current item.
+   1. `version(namespace, R)` at the head is a point read of the latest item.
    2. At an earlier R, it queries the entries at or before R, descending, limit 1.
-   3. Point reads batch, so one `BatchGetItem` loads the current versions of up to 100 namespaces in one round trip. A query can't batch.
+   3. Point reads batch, so one `BatchGetItem` loads the latest versions of up to 100 namespaces in one round trip. A query can't batch.
 4. A `Version` read back from the store is built from its stored epochs, so `Version` needs a constructor for stored versions. It refuses a version where a relation the namespace declares has no epoch, or an epoch is later than the version's revision. `History` still orders versions on the write path.
 5. Open question: how to store a rewrite. DynamoDB nests maps and lists only 32 levels deep, and the rewrite grammar has no such limit. Either each rewrite is a binary attribute in a compact id form, or rewrites are capped at a depth that fits and stored as native maps.
 
@@ -69,14 +69,14 @@ This is roadmap item 4. Development runs against DynamoDB Local in a container, 
 
 1. One item, `pk` = tag `4` and `sk` = tag `0`, with a `revision` attribute.
 2. Every fact write and every namespace write is a single transaction, which also updates the head on condition its `revision` is below the new one. A write stamped below a revision already committed is refused and tried again, so a read at R sees every write at or before R, and unrelated writes don't queue behind each other.
-3. A fact write also checks the `current` item of each namespace it touches, so `check_inserts` judged the inserts against versions that were really current.
+3. A fact write also checks the latest item of each namespace it touches, so `check_inserts` judged the inserts against the versions that were latest when the write landed.
 4. Facts and namespaces share the table and the head, so `FactStore::head` includes namespace writes.
 5. The clock is generic. Development uses `DevClock::starting_after(head)`, read when the store opens. A write takes its reading under an async lock, as `MemoryStore` does under its mutex.
 6. A transaction holds at most 100 items. A fact takes two, its span and its pointer, plus the head and one check per namespace, so a batch holds about 45 facts. The store refuses a larger batch with a `StoreError`.
 
 ## 7. Rules
 
-1. Inserts go through `sungma_write::fact::check_inserts` and `opens_span`, with what the `current` items and the pointers give. The adapter doesn't restate either rule.
+1. Inserts go through `sungma_write::fact::check_inserts` and `opens_span`, with what the latest items and the pointers give. The adapter doesn't restate either rule.
 
 ## 8. Tests
 
