@@ -17,7 +17,7 @@ use sungma::{
     },
     namespace::Namespace,
     rewrite::Rewrite::This,
-    store::{Dictionary, FactStore, Pool},
+    store::{Dictionary, FactReader, Pool},
 };
 use sungma_check::resolve;
 use sungma_lang::fact;

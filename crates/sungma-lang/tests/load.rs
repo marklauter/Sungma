@@ -2,14 +2,14 @@
 
 use sungma::{
     revision::Revision,
-    store::{Dictionary, FactStore, Pool},
+    store::{Dictionary, FactReader, Pool},
 };
 use sungma_lang::{
     fact::{FactError, load_facts},
     namespace::{LoadError, load_namespaces},
 };
 use sungma_memory::{MemoryDictionary, MemoryStore};
-use sungma_write::store::{InternError, NameStore};
+use sungma_write::store::{InternError, NameWriter};
 
 /// A dictionary with no ids left in `pool`.
 async fn exhausted(pool: Pool) -> MemoryDictionary {

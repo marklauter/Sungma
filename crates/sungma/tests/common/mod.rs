@@ -11,7 +11,7 @@ use sungma::{
     namespace::{Namespace, NamespaceError},
     revision::Revision,
     rewrite::Rewrite,
-    store::{FactStore, Pool},
+    store::{FactReader, Pool},
 };
 use sungma_check::resolve;
 use sungma_lang::{fact::load_facts, namespace::load_namespaces};

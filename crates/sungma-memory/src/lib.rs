@@ -13,14 +13,14 @@ use sungma::{
     id::NamespaceId,
     namespace::Namespace,
     revision::Revision,
-    store::{Dictionary, FactStore, NamespaceStore, Pool, StoreError},
+    store::{Dictionary, FactReader, NameReader, NamespaceReader, Pool, StoreError},
     version::{History, HistoryError, Version},
 };
 use sungma_clock::{Clock, ClockFault, DevClock, Reading};
 use sungma_write::{
     fact::{check_inserts, opens_span},
     store::{
-        FactWrite, FactWriteError, FactWriter, InternError, NameStore, NamespaceWrite,
+        FactWrite, FactWriteError, FactWriter, InternError, NameWriter, NamespaceWrite,
         NamespaceWriteError, NamespaceWriter,
     },
 };
@@ -50,7 +50,7 @@ impl Names {
     }
 }
 
-/// A [`NameStore`]. Setup code mints through [`MemoryDictionary::intern`],
+/// A [`NameWriter`]. Setup code mints through [`MemoryDictionary::intern`],
 /// one id at a time from the same counters the leases advance, so its ids
 /// never meet a [`sungma_write::intern::LeasingInterner`]'s.
 #[derive(Debug, Default)]
@@ -82,9 +82,9 @@ impl MemoryDictionary {
     }
 }
 
-impl Dictionary for MemoryDictionary {
-    async fn lookup(&self, pool: Pool, name: &str) -> Result<Option<u32>, StoreError> {
-        Ok(self.id(pool, name))
+impl NameReader for MemoryDictionary {
+    async fn id(&self, pool: Pool, name: &str) -> Result<Option<u32>, StoreError> {
+        Ok(MemoryDictionary::id(self, pool, name))
     }
 
     async fn name(&self, pool: Pool, id: u32) -> Result<Option<String>, StoreError> {
@@ -96,7 +96,19 @@ impl Dictionary for MemoryDictionary {
     }
 }
 
-impl NameStore for MemoryDictionary {
+/// Setup code and tests read a [`MemoryDictionary`] as the [`Dictionary`]
+/// a service is given.
+impl Dictionary for MemoryDictionary {
+    async fn lookup(&self, pool: Pool, name: &str) -> Result<Option<u32>, StoreError> {
+        NameReader::id(self, pool, name).await
+    }
+
+    async fn name(&self, pool: Pool, id: u32) -> Result<Option<String>, StoreError> {
+        NameReader::name(self, pool, id).await
+    }
+}
+
+impl NameWriter for MemoryDictionary {
     async fn insert_if_absent(&self, pool: Pool, name: &str, id: u32) -> Result<u32, StoreError> {
         Ok(self
             .pools()
@@ -365,7 +377,7 @@ impl MemoryStore {
     }
 }
 
-impl FactStore for MemoryStore {
+impl FactReader for MemoryStore {
     async fn head(&self) -> Result<Revision, StoreError> {
         Ok(Revision(self.state().head))
     }
@@ -412,7 +424,7 @@ impl FactWriter for MemoryStore {
     }
 }
 
-impl NamespaceStore for MemoryStore {
+impl NamespaceReader for MemoryStore {
     async fn version(
         &self,
         namespace: NamespaceId,

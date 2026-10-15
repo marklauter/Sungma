@@ -44,7 +44,7 @@ use crate::{
     non_empty::NonEmpty,
     revision::Revision,
     rewrite::Rewrite,
-    store::{FactStore, NamespaceStore, StoreError},
+    store::{FactReader, NamespaceReader, StoreError},
     version::Version,
 };
 
@@ -233,7 +233,7 @@ pub struct Closure<'a, T, F> {
     revision: Revision,
 }
 
-impl<'a, T: NamespaceStore + Sync, F: FactStore + Sync> Closure<'a, T, F> {
+impl<'a, T: NamespaceReader + Sync, F: FactReader + Sync> Closure<'a, T, F> {
     pub fn new(
         namespaces: &'a T,
         facts: &'a F,

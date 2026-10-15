@@ -11,7 +11,7 @@ use sungma::{
     namespace::Namespace,
     revision::Revision,
     rewrite::Rewrite::This,
-    store::FactStore,
+    store::FactReader,
 };
 use sungma_memory::MemoryStore;
 use sungma_write::store::{

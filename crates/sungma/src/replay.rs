@@ -7,7 +7,7 @@
 use crate::{
     closure::{Closure, ClosureError},
     decision::{Decision, SEMANTICS, Semantics},
-    store::{FactStore, NamespaceStore},
+    store::{FactReader, NamespaceReader},
 };
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -26,7 +26,7 @@ pub enum Replay {
     SemanticsChanged { recorded: Semantics, now: Decision },
 }
 
-pub async fn replay<T: NamespaceStore + Sync, F: FactStore + Sync>(
+pub async fn replay<T: NamespaceReader + Sync, F: FactReader + Sync>(
     decision: &Decision,
     namespaces: &T,
     facts: &F,

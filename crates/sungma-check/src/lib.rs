@@ -20,7 +20,7 @@ use sungma::{
     graph::Subject,
     name::{Identity, SubjectsetName},
     revision::Revision,
-    store::{Dictionary, FactStore, NamespaceStore, StoreError},
+    store::{Dictionary, FactReader, NamespaceReader, StoreError},
 };
 
 pub mod resolve;
@@ -109,8 +109,8 @@ pub struct CheckService<'a, D, T, F, A> {
 impl<'a, D, T, F, A> CheckService<'a, D, T, F, A>
 where
     D: Dictionary + Sync,
-    T: NamespaceStore + Sync,
-    F: FactStore + Sync,
+    T: NamespaceReader + Sync,
+    F: FactReader + Sync,
     A: AuditLog + Sync,
 {
     pub fn new(dictionary: &'a D, namespaces: &'a T, facts: &'a F, audit: &'a A) -> Self {

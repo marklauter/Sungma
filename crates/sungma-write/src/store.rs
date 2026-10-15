@@ -2,7 +2,7 @@
 //! and a store only supplies primitives every store has: a [`FactWriter`]
 //! keeps the history of each fact, a [`NamespaceWriter`] keeps the versions
 //! of each namespace, and [`crate::intern::LeasingInterner`] mints ids over
-//! a [`NameStore`]. Both writers stamp their writes from one revision
+//! a [`NameWriter`]. Both writers stamp their writes from one revision
 //! clock, the `Clock` port in `sungma-clock`, so facts and namespace
 //! versions share one timeline.
 //!
@@ -19,7 +19,7 @@ use sungma::{
     id::NamespaceId,
     namespace::Namespace,
     revision::Revision,
-    store::{Dictionary, FactStore, NamespaceStore, Pool, StoreError},
+    store::{Dictionary, Pool, StoreError},
     version::HistoryError,
 };
 use sungma_clock::ClockFault;
@@ -49,7 +49,7 @@ pub trait Interner: Dictionary {
 
 /// The storage an id is minted through. Both writes are atomic in the
 /// store, which is all the coordination minting needs.
-pub trait NameStore: Dictionary {
+pub trait NameWriter {
     /// Stores `name` as `id` in `pool` unless the name is stored there
     /// already, and returns the name's id afterwards: `id`, or the id
     /// another node stored first.
@@ -108,7 +108,7 @@ pub enum FactWriteError {
 /// epoch closes that span and opens a new one, so a grant asserted again
 /// after its relation comes back counts. [`crate::fact`] has both rules,
 /// for every store to apply. See `docs/specs/one-timeline.md`.
-pub trait FactWriter: FactStore {
+pub trait FactWriter {
     /// Applies `writes` atomically and returns the revision they're stamped
     /// with, or refuses them all and stores nothing.
     fn write(
@@ -158,7 +158,7 @@ pub enum NamespaceWriteError {
 /// Each write is a conditional write on the namespace, so of two writes
 /// based on the same version, exactly one succeeds. A namespace write never
 /// reads or rewrites facts.
-pub trait NamespaceWriter: NamespaceStore {
+pub trait NamespaceWriter {
     /// Applies `write` to `namespace` atomically and returns the revision it's
     /// stamped with, or refuses it and stores nothing.
     fn write_namespace(
