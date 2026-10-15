@@ -1,9 +1,11 @@
 # Roadmap
 
+Done means built, tested to the coverage floor and merged. It doesn't mean production ready: use will bring fixes, refactors and discoveries.
+
 1. Evaluator: namespaces, facts and rewrites, judged at a revision (done).
 2. Decisions with grounds, audit records and replay (done).
 3. Storage ports with Sungma-owned fact history and pooled id minting (done).
-4. DynamoDB Local storage adapter for development.
+4. DynamoDB storage adapter, tested against DynamoDB Local (done).
 5. Opaque zookies.
 6. Check service.
 7. Content-change check that returns a zookie.
