@@ -71,7 +71,7 @@ This is roadmap item 4. Development runs against DynamoDB Local in a container, 
 2. Every fact write and every namespace write is a single transaction, which also updates the head on condition its `revision` is below the new one. A write stamped below a revision already committed is refused and tried again, so a read at R sees every write at or before R, and unrelated writes don't queue behind each other.
 3. A fact write also checks the latest item of each namespace it touches, so `check_inserts` judged the inserts against the versions that were latest when the write landed.
 4. Facts and namespaces share the table and the head, so `FactStore::head` includes namespace writes.
-5. The clock is generic. Development uses `DevClock::starting_after(head)`, read when the store opens. A write takes its reading under an async lock, as `MemoryStore` does under its mutex.
+5. The store is generic over its clock, `DynamoStore<C: Clock>`, so the same code runs with any clock. Development uses `DevClock::starting_after(head)`, read when the store opens. A write takes its reading under an async lock, as `MemoryStore` does under its mutex.
 6. A transaction holds at most 100 items. A fact takes two, its span and its pointer, plus the head and one check per namespace, so a batch holds about 45 facts. The store refuses a larger batch with a `StoreError`.
 
 ## 7. Rules
