@@ -190,7 +190,7 @@ impl<'de> Deserialize<'de> for SubjectDto {
 /// Parses a fact document whole, then looks up every fact's namespace and
 /// relation names, and then inserts the facts in one write at one
 /// revision; an empty document writes nothing. A refused document stores
-/// no fact. A name never interned, or a relation no current version
+/// no fact. A name never interned, or a relation no latest version
 /// declares, refuses the document.
 pub fn load_facts(
     json: &str,

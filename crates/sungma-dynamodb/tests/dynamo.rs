@@ -417,7 +417,7 @@ async fn of_nodes_writing_one_version_exactly_one_succeeds() {
     }
 }
 
-/// A fact write is judged by the namespace versions current when it lands,
+/// A fact write is judged by the latest namespace versions when it lands,
 /// whatever its clock: an insert under a relation that another node drops
 /// at the same time lands before the drop, or is refused.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -450,8 +450,8 @@ async fn an_insert_racing_a_drop_lands_before_it_or_not_at_all() {
         });
         let (inserted, dropped) = (insert.await.unwrap(), drop.await.unwrap());
         let reader = DynamoReader::new(table);
-        let current = reader.version(DOC, Revision(2000)).await.unwrap().unwrap();
-        assert_eq!(current.revision(), dropped);
+        let latest = reader.version(DOC, Revision(2000)).await.unwrap().unwrap();
+        assert_eq!(latest.revision(), dropped);
         match inserted {
             Ok(revision) => {
                 let at_insert = reader.version(DOC, revision).await.unwrap().unwrap();

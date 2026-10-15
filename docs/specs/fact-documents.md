@@ -71,7 +71,7 @@ A fact is never changed. A write adds facts and retires facts, and a retired fac
 
 A namespace name and a [[relation]] name follow the grammar in [Namespace documents](namespace-documents.md#names).
 
-Every namespace and relation a fact names, in its subjectset or its subject, must have been interned; a relation must be one the namespace's current version declares. A fact document never interns a name.
+Every namespace and relation a fact names, in its subjectset or its subject, must have been interned; a relation must be one the namespace's latest version declares. A fact document never interns a name.
 
 A resource and an identity are owned by the caller: a natural key, a surrogate key, a GUID, a path or an email address. Sungma compares them and never interprets them. Each one:
 

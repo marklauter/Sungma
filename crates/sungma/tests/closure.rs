@@ -404,7 +404,7 @@ fn reordered(version: &Version, namespace: NamespaceId, seed: u64) -> Arc<Versio
     history
         .write(Namespace::new(relations).unwrap(), Revision(0))
         .unwrap();
-    Arc::clone(history.current().unwrap())
+    Arc::clone(history.latest().unwrap())
 }
 
 impl FactReader for Probe<'_> {

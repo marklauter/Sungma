@@ -220,13 +220,13 @@ fn fold(
     fact: &Fact,
     inserts: &[bool],
     open: Option<Revision>,
-    current: Option<&Version>,
+    latest: Option<&Version>,
 ) -> (bool, bool) {
     let (mut closed, mut opened) = (false, false);
     for &insert in inserts {
         let before = open.filter(|_| !closed);
         if insert {
-            if !opened && opens_span(fact, before, current) {
+            if !opened && opens_span(fact, before, latest) {
                 closed |= before.is_some();
                 opened = true;
             }
@@ -245,7 +245,7 @@ fn items((closed, opened): (bool, bool)) -> usize {
     1 + usize::from(closed) + usize::from(opened)
 }
 
-/// The namespaces whose current versions the inserts are judged by.
+/// The namespaces whose latest versions the inserts are judged by.
 fn judged(writes: &[FactWrite]) -> Vec<NamespaceId> {
     let mut namespaces = Vec::new();
     for write in writes {
@@ -326,16 +326,16 @@ impl<C: Clock + Sync> DynamoWriter<C> {
         for namespace in judged(writes) {
             latest.insert(namespace, table.latest(namespace, consistent).await?);
         }
-        let current =
-            |namespace: NamespaceId| latest.get(&namespace)?.as_ref()?.current().map(Arc::as_ref);
-        check_inserts(writes, current)?;
+        let version =
+            |namespace: NamespaceId| latest.get(&namespace)?.as_ref()?.version().map(Arc::as_ref);
+        check_inserts(writes, version)?;
         let mut changes = Vec::new();
         for (fact, inserts) in grouped(writes) {
             let pk = key::fact(&fact.subjectset);
             let subject = key::subject(&fact.subject);
             let open = table.open(&pk, &subject, consistent).await?;
-            let current = current(fact.subjectset.resource.namespace);
-            let change = fold(fact, &inserts, open, current);
+            let latest = version(fact.subjectset.resource.namespace);
+            let change = fold(fact, &inserts, open, latest);
             changes.push((pk, subject, open, change));
         }
         let changed: usize = changes.iter().map(|change| items(change.3)).sum();
@@ -384,9 +384,9 @@ impl<C: Clock + Sync> DynamoWriter<C> {
     ) -> Result<Option<Reading>, NamespaceWriteError> {
         let table = &self.table;
         let latest = table.latest(namespace, consistent).await?;
-        let current = latest
+        let version = latest
             .as_ref()
-            .and_then(Latest::current)
+            .and_then(Latest::version)
             .map(|version| version.revision());
         let (expected, next) = match write {
             NamespaceWrite::Create(next) => (None, Some(next)),
@@ -394,16 +394,16 @@ impl<C: Clock + Sync> DynamoWriter<C> {
                 based_on,
                 namespace,
             } => (Some(*based_on), Some(namespace)),
-            NamespaceWrite::Retire { .. } if current.is_none() => {
+            NamespaceWrite::Retire { .. } if version.is_none() => {
                 return Err(HistoryError::NothingToRetire.into());
             }
             NamespaceWrite::Retire { based_on } => (Some(*based_on), None),
         };
-        if current != expected {
+        if version != expected {
             if !consistent {
                 return Ok(None);
             }
-            return Err(NamespaceWriteError::Conflict { current });
+            return Err(NamespaceWriteError::Conflict { latest: version });
         }
         let reading = self.clock.now()?;
         let at = reading.revision;
