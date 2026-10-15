@@ -21,12 +21,12 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
 **Storage ports** (`store.rs` in `sungma` and `sungma-write`, `intern.rs`, the `sungma-memory` crate)
 - The ports are async traits, which play the role of C# interfaces. Reads and writes are separate:
   - `Dictionary`: name to id, and back;
-  - `FactStore`: keyed like a wide-column store, with the subjectset as partition key and the subject as sort key; each read gives the revision that wrote each fact;
-  - `NamespaceStore`: the namespace version whose span covers a revision;
-  - `FactWriter`: a batch of inserts and deletes, applied atomically and stamped with one revision;
+  - `FactReader`: keyed like a wide-column store, with the subjectset as partition key and the subject as sort key; each read gives the revision that wrote each fact;
+  - `NamespaceReader`: the namespace version whose span covers a revision;
+  - `FactWriter`: a batch of inserts and retirements, applied atomically and stamped with one revision;
   - `NamespaceWriter`: creates a namespace, writes its next version, or retires it, and refuses the write unless the namespace is still at the version it was based on;
   - `Interner`: mints ids for new names, each in its pool: namespace names and relation names. Relations share one pool because `(parent, viewer)` means `viewer` in whichever namespace the parent fact names.
-- Where a guarantee spans nodes, Sungma runs the protocol and a store supplies primitives. A fact keeps the revision that wrote it and the one that deleted it, so reads at any revision work on any store. `LeasingInterner` mints ids over a `NameStore`: each node leases a block of ids from a shared counter, and a conditional insert makes the first node to store a name win. [interner.md](interner.md) has the sequence.
+- Where a guarantee spans nodes, Sungma runs the protocol and a store supplies primitives. A fact keeps the revision that wrote it and the one that retired it, so reads at any revision work on any store. `LeasingInterner` mints ids over a `NameReader` and a `NameWriter`: each node leases a block of ids from a shared counter, and a conditional insert makes the first node to store a name win. [interner.md](interner.md) has the sequence.
 - The `sungma-memory` crate has `MemoryStore`, an in-memory fake of the fact and namespace stores, which stamps writes from a `DevClock`. There is no real database yet.
 
 **Evaluation** (`closure.rs`, the heart of the project)

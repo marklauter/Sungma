@@ -13,14 +13,14 @@ use sungma::{
     id::NamespaceId,
     namespace::Namespace,
     revision::Revision,
-    store::{Dictionary, FactStore, NamespaceStore, Pool, StoreError},
+    store::{FactReader, NameReader, NamespaceReader, Pool, StoreError},
     version::{History, HistoryError, Version},
 };
 use sungma_clock::{Clock, ClockFault, DevClock, Reading};
 use sungma_write::{
     fact::{check_inserts, opens_span},
     store::{
-        FactWrite, FactWriteError, FactWriter, InternError, NameStore, NamespaceWrite,
+        FactWrite, FactWriteError, FactWriter, InternError, NameWriter, NamespaceWrite,
         NamespaceWriteError, NamespaceWriter,
     },
 };
@@ -50,7 +50,7 @@ impl Names {
     }
 }
 
-/// A [`NameStore`]. Setup code mints through [`MemoryDictionary::intern`],
+/// A [`NameWriter`]. Setup code mints through [`MemoryDictionary::intern`],
 /// one id at a time from the same counters the leases advance, so its ids
 /// never meet a [`sungma_write::intern::LeasingInterner`]'s.
 #[derive(Debug, Default)]
@@ -82,9 +82,9 @@ impl MemoryDictionary {
     }
 }
 
-impl Dictionary for MemoryDictionary {
-    async fn lookup(&self, pool: Pool, name: &str) -> Result<Option<u32>, StoreError> {
-        Ok(self.id(pool, name))
+impl NameReader for MemoryDictionary {
+    async fn id(&self, pool: Pool, name: &str) -> Result<Option<u32>, StoreError> {
+        Ok(MemoryDictionary::id(self, pool, name))
     }
 
     async fn name(&self, pool: Pool, id: u32) -> Result<Option<String>, StoreError> {
@@ -96,7 +96,7 @@ impl Dictionary for MemoryDictionary {
     }
 }
 
-impl NameStore for MemoryDictionary {
+impl NameWriter for MemoryDictionary {
     async fn insert_if_absent(&self, pool: Pool, name: &str, id: u32) -> Result<u32, StoreError> {
         Ok(self
             .pools()
@@ -111,21 +111,21 @@ impl NameStore for MemoryDictionary {
 }
 
 /// When a fact was stored: from the revision that wrote it until the one
-/// that deleted it, if any.
+/// that retired it, if any.
 #[derive(Clone, Copy, Debug)]
 struct Span {
     written: Revision,
-    deleted: Option<Revision>,
+    retired: Option<Revision>,
 }
 
 impl Span {
     fn covers(self, revision: Revision) -> bool {
-        self.written <= revision && self.deleted.is_none_or(|deleted| revision < deleted)
+        self.written <= revision && self.retired.is_none_or(|retired| revision < retired)
     }
 }
 
 /// Subjects are kept sorted under their subjectset, like sort keys under a
-/// partition key, each with the spans it was stored for. A fact deleted and
+/// partition key, each with the spans it was stored for. A fact retired and
 /// stored again has a span for each time.
 #[derive(Debug, Default)]
 struct Facts {
@@ -139,7 +139,7 @@ impl Facts {
     fn insert(&mut self, fact: &Fact, revision: Revision, current: Option<&Version>) {
         let open = Span {
             written: revision,
-            deleted: None,
+            retired: None,
         };
         // The keys are cloned only for a fact not stored before.
         let Some(subjects) = self.spans.get_mut(&fact.subjectset) else {
@@ -151,25 +151,25 @@ impl Facts {
             subjects.insert(fact.subject.clone(), vec![open]);
             return;
         };
-        let last = spans.last_mut().filter(|span| span.deleted.is_none());
+        let last = spans.last_mut().filter(|span| span.retired.is_none());
         if !opens_span(fact, last.as_ref().map(|span| span.written), current) {
             return;
         }
         if let Some(span) = last {
-            span.deleted = Some(revision);
+            span.retired = Some(revision);
         }
         spans.push(open);
     }
 
-    fn delete(&mut self, fact: &Fact, revision: Revision) {
+    fn retire(&mut self, fact: &Fact, revision: Revision) {
         let open = self
             .spans
             .get_mut(&fact.subjectset)
             .and_then(|subjects| subjects.get_mut(&fact.subject))
             .and_then(|spans| spans.last_mut())
-            .filter(|span| span.deleted.is_none());
+            .filter(|span| span.retired.is_none());
         if let Some(span) = open {
-            span.deleted = Some(revision);
+            span.retired = Some(revision);
         }
     }
 
@@ -235,7 +235,7 @@ impl State {
                     let current = namespaces.current(fact.subjectset.resource.namespace);
                     facts.insert(fact, revision, current.map(Arc::as_ref));
                 }
-                FactWrite::Delete(fact) => facts.delete(fact, revision),
+                FactWrite::Retire(fact) => facts.retire(fact, revision),
             }
         }
     }
@@ -365,7 +365,7 @@ impl MemoryStore {
     }
 }
 
-impl FactStore for MemoryStore {
+impl FactReader for MemoryStore {
     async fn head(&self) -> Result<Revision, StoreError> {
         Ok(Revision(self.state().head))
     }
@@ -412,7 +412,7 @@ impl FactWriter for MemoryStore {
     }
 }
 
-impl NamespaceStore for MemoryStore {
+impl NamespaceReader for MemoryStore {
     async fn version(
         &self,
         namespace: NamespaceId,

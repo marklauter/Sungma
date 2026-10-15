@@ -12,24 +12,26 @@ use std::{collections::HashMap, num::NonZeroU32, ops::Range};
 
 use parking_lot::{Mutex, MutexGuard};
 
-use sungma::store::{Dictionary, Pool, StoreError};
+use sungma::store::{Dictionary, NameReader, Pool, StoreError};
 
-use crate::store::{InternError, Interner, NameStore};
+use crate::store::{InternError, Interner, NameWriter};
 
-/// An [`Interner`] over a [`NameStore`], minting from a leased block per
-/// pool.
+/// An [`Interner`] that looks names up through a [`NameReader`] and mints
+/// through a [`NameWriter`], from a leased block per pool.
 #[derive(Debug)]
-pub struct LeasingInterner<S> {
-    store: S,
+pub struct LeasingInterner<R, W> {
+    reader: R,
+    writer: W,
     block: NonZeroU32,
     leases: Mutex<HashMap<Pool, Range<u32>>>,
 }
 
-impl<S> LeasingInterner<S> {
+impl<R, W> LeasingInterner<R, W> {
     /// Leases `block` ids at a time.
-    pub fn new(store: S, block: NonZeroU32) -> Self {
+    pub fn new(reader: R, writer: W, block: NonZeroU32) -> Self {
         Self {
-            store,
+            reader,
+            writer,
             block,
             leases: Mutex::default(),
         }
@@ -45,7 +47,7 @@ impl<S> LeasingInterner<S> {
     }
 }
 
-impl<S: NameStore + Sync> LeasingInterner<S> {
+impl<R, W: NameWriter + Sync> LeasingInterner<R, W> {
     /// Takes the next id, leasing a new block when the current one is spent.
     /// Two tasks that find it spent at once each lease a block, and the
     /// block left unused is a gap.
@@ -53,29 +55,29 @@ impl<S: NameStore + Sync> LeasingInterner<S> {
         if let Some(id) = self.take(pool) {
             return Ok(id);
         }
-        let mut block = self.store.lease(pool, self.block.get()).await?;
+        let mut block = self.writer.lease(pool, self.block.get()).await?;
         let id = block.next().ok_or(InternError::Exhausted(pool))?;
         self.leases().insert(pool, block);
         Ok(id)
     }
 }
 
-impl<S: NameStore + Sync> Dictionary for LeasingInterner<S> {
+impl<R: NameReader + Sync, W: Sync> Dictionary for LeasingInterner<R, W> {
     async fn lookup(&self, pool: Pool, name: &str) -> Result<Option<u32>, StoreError> {
-        self.store.lookup(pool, name).await
+        self.reader.id(pool, name).await
     }
 
     async fn name(&self, pool: Pool, id: u32) -> Result<Option<String>, StoreError> {
-        self.store.name(pool, id).await
+        self.reader.name(pool, id).await
     }
 }
 
-impl<S: NameStore + Sync> Interner for LeasingInterner<S> {
+impl<R: NameReader + Sync, W: NameWriter + Sync> Interner for LeasingInterner<R, W> {
     async fn intern(&self, pool: Pool, name: &str) -> Result<u32, InternError> {
-        if let Some(id) = self.store.lookup(pool, name).await? {
+        if let Some(id) = self.reader.id(pool, name).await? {
             return Ok(id);
         }
         let id = self.next_id(pool).await?;
-        Ok(self.store.insert_if_absent(pool, name, id).await?)
+        Ok(self.writer.insert_if_absent(pool, name, id).await?)
     }
 }

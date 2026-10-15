@@ -40,7 +40,7 @@ use axum::{
     routing::post,
 };
 use serde::{Deserialize, Serialize};
-use sungma::{name::NameError, revision::Revision};
+use sungma::{name::NameError, revision::Revision, store::ReadingDictionary};
 use sungma_check::{
     CheckRequest, CheckService, MemoryAuditLog, RequestContext, SubjectName, Verdict,
 };
@@ -153,7 +153,8 @@ async fn check(
         Ok(request) => request,
         Err(error) => return failure(StatusCode::BAD_REQUEST, request_id, error),
     };
-    let service = CheckService::new(&state.dictionary, &state.store, &state.store, &state.audit);
+    let names = ReadingDictionary(&state.dictionary);
+    let service = CheckService::new(&names, &state.store, &state.store, &state.audit);
     let (verdict, zookie) = match service.check(context, request).await {
         Ok(Verdict::Decided(decision)) => {
             let verdict = if decision.outcome.is_allowed() {

@@ -17,7 +17,7 @@ use sungma::{
     non_empty::NonEmpty,
     revision::Revision,
     rewrite::Rewrite::{self, Computed, Exclusion, Intersection, This, Union},
-    store::{FactStore, NamespaceStore, Pool, StoreError},
+    store::{FactReader, NamespaceReader, Pool, StoreError},
     version::{History, Version},
 };
 use sungma_lang::fact::load_facts;
@@ -42,7 +42,7 @@ async fn check_at(
 
 /// [`Closure::contains`], checked against [`Closure::decide`]: the same
 /// verdict, or both fail.
-async fn agree<T: NamespaceStore + Sync, F: FactStore + Sync>(
+async fn agree<T: NamespaceReader + Sync, F: FactReader + Sync>(
     closure: &Closure<'_, T, F>,
     subject: Subject,
 ) -> Result<bool, ClosureError> {
@@ -365,7 +365,7 @@ fn shuffled(rewrite: &Rewrite, seed: &mut u64) -> Rewrite {
     }
 }
 
-impl NamespaceStore for Probe<'_> {
+impl NamespaceReader for Probe<'_> {
     async fn version(
         &self,
         namespace: NamespaceId,
@@ -407,7 +407,7 @@ fn reordered(version: &Version, namespace: NamespaceId, seed: u64) -> Arc<Versio
     Arc::clone(history.current().unwrap())
 }
 
-impl FactStore for Probe<'_> {
+impl FactReader for Probe<'_> {
     async fn head(&self) -> Result<Revision, StoreError> {
         self.world.store.head().await
     }

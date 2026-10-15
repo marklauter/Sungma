@@ -11,7 +11,7 @@ use sungma::{
     namespace::{Namespace, NamespaceError},
     revision::Revision,
     rewrite::Rewrite,
-    store::{FactStore, Pool},
+    store::{FactReader, Pool, ReadingDictionary},
 };
 use sungma_check::resolve;
 use sungma_lang::{fact::load_facts, namespace::load_namespaces};
@@ -43,9 +43,12 @@ pub fn world() -> World {
 
 /// Resolves `namespace:id#relation`; `None` if any name was never interned.
 pub async fn subjectset(world: &World, text: &str) -> Option<Subjectset> {
-    resolve::subjectset(&world.dictionary, &text.parse().unwrap())
-        .await
-        .unwrap()
+    resolve::subjectset(
+        &ReadingDictionary(&world.dictionary),
+        &text.parse().unwrap(),
+    )
+    .await
+    .unwrap()
 }
 
 /// An identity is not interned, so it needs no lookup.

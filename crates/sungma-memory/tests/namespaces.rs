@@ -9,7 +9,7 @@ use sungma::{
     namespace::Namespace,
     revision::Revision,
     rewrite::Rewrite::{self, This},
-    store::{FactStore, NamespaceStore},
+    store::{FactReader, NamespaceReader},
     version::{HistoryError, Version},
 };
 use sungma_memory::MemoryStore;

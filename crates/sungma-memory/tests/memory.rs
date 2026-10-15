@@ -11,7 +11,7 @@ use sungma::{
     namespace::Namespace,
     revision::Revision,
     rewrite::Rewrite::This,
-    store::FactStore,
+    store::FactReader,
 };
 use sungma_memory::MemoryStore;
 use sungma_write::store::{
@@ -104,10 +104,10 @@ async fn a_batch_lands_at_one_revision() {
 }
 
 #[tokio::test]
-async fn a_deleted_fact_stays_visible_before_its_deletion() {
+async fn a_retired_fact_stays_visible_before_its_retirement() {
     let store = store();
     store.write(&[Insert(fact(alice()))]).await.unwrap();
-    store.write(&[Delete(fact(alice()))]).await.unwrap();
+    store.write(&[Retire(fact(alice()))]).await.unwrap();
     assert_eq!(written(&store, 2).await, Some(Revision(2)));
     assert_eq!(written(&store, 3).await, None);
 }
@@ -116,7 +116,7 @@ async fn a_deleted_fact_stays_visible_before_its_deletion() {
 async fn a_fact_stored_again_is_visible_in_each_span() {
     let store = store();
     store.write(&[Insert(fact(alice()))]).await.unwrap();
-    store.write(&[Delete(fact(alice()))]).await.unwrap();
+    store.write(&[Retire(fact(alice()))]).await.unwrap();
     store.write(&[Insert(fact(alice()))]).await.unwrap();
     let mut seen = Vec::new();
     for revision in 2..=4 {
@@ -131,16 +131,16 @@ async fn inserting_a_stored_fact_keeps_its_revision() {
     store.write(&[Insert(fact(alice()))]).await.unwrap();
     store.write(&[Insert(fact(alice()))]).await.unwrap();
     assert_eq!(written(&store, 3).await, Some(Revision(2)));
-    store.write(&[Delete(fact(alice()))]).await.unwrap();
+    store.write(&[Retire(fact(alice()))]).await.unwrap();
     assert_eq!(written(&store, 4).await, None);
 }
 
 #[tokio::test]
-async fn deleting_an_absent_fact_changes_nothing() {
+async fn retiring_an_absent_fact_changes_nothing() {
     let store = store();
-    store.write(&[Delete(fact(alice()))]).await.unwrap();
+    store.write(&[Retire(fact(alice()))]).await.unwrap();
     store.write(&[Insert(fact(alice()))]).await.unwrap();
-    store.write(&[Delete(fact(bob()))]).await.unwrap();
+    store.write(&[Retire(fact(bob()))]).await.unwrap();
     assert_eq!(stored(&store, 4).await, [alice()]);
 }
 
@@ -190,7 +190,7 @@ async fn an_insert_under_an_undeclared_relation_stores_nothing() {
         .write(&[
             Insert(fact(member)),
             Insert(fact(resource)),
-            Delete(fact(bob())),
+            Retire(fact(bob())),
         ])
         .await
         .unwrap();
@@ -228,7 +228,7 @@ fn subjects() -> [Subject; 3] {
     [alice(), bob(), Subject::Subjectset(other())]
 }
 
-/// `(insert, set, subject)`: an insert or a delete of the fact of
+/// `(insert, set, subject)`: an insert or a retirement of the fact of
 /// `sets()[set]` and `subjects()[subject]`.
 type Write = (bool, usize, usize);
 
@@ -247,7 +247,7 @@ async fn reads_match_the_history(batches: Vec<Vec<Write>>) -> Result<(), TestCas
                     subjectset: sets[set].clone(),
                     subject: subjects[subject].clone(),
                 };
-                if insert { Insert(fact) } else { Delete(fact) }
+                if insert { Insert(fact) } else { Retire(fact) }
             })
             .collect();
         let revision = store.write(&writes).await.unwrap();

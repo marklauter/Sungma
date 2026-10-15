@@ -10,7 +10,7 @@ use std::{
 };
 
 use libfuzzer_sys::fuzz_target;
-use sungma::store::FactStore;
+use sungma::store::FactReader;
 use sungma_lang::{fact, namespace::load_namespaces};
 use sungma_memory::{MemoryDictionary, MemoryStore};
 

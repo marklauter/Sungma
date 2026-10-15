@@ -9,19 +9,20 @@ use std::{
 
 use proptest::{collection::vec, prelude::*, test_runner::TestCaseError};
 use sungma::store::{
-    Dictionary,
+    Dictionary, NameReader,
     Pool::{self, Relations},
-    StoreError,
+    ReadingDictionary, StoreError,
 };
 use sungma_memory::MemoryDictionary;
 use sungma_write::{
     intern::LeasingInterner,
-    store::{InternError, Interner, NameStore},
+    store::{InternError, Interner, NameWriter},
 };
 
 /// One node's view of a shared store. A stale node never finds a name, as
 /// if another node's insert hadn't reached it; an exhausted node finds no
 /// ids left to lease.
+#[derive(Clone, Copy)]
 struct Node<'a> {
     store: &'a MemoryDictionary,
     stale: bool,
@@ -32,31 +33,36 @@ fn block(size: u32) -> NonZeroU32 {
     NonZeroU32::new(size).unwrap()
 }
 
-fn node(store: &MemoryDictionary, size: u32) -> LeasingInterner<Node<'_>> {
-    LeasingInterner::new(
+/// A node that reads and writes through `node`.
+fn interner(node: Node<'_>, size: u32) -> LeasingInterner<Node<'_>, Node<'_>> {
+    LeasingInterner::new(node, node, block(size))
+}
+
+fn node(store: &MemoryDictionary, size: u32) -> LeasingInterner<Node<'_>, Node<'_>> {
+    interner(
         Node {
             store,
             stale: false,
             exhausted: false,
         },
-        block(size),
+        size,
     )
 }
 
-impl Dictionary for Node<'_> {
-    async fn lookup(&self, pool: Pool, name: &str) -> Result<Option<u32>, StoreError> {
+impl NameReader for Node<'_> {
+    async fn id(&self, pool: Pool, name: &str) -> Result<Option<u32>, StoreError> {
         if self.stale {
             return Ok(None);
         }
-        self.store.lookup(pool, name).await
+        NameReader::id(self.store, pool, name).await
     }
 
     async fn name(&self, pool: Pool, id: u32) -> Result<Option<String>, StoreError> {
-        self.store.name(pool, id).await
+        NameReader::name(self.store, pool, id).await
     }
 }
 
-impl NameStore for Node<'_> {
+impl NameWriter for Node<'_> {
     async fn insert_if_absent(&self, pool: Pool, name: &str, id: u32) -> Result<u32, StoreError> {
         self.store.insert_if_absent(pool, name, id).await
     }
@@ -84,6 +90,23 @@ async fn a_name_is_minted_once() {
         Some("bob")
     );
     assert_eq!(node.name(Relations, 99).await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn a_reading_dictionary_finds_what_an_interner_minted() {
+    let store = MemoryDictionary::default();
+    let alice = node(&store, 10).intern(Relations, "alice").await.unwrap();
+    let names = ReadingDictionary(Node {
+        store: &store,
+        stale: false,
+        exhausted: false,
+    });
+    assert_eq!(names.lookup(Relations, "alice").await.unwrap(), Some(alice));
+    assert_eq!(names.lookup(Relations, "bob").await.unwrap(), None);
+    assert_eq!(
+        names.name(Relations, alice).await.unwrap().as_deref(),
+        Some("alice")
+    );
 }
 
 #[tokio::test]
@@ -118,13 +141,13 @@ async fn nodes_mint_from_their_own_blocks() {
 async fn the_first_insert_of_a_name_wins() {
     let store = MemoryDictionary::default();
     let a = node(&store, 10);
-    let b = LeasingInterner::new(
+    let b = interner(
         Node {
             store: &store,
             stale: true,
             exhausted: false,
         },
-        block(10),
+        10,
     );
     let first = a.intern(Relations, "alice").await.unwrap();
     // b misses a's insert, mints 10 from its own block, and loses.
@@ -135,13 +158,13 @@ async fn the_first_insert_of_a_name_wins() {
 #[tokio::test]
 async fn interning_fails_once_the_ids_run_out() {
     let store = MemoryDictionary::default();
-    let node = LeasingInterner::new(
+    let node = interner(
         Node {
             store: &store,
             stale: false,
             exhausted: true,
         },
-        block(10),
+        10,
     );
     let error = node.intern(Relations, "alice").await.unwrap_err();
     assert!(
@@ -178,7 +201,7 @@ async fn ids_are_unique_and_stable(
                 stale,
                 exhausted: false,
             };
-            LeasingInterner::new(node, block(size))
+            interner(node, size)
         })
         .collect();
     let mut ids = HashMap::new();
