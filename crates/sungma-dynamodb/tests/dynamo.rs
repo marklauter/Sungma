@@ -21,7 +21,10 @@ use sungma_clock::DevClock;
 use sungma_dynamodb::{DynamoReader, DynamoWriter, Table, key};
 use sungma_write::{
     intern::LeasingInterner,
-    store::{FactWrite::Insert, FactWriter, Interner, NameWriter, NamespaceWrite, NamespaceWriter},
+    store::{
+        FactWrite::{Insert, Retire},
+        FactWriter, Interner, NameWriter, NamespaceWrite, NamespaceWriter,
+    },
 };
 
 fn writer(table: &Table) -> DynamoWriter<DevClock> {
@@ -69,17 +72,18 @@ async fn a_writer_behind_the_head_catches_up_in_one_try() {
     let table = table().await;
     let ahead = writer(&table);
     declared(&ahead).await;
-    for _ in 0..5 {
+    // Further behind than sixteen tries a revision apart would reach.
+    for _ in 0..20 {
         ahead.write(&[]).await.unwrap();
     }
     let behind = writer(&table);
     let landed = behind.write(&[Insert(owner("a", "alice"))]).await.unwrap();
-    assert_eq!(landed, Revision(7));
+    assert_eq!(landed, Revision(22));
     let reader = DynamoReader::new(table.clone());
-    assert_eq!(reader.head().await.unwrap(), Revision(7));
+    assert_eq!(reader.head().await.unwrap(), Revision(22));
     let set = owner("a", "alice").subjectset;
-    assert_eq!(reader.subjects(&set, Revision(6)).await.unwrap(), []);
-    assert_eq!(reader.subjects(&set, Revision(7)).await.unwrap().len(), 1);
+    assert_eq!(reader.subjects(&set, Revision(21)).await.unwrap(), []);
+    assert_eq!(reader.subjects(&set, Revision(22)).await.unwrap().len(), 1);
     let behind_again = writer(&table);
     let namespace = Namespace::new(vec![(OWNER, This)]).unwrap();
     let based_on = Revision(1);
@@ -93,9 +97,9 @@ async fn a_writer_behind_the_head_catches_up_in_one_try() {
         )
         .await
         .unwrap();
-    assert_eq!(version, Revision(8));
+    assert_eq!(version, Revision(23));
     let opened = DynamoWriter::dev(table).await.unwrap();
-    assert_eq!(opened.write(&[]).await.unwrap(), Revision(9));
+    assert_eq!(opened.write(&[]).await.unwrap(), Revision(24));
 }
 
 /// A transaction holds 100 items; a larger write is refused before it's
@@ -105,18 +109,51 @@ async fn a_write_past_one_transaction_is_refused() {
     let table = table().await;
     let writer = writer(&table);
     declared(&writer).await;
-    let writes: Vec<_> = (0..50)
-        .map(|i| Insert(owner("a", &format!("p{i}"))))
+    let reader = DynamoReader::new(table);
+    let grants = |count: usize| -> Vec<_> {
+        (0..count)
+            .map(|i| Insert(owner("a", &format!("p{i}"))))
+            .collect()
+    };
+    let retires = |count: usize| -> Vec<_> {
+        (0..count)
+            .map(|i| Retire(owner("b", &format!("p{i}"))))
+            .collect()
+    };
+    // The head, a check of `doc`, and a pointer and a span per grant.
+    let full = grants(49);
+    let mut past = full.clone();
+    past.push(Retire(owner("b", "absent")));
+    // The head and a pointer check per retirement of an absent fact.
+    let past_retires = retires(100);
+    // The head, a check of `doc`, and per fact a pointer, the span it
+    // closes and the span it opens.
+    let reopens: Vec<_> = grants(33)
+        .into_iter()
+        .flat_map(|grant| {
+            let Insert(fact) = &grant else { unreachable!() };
+            [Retire(fact.clone()), grant]
+        })
         .collect();
-    let refused = writer.write(&writes).await.unwrap_err();
-    assert!(
-        refused
-            .to_string()
-            .contains("more than one transaction holds"),
-        "{refused}"
-    );
-    assert_eq!(DynamoReader::new(table).head().await.unwrap(), Revision(1));
-    assert_eq!(writer.write(&writes[..45]).await.unwrap(), Revision(2));
+    let mut head = Revision(1);
+    for refused in [&past, &past_retires, &reopens[..]] {
+        let refusal = writer.write(refused).await.unwrap_err();
+        assert!(
+            refusal
+                .to_string()
+                .contains("more than one transaction holds"),
+            "{refusal}"
+        );
+        assert_eq!(reader.head().await.unwrap(), head);
+        // A refused write takes no revision.
+        head = Revision(head.0 + 1);
+        let landed = match refused.len() {
+            50 => writer.write(&full).await,
+            100 => writer.write(&past_retires[..99]).await,
+            _ => writer.write(&grants(33)).await,
+        };
+        assert_eq!(landed.unwrap(), head);
+    }
 }
 
 #[tokio::test]

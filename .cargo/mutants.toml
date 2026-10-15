@@ -35,4 +35,17 @@ exclude_re = [
     # A lookup exactly as old as the stale limit, to the nanosecond, is
     # either side of it; no test can time one that closely.
     'servers\.rs:.*replace < with <= in Lookups::start',
+    # These keys are already vec![0], and the counter works at any key no
+    # other item uses.
+    'replace latest -> Vec<u8> with vec!\[0\]',
+    'replace counter -> Vec<u8> with vec!\[[01]\]',
+    # The latest item answers only reads the history answers the same way.
+    'replace match guard latest\.revision\(\) <= revision with false in Table::version_at',
+    # DynamoDB Local reads consistently whatever a read asks for, and runs
+    # one transaction at a time, so no test there can tell an eventually
+    # consistent read, or a TransactionConflict, from the alternative.
+    'namespaces\.rs:.*(delete !|replace && with \|\|) in Table::entry',
+    'delete ! in DynamoWriter<C>::try_write_namespace',
+    'replace > with (==|>=) in <impl (Fact|Namespace)Writer for DynamoWriter<C>>::write',
+    'TransactionConflict"\) with false in Table::insert_name',
 ]

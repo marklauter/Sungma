@@ -251,10 +251,12 @@ impl Table {
                 .await
                 .map_err(failed)?;
             items.extend(output.items.unwrap_or_default());
-            start = output.last_evaluated_key;
-            if start.is_none() || query.limit.is_some() {
+            // A limited query reads one page.
+            let next = output.last_evaluated_key.filter(|_| query.limit.is_none());
+            let Some(next) = next else {
                 return Ok(items);
-            }
+            };
+            start = Some(next);
         }
     }
 

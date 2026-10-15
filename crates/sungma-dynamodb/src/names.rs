@@ -135,7 +135,7 @@ impl Table {
 
     /// Moves the counter to the end of the ids and returns what it passed.
     async fn lease_rest(&self, pool: Pool) -> Result<Range<u32>, StoreError> {
-        loop {
+        for _ in 0..ATTEMPTS {
             let item = self.get(key::names(pool), key::counter(), true).await?;
             let start = next(&item.unwrap_or_default())?;
             if start == u32::MAX {
@@ -161,6 +161,9 @@ impl Table {
                 },
             }
         }
+        Err(StoreError(format!(
+            "leasing the last ids of {pool:?} lost {ATTEMPTS} races in a row"
+        )))
     }
 }
 
