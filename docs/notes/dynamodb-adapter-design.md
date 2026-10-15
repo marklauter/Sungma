@@ -48,11 +48,15 @@ This is roadmap item 4. Development runs against DynamoDB Local in a container, 
 ## 4. Namespace versions
 
 1. `pk` is tag `2` and the namespace id. `sk` is tag `1` and the revision the entry opens at.
-   1. A version has `revision` and a map from relation id to its rewrite.
+   1. A version has `revision`, a map from relation id to its rewrite, and a map from relation id to its epoch.
    2. A retirement has `revision` and `retired`, set to true.
-2. Each namespace has one more item, `sk` = tag `0`, its current item. Its `revision` attribute is the current version's revision, absent when the namespace is retired. A namespace write is conditioned on it, which gives `based_on` its etag behaviour.
-3. `version(namespace, R)` reads the namespace's entries, the keys starting with tag `1`, replays them through `History` and asks for the version at R. A `Version` can only be built through a `History`, which works out each relation's epoch and refuses an entry out of order. A read of the latest entry at or before R would need a way to build a `Version` from stored epochs, and that would let an out-of-order history be expressed. Histories are short and rarely written, and a cache can come later.
-4. Open question: how to store a rewrite. DynamoDB nests maps and lists only 32 levels deep, and the rewrite grammar has no such limit. Either each rewrite is a binary attribute in a compact id form, or rewrites are capped at a depth that fits and stored as native maps.
+2. Each namespace has one more item, `sk` = tag `0`, its current item: a copy of its latest entry, as `:latest` names the newest image of a container. A namespace write stores the new entry and overwrites the current item in one transaction, on condition the current item's `revision` is the write's `based_on`, which gives `based_on` its etag behaviour.
+3. Reads:
+   1. `version(namespace, R)` at the head is a point read of the current item.
+   2. At an earlier R, it queries the entries at or before R, descending, limit 1.
+   3. Point reads batch, so one `BatchGetItem` loads the current versions of up to 100 namespaces in one round trip. A query can't batch.
+4. A `Version` read back from the store is built from its stored epochs, so `Version` needs a constructor for stored versions. It refuses a version where a relation the namespace declares has no epoch, or an epoch is later than the version's revision. `History` still orders versions on the write path.
+5. Open question: how to store a rewrite. DynamoDB nests maps and lists only 32 levels deep, and the rewrite grammar has no such limit. Either each rewrite is a binary attribute in a compact id form, or rewrites are capped at a depth that fits and stored as native maps.
 
 ## 5. Names
 
