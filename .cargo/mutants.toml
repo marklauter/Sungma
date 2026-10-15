@@ -47,5 +47,8 @@ exclude_re = [
     'namespaces\.rs:.*(delete !|replace && with \|\|) in Table::entry',
     'delete ! in DynamoWriter<C>::try_write_namespace',
     'replace > with (==|>=) in <impl (Fact|Namespace)Writer for DynamoWriter<C>>::write',
+    # A namespace write retries a conflict it read eventually, so its < is
+    # caught; a fact write only reads, so its < is like the two above.
+    'replace > with < in <impl FactWriter for DynamoWriter<C>>::write',
     'TransactionConflict"\) with false in Table::insert_name',
 ]
