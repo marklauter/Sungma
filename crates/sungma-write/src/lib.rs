@@ -6,3 +6,6 @@
 pub mod fact;
 pub mod intern;
 pub mod store;
+
+#[cfg(feature = "testkit")]
+pub mod testkit;

@@ -3,11 +3,17 @@ name = "sungma-write"
 version.workspace = true
 edition.workspace = true
 
+[features]
+# The tests every store runs: see `testkit`.
+testkit = ["dep:proptest", "dep:tokio"]
+
 [dependencies]
 parking_lot.workspace = true
+proptest = { workspace = true, optional = true }
 sungma.workspace = true
 sungma-clock.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["rt"], optional = true }
 
 [dev-dependencies]
 proptest.workspace = true
