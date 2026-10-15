@@ -6,6 +6,9 @@
 #   scripts/linux.sh test --workspace --locked
 #   scripts/linux.sh mutants -p sungma-clock -f crates/sungma-clock/src/linux.rs
 #
+# The sungma-dynamodb tests reach DynamoDB Local on the host, which
+# scripts/dynamodb.sh starts.
+#
 # Named volumes keep the toolchain, the cargo registry and the build output
 # between runs, apart from the Windows target directory.
 set -euo pipefail
@@ -20,6 +23,7 @@ MSYS_NO_PATHCONV=1 exec podman run --rm \
   -v sungma-tools:/tools \
   -e PATH=/tools/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
   -e CARGO_TARGET_DIR=/target \
+  -e SUNGMA_DYNAMODB_URL="${SUNGMA_DYNAMODB_URL:-http://host.containers.internal:8000}" \
   -e RUSTFLAGS="${RUSTFLAGS:--D warnings}" \
   -w /work \
   docker.io/library/rust:1 \

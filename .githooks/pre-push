@@ -3,5 +3,6 @@
 # Needs cargo-llvm-cov and cargo-audit installed. Mutation testing is too
 # slow for a push, so it runs in CI only.
 set -e
+scripts/dynamodb.sh
 cargo llvm-cov --workspace --locked --fail-under-lines 95 --summary-only
 cargo audit --deny warnings
