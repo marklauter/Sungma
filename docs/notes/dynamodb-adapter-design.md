@@ -18,8 +18,11 @@ This is roadmap item 4. Development runs against DynamoDB Local in a container, 
 
 ## 1. Crate and SDK
 
-1. The crate is `sungma-dynamodb`. Its store, `DynamoStore<C: Clock>`, implements all six ports: `FactStore`, `FactWriter`, `NamespaceStore`, `NamespaceWriter`, `Dictionary` and `NameStore`.
-2. It uses the official `aws-sdk-dynamodb` and `aws-config` crates, on tokio.
+1. The crate is `sungma-dynamodb`. Readers and writers are separate types, so code that only reads is given only a reader. Both share one DynamoDB client.
+   1. `DynamoReader` implements `FactStore`, `NamespaceStore` and `Dictionary`. It takes no clock.
+   2. `DynamoWriter<C: Clock>` implements `FactWriter`, `NamespaceWriter` and `NameStore`. The reads it makes inside a write, of pointers and latest items, are its own, not the read ports.
+2. The write ports stop extending the read ports: `FactWriter` no longer requires `FactStore`, `NamespaceWriter` no longer requires `NamespaceStore`, and `NameStore` no longer requires `Dictionary`. Minting stays in `LeasingInterner`, which is given a `Dictionary` and a `NameStore` and looks a name up before it mints. `MemoryStore` and `MemoryDictionary` still implement both sides, for tests.
+3. It uses the official `aws-sdk-dynamodb` and `aws-config` crates, on tokio.
 
 ## 2. The table
 
@@ -71,7 +74,7 @@ This is roadmap item 4. Development runs against DynamoDB Local in a container, 
 2. Every fact write and every namespace write is a single transaction, which also updates the head on condition its `revision` is below the new one. A write stamped below a revision already committed is refused and tried again, so a read at R sees every write at or before R, and unrelated writes don't queue behind each other.
 3. A fact write also checks the latest item of each namespace it touches, so `check_inserts` judged the inserts against the versions that were latest when the write landed.
 4. Facts and namespaces share the table and the head, so `FactStore::head` includes namespace writes.
-5. The store is generic over its clock, `DynamoStore<C: Clock>`, so the same code runs with any clock. Development uses `DevClock::starting_after(head)`, read when the store opens. A write takes its reading under an async lock, as `MemoryStore` does under its mutex.
+5. The writer is generic over its clock, `DynamoWriter<C: Clock>`, so the same code runs with any clock. Development uses `DevClock::starting_after(head)`, read when the writer opens. A write takes its reading under an async lock, as `MemoryStore` does under its mutex.
 6. A transaction holds at most 100 items. A fact takes two, its span and its pointer, plus the head and one check per namespace, so a batch holds about 45 facts. The store refuses a larger batch with a `StoreError`.
 
 ## 7. Rules
