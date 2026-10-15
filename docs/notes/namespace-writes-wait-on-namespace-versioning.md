@@ -10,7 +10,7 @@ status: evolving
 ## Where it stands
 
 - Namespaces enter only as namespace documents (`docs/specs/namespace-documents.md`), through `namespace::load_namespaces` (`crates/sungma-lang/src/namespace.rs`), or built in code by the tests through `Namespace::new`, into `MemoryStore` (`crates/sungma-memory/src/lib.rs`). `sungma-api` loads them once at startup.
-- `NamespaceStore` (`crates/sungma/src/store.rs`) reads the version whose span covers a revision.
+- `NamespaceReader` (`crates/sungma/src/store.rs`) reads the version whose span covers a revision.
 - A `Decision` (`crates/sungma/src/decision.rs`) records the fact `Revision` and the `Semantics` version, not which namespaces it was judged under. `replay` (`crates/sungma/src/replay.rs`) reads the namespaces of the decision's revision.
 - `Namespace::new` (`crates/sungma/src/namespace.rs`) checks a namespace whole and returns every problem. A namespace is valid once built, and a write port keeps that: no stored namespace fails to evaluate.
 
@@ -42,7 +42,7 @@ Namespace documents are JSON and carry no grammar version; the REST endpoint tha
 - **Retiring a namespace.** Retiring closes a namespace's last span. [One timeline](../specs/one-timeline.md#retiring-a-namespace) says what happens to its facts and why writing it again doesn't resurrect them. Which call retires it is the transport's concern.
 - **Concurrent writes.** A namespace write carries the revision token of the version it was based on, as an etag; a write that creates the namespace expects none. The write is refused when the namespace's latest version has moved on, and the caller reads the latest version and tries again. The `NamespaceWriter` port takes the expected version, and each adapter meets it with its store's conditional write, as the interner does with `insert_if_absent`.
 - **Effects on facts.** A namespace write never scans facts, so it neither reports the facts it orphans nor refuses past some count. With billions of facts, a scan would make every namespace write as slow as the graph is large. [[one-timeline]] says which facts count afterward.
-- **Storage and ports.** A `NamespaceWriter` port in `sungma-write`, beside `FactWriter`, writes namespace versions, and `NamespaceStore::version` reads at a revision. A namespace version is stored parsed and interned, not as document text; the printer gives back the same document every time, because it sorts relations by name.
+- **Storage and ports.** A `NamespaceWriter` port in `sungma-write`, beside `FactWriter`, writes namespace versions, and `NamespaceReader::version` reads at a revision. A namespace version is stored parsed and interned, not as document text; the printer gives back the same document every time, because it sorts relations by name.
 
 ## Open questions
 
