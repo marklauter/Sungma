@@ -379,3 +379,54 @@ async fn of_nodes_writing_one_version_exactly_one_succeeds() {
         assert_eq!(stored, 1);
     }
 }
+
+/// A fact write is judged by the namespace versions current when it lands,
+/// whatever its clock: an insert under a relation that another node drops
+/// at the same time lands before the drop, or is refused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_insert_racing_a_drop_lands_before_it_or_not_at_all() {
+    const OTHER: RelationId = RelationId(1);
+    for _ in 0..20 {
+        let table = table().await;
+        let first = declared(&writer(&table)).await;
+        let names = writer(&table);
+        names
+            .insert_if_absent(Pool::Relations, "other", OTHER.0)
+            .await
+            .unwrap();
+        // Far ahead, so the head never refuses the insert.
+        let facts = DynamoWriter::new(table.clone(), DevClock::starting_after(Revision(1000)));
+        let namespaces = writer(&table);
+        // Forty facts, so the insert reads forty pointers between reading
+        // the namespace and landing, and the drop can land in between.
+        let grants: Vec<_> = (0..40)
+            .map(|i| Insert(owner("a", &format!("p{i}"))))
+            .collect();
+        let insert = tokio::spawn(async move { facts.write(&grants).await });
+        let drop = tokio::spawn(async move {
+            let namespace = Namespace::new(vec![(OTHER, This)]).unwrap();
+            let write = NamespaceWrite::NewVersion {
+                based_on: first,
+                namespace,
+            };
+            namespaces.write_namespace(DOC, write).await.unwrap()
+        });
+        let (inserted, dropped) = (insert.await.unwrap(), drop.await.unwrap());
+        let reader = DynamoReader::new(table);
+        let current = reader.version(DOC, Revision(2000)).await.unwrap().unwrap();
+        assert_eq!(current.revision(), dropped);
+        match inserted {
+            Ok(revision) => {
+                let at_insert = reader.version(DOC, revision).await.unwrap().unwrap();
+                assert!(
+                    at_insert.declares(OWNER),
+                    "{revision:?} landed after the drop at {dropped:?}"
+                );
+            }
+            Err(refused) => assert!(
+                matches!(refused, sungma_write::store::FactWriteError::Undeclared(_)),
+                "{refused}"
+            ),
+        }
+    }
+}

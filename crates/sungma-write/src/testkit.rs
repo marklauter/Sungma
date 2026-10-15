@@ -39,10 +39,11 @@ pub trait Stores: Send + Sync + 'static {
 
 /// Writes a test for each function in [`crate::testkit`], against the
 /// stores `$make()` gives, an `async fn` that makes empty ones. The
-/// history property runs `$cases` cases.
+/// history property runs `$cases` cases and shrinks a failing one at most
+/// `$shrink` times: a store whose every case makes a table shrinks less.
 #[macro_export]
 macro_rules! store_tests {
-    ($make:path, cases = $cases:expr) => {
+    ($make:path, cases = $cases:expr, shrink = $shrink:expr) => {
         $crate::store_tests!(@each $make;
             each_write_is_the_next_revision,
             a_batch_lands_at_one_revision,
@@ -72,7 +73,11 @@ macro_rules! store_tests {
         }
 
         ::proptest::proptest! {
-            #![proptest_config(::proptest::test_runner::Config::with_cases($cases))]
+            #![proptest_config(::proptest::test_runner::Config {
+                cases: $cases,
+                max_shrink_iters: $shrink,
+                ..::proptest::test_runner::Config::default()
+            })]
 
             /// A read at a revision sees exactly the facts that applying
             /// every batch up to it, in order, leaves stored.

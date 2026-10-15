@@ -8,6 +8,14 @@ test_workspace = true
 # job still denies warnings in the real code.
 cap_lints = true
 
+# The sungma-dynamodb tests make a table per test and per property case, so
+# under parallel mutants they run well past the timeout cargo-mutants sets
+# from one baseline run.
+minimum_test_timeout = 180
+
+# The tests every store runs: test code, not code under test.
+exclude_globs = ["crates/sungma-write/src/testkit.rs"]
+
 # Mutants no test should catch.
 exclude_re = [
     # Default::default() for a Vec is Vec::new().

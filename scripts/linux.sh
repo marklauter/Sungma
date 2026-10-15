@@ -15,6 +15,14 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd -W 2>/dev/null || pwd)"
 
+# cargo-mutants builds each parallel job in its own copy of the tree, so it
+# keeps the build output there; a shared target directory would let the
+# jobs overwrite each other's test binaries.
+target=(-e CARGO_TARGET_DIR=/target)
+if [ "${1:-}" = mutants ]; then
+  target=()
+fi
+
 MSYS_NO_PATHCONV=1 exec podman run --rm \
   -v "$repo:/work" \
   -v sungma-cargo:/usr/local/cargo/registry \
@@ -22,7 +30,7 @@ MSYS_NO_PATHCONV=1 exec podman run --rm \
   -v sungma-target:/target \
   -v sungma-tools:/tools \
   -e PATH=/tools/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-  -e CARGO_TARGET_DIR=/target \
+  "${target[@]}" \
   -e SUNGMA_DYNAMODB_URL="${SUNGMA_DYNAMODB_URL:-http://host.containers.internal:8000}" \
   -e RUSTFLAGS="${RUSTFLAGS:--D warnings}" \
   -w /work \

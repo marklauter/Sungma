@@ -39,4 +39,5 @@ async fn dynamo() -> Dynamo {
     }
 }
 
-sungma_write::store_tests!(dynamo, cases = 32);
+// The in-memory stores shrink the same property fully.
+sungma_write::store_tests!(dynamo, cases = 32, shrink = 0);

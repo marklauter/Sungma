@@ -31,4 +31,4 @@ async fn memory() -> Memory {
     Memory::default()
 }
 
-sungma_write::store_tests!(memory, cases = 256);
+sungma_write::store_tests!(memory, cases = 256, shrink = 1024);
