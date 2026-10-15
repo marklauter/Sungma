@@ -13,8 +13,9 @@
 //! ```
 //!
 //! Every part has its own key, so nothing is split. Every name is checked,
-//! as [`sungma::name`] describes, before any is interned, so a refused
-//! document declares no facts.
+//! as [`sungma::name`] describes. Namespace and relation names are looked
+//! up, never interned: a name is interned when a namespace is written, so
+//! a fact can only name what a namespace declared.
 
 use std::{fmt, str::FromStr};
 
@@ -32,8 +33,8 @@ use sungma::{
     },
     store::Pool,
 };
-use sungma_memory::{MemoryDictionary, MemoryFactStore};
-use sungma_write::store::InternError;
+use sungma_memory::{MemoryDictionary, MemoryStore};
+use sungma_write::store::FactWriteError;
 
 /// Why a fact document wasn't loaded.
 #[derive(Debug, Error)]
@@ -41,8 +42,12 @@ pub enum FactError {
     /// The document was refused, with its line and column.
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error("namespace '{0}' was never declared")]
+    UnknownNamespace(NamespaceName),
+    #[error("relation '{0}' was never declared")]
+    UnknownRelation(RelationName),
     #[error(transparent)]
-    Intern(#[from] InternError),
+    Write(#[from] FactWriteError),
 }
 
 /// One fact as written: its subjectset and its subject.
@@ -182,54 +187,62 @@ impl<'de> Deserialize<'de> for SubjectDto {
     }
 }
 
-/// Parses a fact document whole, then interns every fact's namespace and
-/// relation names, and then inserts the facts, so a refused document
-/// stores no fact.
+/// Parses a fact document whole, then looks up every fact's namespace and
+/// relation names, and then inserts the facts in one write at one
+/// revision; an empty document writes nothing. A refused document stores
+/// no fact. A name never interned, or a relation no current version
+/// declares, refuses the document.
 pub fn load_facts(
     json: &str,
     dictionary: &MemoryDictionary,
-    store: &MemoryFactStore,
+    store: &MemoryStore,
 ) -> Result<(), FactError> {
     let dtos = serde_json::from_str::<Vec<FactDto>>(json)?;
     let mut facts = Vec::with_capacity(dtos.len());
     for dto in dtos {
-        let subjectset = intern_subjectset(dictionary, &dto.set)?;
+        let subjectset = find_subjectset(dictionary, &dto.set)?;
         let subject = match dto.subject {
             SubjectDto::Identity(identity) => Subject::Identity(identity),
             SubjectDto::Resource(resource) => {
-                Subject::ResourceMember(intern_resource(dictionary, &resource)?)
+                Subject::ResourceMember(find_resource(dictionary, &resource)?)
             }
-            SubjectDto::Subjectset(set) => {
-                Subject::Subjectset(intern_subjectset(dictionary, &set)?)
-            }
+            SubjectDto::Subjectset(set) => Subject::Subjectset(find_subjectset(dictionary, &set)?),
         };
         facts.push(Fact {
             subjectset,
             subject,
         });
     }
-    for fact in facts {
-        store.insert(fact);
+    if !facts.is_empty() {
+        store.insert(facts)?;
     }
     Ok(())
 }
 
-fn intern_resource(
+fn find_resource(
     dictionary: &MemoryDictionary,
     name: &ResourceName,
-) -> Result<Resource, InternError> {
+) -> Result<Resource, FactError> {
+    let namespace = name.namespace();
+    let id = dictionary
+        .id(Pool::Namespaces, namespace.as_str())
+        .ok_or_else(|| FactError::UnknownNamespace(namespace.clone()))?;
     Ok(Resource {
-        namespace: NamespaceId(dictionary.intern(Pool::Namespaces, name.namespace().as_str())?),
+        namespace: NamespaceId(id),
         id: name.id().clone(),
     })
 }
 
-fn intern_subjectset(
+fn find_subjectset(
     dictionary: &MemoryDictionary,
     name: &SubjectsetName,
-) -> Result<Subjectset, InternError> {
+) -> Result<Subjectset, FactError> {
+    let relation = name.relation();
+    let id = dictionary
+        .id(Pool::Relations, relation.as_str())
+        .ok_or_else(|| FactError::UnknownRelation(relation.clone()))?;
     Ok(Subjectset {
-        resource: intern_resource(dictionary, name.resource())?,
-        relation: RelationId(dictionary.intern(Pool::Relations, name.relation().as_str())?),
+        resource: find_resource(dictionary, name.resource())?,
+        relation: RelationId(id),
     })
 }

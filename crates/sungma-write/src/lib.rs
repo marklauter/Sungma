@@ -3,5 +3,6 @@
 //!
 //! A namespace write comes first; fact writes join it with the Write service.
 
+pub mod fact;
 pub mod intern;
 pub mod store;

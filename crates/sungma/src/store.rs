@@ -15,9 +15,9 @@ use thiserror::Error;
 
 use crate::{
     graph::{Subject, Subjectset},
-    id::{NamespaceId, RelationId},
+    id::NamespaceId,
     revision::Revision,
-    rewrite::Rewrite,
+    version::Version,
 };
 
 #[derive(Debug, Error)]
@@ -56,18 +56,22 @@ pub trait Dictionary {
 
 /// Facts keyed the way a wide-column store keys them: the subjectset is the
 /// partition key and the subject is the sort key. Every read is as of a
-/// revision.
+/// revision, and gives each fact with the revision that wrote it, where
+/// the span covering the read opened. Which facts count is the reader's
+/// rule, not the store's: see [`Version::counts`].
 pub trait FactStore {
-    /// The revision of the latest write.
+    /// The revision of the latest write, of a fact or of a namespace
+    /// version: both share one timeline, so a read at the head sees both.
     fn head(&self) -> impl Future<Output = Result<Revision, StoreError>> + Send;
 
-    /// Point lookup: whether `set@subject` is stored.
-    fn contains(
+    /// Point lookup: the revision that wrote `set@subject`, `None` when it
+    /// isn't stored at `revision`.
+    fn written(
         &self,
         set: &Subjectset,
         subject: &Subject,
         revision: Revision,
-    ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+    ) -> impl Future<Output = Result<Option<Revision>, StoreError>> + Send;
 
     /// The subjectsets stored under `set`: a sort-key range read that skips
     /// identities and resource members.
@@ -75,24 +79,25 @@ pub trait FactStore {
         &self,
         set: &Subjectset,
         revision: Revision,
-    ) -> impl Future<Output = Result<Vec<Subjectset>, StoreError>> + Send;
+    ) -> impl Future<Output = Result<Vec<(Subjectset, Revision)>, StoreError>> + Send;
 
     /// Every subject stored under `set`.
     fn subjects(
         &self,
         set: &Subjectset,
         revision: Revision,
-    ) -> impl Future<Output = Result<Vec<Subject>, StoreError>> + Send;
+    ) -> impl Future<Output = Result<Vec<(Subject, Revision)>, StoreError>> + Send;
 }
 
-/// The rewrite of each declared relation, by namespace. Not versioned yet:
-/// every read sees the current namespaces. A rewrite is shared, so a cache
-/// can evict it while a check still walks it.
+/// Namespace versions, keyed by namespace and then by the revision each
+/// opens at. A version is shared, so a cache can evict it while a check
+/// still walks it.
 pub trait NamespaceStore {
-    /// `None` when the namespace or the relation isn't declared.
-    fn rewrite(
+    /// The version whose span covers `revision`, `None` when the namespace
+    /// wasn't created yet or was retired then.
+    fn version(
         &self,
         namespace: NamespaceId,
-        relation: RelationId,
-    ) -> impl Future<Output = Result<Option<Arc<Rewrite>>, StoreError>> + Send;
+        revision: Revision,
+    ) -> impl Future<Output = Result<Option<Arc<Version>>, StoreError>> + Send;
 }

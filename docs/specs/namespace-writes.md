@@ -58,7 +58,7 @@ Dropping a relation empties it everywhere, including in other namespaces that re
 - A version is stored parsed and interned, not as document text. Printing it gives back the same document every time, because the printer sorts relations by name.
 - Namespace and relation names are interned when a namespace is written, and only then. Checks look names up and never intern them. See [Interner](../interner.md).
 - A namespace write takes its revision from the [[revision-clock]] and waits out commit-wait before acknowledging, as a fact write does. See [Clock](clock.md).
-- The `NamespaceWriter` port in `sungma-write`, beside `FactWriter`, takes the version a write expects. `NamespaceStore::rewrite` in the kernel reads a relation's rewrite at a revision.
+- The `NamespaceWriter` port in `sungma-write`, beside `FactWriter`, takes the version a write expects. `NamespaceStore::version` in the kernel reads the version whose span covers a revision.
 
 ## Answered elsewhere
 

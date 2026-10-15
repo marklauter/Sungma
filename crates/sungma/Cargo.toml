@@ -11,4 +11,5 @@ proptest.workspace = true
 sungma-check.workspace = true
 sungma-lang.workspace = true
 sungma-memory.workspace = true
+sungma-write.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

@@ -21,26 +21,26 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
 **Storage ports** (`store.rs` in `sungma` and `sungma-write`, `intern.rs`, the `sungma-memory` crate)
 - The ports are async traits, which play the role of C# interfaces. Reads and writes are separate:
   - `Dictionary`: name to id, and back;
-  - `FactStore`: keyed like a wide-column store, with the subjectset as partition key and the subject as sort key;
-  - `NamespaceStore`: the rewrite for a namespace and relation;
+  - `FactStore`: keyed like a wide-column store, with the subjectset as partition key and the subject as sort key; each read gives the revision that wrote each fact;
+  - `NamespaceStore`: the namespace version whose span covers a revision;
   - `FactWriter`: a batch of inserts and deletes, applied atomically and stamped with one revision;
   - `NamespaceWriter`: creates a namespace, writes its next version, or retires it, and refuses the write unless the namespace is still at the version it was based on;
   - `Interner`: mints ids for new names, each in its pool: namespace names and relation names. Relations share one pool because `(parent, viewer)` means `viewer` in whichever namespace the parent fact names.
 - Where a guarantee spans nodes, Sungma runs the protocol and a store supplies primitives. A fact keeps the revision that wrote it and the one that deleted it, so reads at any revision work on any store. `LeasingInterner` mints ids over a `NameStore`: each node leases a block of ids from a shared counter, and a conditional insert makes the first node to store a name win. [interner.md](interner.md) has the sequence.
-- The `sungma-memory` crate has in-memory fakes of the stores. There is no real database yet.
+- The `sungma-memory` crate has `MemoryStore`, an in-memory fake of the fact and namespace stores, which stamps writes from a `DevClock`. There is no real database yet.
 
 **Evaluation** (`closure.rs`, the heart of the project)
 - `Closure` walks a rewrite tree recursively against the stores at a fixed revision. It never builds the full set of subjects; it short-circuits as soon as the answer is known.
 - `decide` returns an `Outcome`: allowed, with the facts that prove it (its "grounds"), or denied.
 - `contains` does the same walk without collecting proof. That's done with a `Proof` trait, implemented once for `Vec<Fact>` and once for `()`, so one generic walk serves both.
 - `expand` returns one level of the tree.
+- Namespaces are read at the same revision as facts. A fact counts only when its namespace's version declares its relation and the fact was written at or after the relation's epoch.
 - Cycles in the data, such as folders inside folders, end quietly. A walk through more than 100 subjectsets ends the whole check with an error, since the limit caps the work one check may do.
 - Store errors follow Kleene logic. A failed read is an unknown verdict, and an operand that settles the result outweighs it: a true union operand, a false intersection operand, or a false base or true excluded side of an exclusion. The verdict doesn't depend on evaluation order. The check fails only when nothing settles the result.
 
 **Decisions and replay** (`decision.rs`, `replay.rs`)
 - A `Decision` records the question, the revision, the `SEMANTICS` version and the outcome with its grounds.
 - `replay` re-judges a recorded decision at its revision and reports one of four results: `Matches`, `Regrounded` (the same verdict on other grounds), `Differs`, or `SemanticsChanged` (the evaluation rules have changed since). This is the audit story.
-- One limitation: namespaces aren't versioned yet, so replay reads the current namespaces.
 
 **The edge** (`name.rs`; `resolve.rs` and `lib.rs` in `sungma-check`)
 - `name.rs` parses `namespace:id#relation` once, splitting at the first `:` and the last `#`.
@@ -55,7 +55,6 @@ Sungma is a Zanzibar-style authorization service. It answers one question: is su
 **Not built yet**
 - Writes over the API (facts are only loaded from fixtures).
 - A real store.
-- Namespace versioning.
 - RFC 9457 error bodies.
 - Expand over HTTP.
 - Authentication.

@@ -3,7 +3,7 @@
 1. Evaluator: namespaces, facts and rewrites, judged at a revision (done).
 2. Decisions with grounds, audit records and replay (done).
 3. Storage ports with Sungma-owned fact history and pooled id minting (done).
-4. SQLite storage adapter for development.
+4. DynamoDB Local storage adapter for development.
 5. Opaque zookies.
 6. Check service.
 7. Content-change check that returns a zookie.
@@ -12,7 +12,7 @@
 10. Expand service.
 11. Watch service: a changelog stream with heartbeat zookies.
 12. Namespace documents: the JSON form of a namespace, with its rewrite grammar, parser and printer (done).
-13. Versioned namespaces and a namespace write service.
+13. Versioned namespaces (done) and a namespace write service.
 14. HTTP and gRPC transports for each service.
 15. Authentication and authorization of Sungma's own callers.
 16. Distributed storage adapter.

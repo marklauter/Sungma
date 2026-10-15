@@ -12,11 +12,11 @@ use sungma::{
     store::Pool,
 };
 use sungma_lang::namespace::{ErrorKind, LoadError, load_namespaces, parse};
-use sungma_memory::{MemoryDictionary, MemoryNamespaceStore};
+use sungma_memory::{MemoryDictionary, MemoryStore};
 
 fn load(json: &str) -> Result<(), LoadError> {
     let dictionary = MemoryDictionary::default();
-    let namespaces = MemoryNamespaceStore::default();
+    let namespaces = MemoryStore::default();
     load_namespaces(&[json], &dictionary, &namespaces)
 }
 
@@ -41,7 +41,7 @@ fn names(cycle: &[&str]) -> NamespaceError {
 #[test]
 fn a_refused_document_stores_no_namespace() {
     let dictionary = MemoryDictionary::default();
-    let namespaces = MemoryNamespaceStore::default();
+    let namespaces = MemoryStore::default();
     let documents = [
         r#"{ "file": { "owner": "this" } }"#,
         r#"{ "folder": { "viewer": "editor" } }"#,
@@ -170,7 +170,7 @@ fn nested_in(
 
 fn declare(rewrite: Rewrite<&str>) -> Result<(), NamespaceError> {
     let dictionary = MemoryDictionary::default();
-    let namespaces = MemoryNamespaceStore::default();
+    let namespaces = MemoryStore::default();
     common::declare(&namespaces, &dictionary, "file", "deep", rewrite)
 }
 
@@ -208,7 +208,7 @@ fn a_deeper_excluded_operand_is_refused() {
 #[test]
 fn redeclaring_a_relation_checks_the_whole_namespace_by_id() {
     let dictionary = MemoryDictionary::default();
-    let namespaces = MemoryNamespaceStore::default();
+    let namespaces = MemoryStore::default();
     let declare =
         |relation, rewrite| common::declare(&namespaces, &dictionary, "file", relation, rewrite);
     declare("owner", This).unwrap();

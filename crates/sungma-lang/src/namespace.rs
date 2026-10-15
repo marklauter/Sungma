@@ -38,10 +38,9 @@ use sungma::{
     non_empty::NonEmpty,
     rewrite::Rewrite,
     store::Pool,
-    version::HistoryError,
 };
-use sungma_memory::{MemoryDictionary, MemoryNamespaceStore};
-use sungma_write::store::InternError;
+use sungma_memory::{MemoryDictionary, MemoryStore};
+use sungma_write::store::{InternError, NamespaceWriteError};
 
 pub const MAX_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_RELATIONS: usize = 500;
@@ -222,7 +221,7 @@ pub enum LoadError {
     #[error(transparent)]
     Refused(#[from] Refusal),
     #[error(transparent)]
-    History(#[from] HistoryError),
+    Write(#[from] NamespaceWriteError),
     #[error(transparent)]
     Intern(#[from] InternError),
 }
@@ -240,7 +239,7 @@ impl From<NamespaceError> for LoadError {
 pub fn load_namespaces(
     documents: &[&str],
     dictionary: &MemoryDictionary,
-    namespaces: &MemoryNamespaceStore,
+    namespaces: &MemoryStore,
 ) -> Result<(), LoadError> {
     let parsed = documents
         .iter()

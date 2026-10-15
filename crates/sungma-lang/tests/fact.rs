@@ -1,26 +1,32 @@
 //! Fact documents: every part under its own key, and a subject read by
 //! its keys.
 
-use std::time::{Duration, Instant};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::{Duration, Instant},
+};
 
 use proptest::prelude::*;
 use serde_json::{Value, json};
 use sungma::{
     graph::Subject,
+    id::{NamespaceId, RelationId},
     name::{
         MAX_IDENTITY_BYTES, MAX_NAMESPACE_BYTES, MAX_RELATION_BYTES, MAX_RESOURCE_ID_BYTES,
         ResourceName, SubjectsetName,
     },
-    store::{FactStore, Pool},
+    namespace::Namespace,
+    rewrite::Rewrite::This,
+    store::{Dictionary, FactStore, Pool},
 };
 use sungma_check::resolve;
 use sungma_lang::fact;
-use sungma_memory::{MemoryDictionary, MemoryFactStore};
+use sungma_memory::{MemoryDictionary, MemoryStore};
 
 /// The message a fact JSON document is refused with.
 fn refused(json: &str) -> String {
     let dictionary = MemoryDictionary::default();
-    let facts = MemoryFactStore::default();
+    let facts = MemoryStore::default();
     match fact::load_facts(json, &dictionary, &facts) {
         Err(error) => error.to_string(),
         Ok(()) => panic!("accepted: {json}"),
@@ -37,7 +43,7 @@ fn with_subject(subject: &str) -> String {
 #[tokio::test]
 async fn a_subject_is_read_by_its_keys() {
     let dictionary = MemoryDictionary::default();
-    let facts = MemoryFactStore::default();
+    let facts = MemoryStore::default();
     let json = r#"[
         { "namespace": "file", "resource": "a", "relation": "owner",
           "subject": { "identity": "anne@example.com" } },
@@ -46,8 +52,9 @@ async fn a_subject_is_read_by_its_keys() {
         { "namespace": "file", "resource": "a", "relation": "viewer",
           "subject": { "namespace": "group", "resource": "eng", "relation": "member" } }
     ]"#;
+    let declared = declare_all(json, &dictionary, &facts);
     fact::load_facts(json, &dictionary, &facts).unwrap();
-    assert_eq!(facts.head().await.unwrap().0, 3);
+    assert_eq!(facts.head().await.unwrap().0, declared + 1);
     let folder = resolve::resource(&dictionary, &"folder:root".parse().unwrap()).await;
     assert!(folder.unwrap().is_some());
 }
@@ -193,10 +200,57 @@ fn an_empty_resource_or_identity_is_refused() {
     assert!(error.contains("a resource is empty"), "{error}");
 }
 
+/// A name never interned, or a relation no current version declares,
+/// refuses the whole document, whether the fact or its subject names it.
+#[tokio::test]
+async fn a_fact_naming_what_no_namespace_declares_is_refused() {
+    let declared =
+        with_subject(r#"{ "namespace": "group", "resource": "eng", "relation": "member" }"#);
+    let fact = |namespace: &str, relation: &str, subject: &str| {
+        format!(
+            r#"{{ "namespace": "{namespace}", "resource": "a", "relation": "{relation}", "subject": {subject} }}"#
+        )
+    };
+    let alice = r#"{ "identity": "alice" }"#;
+    for (refused, error) in [
+        (
+            fact("file", "owenr", alice),
+            "relation 'owenr' was never declared",
+        ),
+        (
+            fact("drive", "owner", alice),
+            "namespace 'drive' was never declared",
+        ),
+        (fact("file", "member", alice), "doesn't declare"),
+        (
+            fact(
+                "file",
+                "owner",
+                r#"{ "namespace": "group", "resource": "eng", "relation": "owner" }"#,
+            ),
+            "doesn't declare",
+        ),
+    ] {
+        let dictionary = MemoryDictionary::default();
+        let facts = MemoryStore::default();
+        let head = declare_all(&declared, &dictionary, &facts);
+        let declared = declared.strip_suffix(']').unwrap();
+        let json = format!("{declared}, {refused}]");
+        let message = fact::load_facts(&json, &dictionary, &facts)
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains(error), "{refused}: {message}");
+        assert_eq!(facts.head().await.unwrap().0, head);
+        for (pool, name) in [(Pool::Namespaces, "drive"), (Pool::Relations, "owenr")] {
+            assert_eq!(dictionary.lookup(pool, name).await.unwrap(), None);
+        }
+    }
+}
+
 #[tokio::test]
 async fn a_refused_document_declares_no_facts() {
     let dictionary = MemoryDictionary::default();
-    let facts = MemoryFactStore::default();
+    let facts = MemoryStore::default();
     let json = r#"[
         { "namespace": "file", "resource": "a", "relation": "owner",
           "subject": { "identity": "alice" } },
@@ -255,9 +309,51 @@ fn fact_json(namespace: &str, resource: &str, relation: &str, subject: &Who) -> 
     json!({ "namespace": namespace, "resource": resource, "relation": relation, "subject": subject.json() })
 }
 
-fn loaded(json: &str) -> (MemoryDictionary, MemoryFactStore) {
+/// Declares every namespace a fact or subjectset subject in the document
+/// names, with each relation named under it as `this`, so the document's
+/// facts are declared, and interns the namespace of each resource member.
+/// Gives how many namespaces it declared, each at its own revision.
+fn declare_all(json: &str, dictionary: &MemoryDictionary, store: &MemoryStore) -> u64 {
+    let Ok(Value::Array(facts)) = serde_json::from_str(json) else {
+        return 0;
+    };
+    let mut relations: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    let mut declared = 0;
+    for fact in &facts {
+        for part in [fact, &fact["subject"]] {
+            let Some(namespace) = part["namespace"].as_str() else {
+                continue;
+            };
+            let names = relations.entry(namespace).or_default();
+            if let Some(relation) = part["relation"].as_str() {
+                names.insert(relation);
+            }
+        }
+    }
+    for (namespace, names) in &relations {
+        let id = NamespaceId(dictionary.intern(Pool::Namespaces, namespace).unwrap());
+        // A namespace only resource members name needs only its name.
+        if names.is_empty() {
+            continue;
+        }
+        let rules = names
+            .iter()
+            .map(|name| {
+                let relation = dictionary.intern(Pool::Relations, name).unwrap();
+                (RelationId(relation), This)
+            })
+            .collect();
+        store.declare(id, Namespace::new(rules).unwrap()).unwrap();
+        declared += 1;
+    }
+    declared
+}
+
+/// The document loaded into a store that declares its namespaces.
+fn loaded(json: &str) -> (MemoryDictionary, MemoryStore) {
     let dictionary = MemoryDictionary::default();
-    let facts = MemoryFactStore::default();
+    let facts = MemoryStore::default();
+    declare_all(json, &dictionary, &facts);
     if let Err(error) = fact::load_facts(json, &dictionary, &facts) {
         panic!("refused: {error}");
     }
@@ -272,7 +368,7 @@ fn set_name(namespace: &str, resource: &str, relation: &str) -> SubjectsetName {
 /// Whether the store holds the fact, found under the names it was written
 /// with.
 async fn holds(
-    (dictionary, facts): &(MemoryDictionary, MemoryFactStore),
+    (dictionary, facts): &(MemoryDictionary, MemoryStore),
     (namespace, resource, relation): (&str, &str, &str),
     subject: &Who,
 ) -> bool {
@@ -300,7 +396,7 @@ async fn holds(
         return false;
     };
     let head = facts.head().await.unwrap();
-    facts.contains(&set, &subject, head).await.unwrap()
+    facts.written(&set, &subject, head).await.unwrap().is_some()
 }
 
 fn identity(text: &str) -> Who {
@@ -410,6 +506,7 @@ async fn case_is_kept() {
         fact_json("file", "a", "owner", &identity("anne")),
     ]);
     let world = loaded(&documents.to_string());
+    // One revision declares `file`, and one writes both facts.
     assert_eq!(world.1.head().await.unwrap().0, 2);
     let owner = ("file", "a", "owner");
     assert!(holds(&world, owner, &identity("Anne")).await);
@@ -536,7 +633,8 @@ async fn a_large_document_loads_within_a_time_bound() {
         "{:?}",
         started.elapsed()
     );
-    assert_eq!(facts.head().await.unwrap().0, 100_000);
+    // One revision declares `file`, and one writes every fact.
+    assert_eq!(facts.head().await.unwrap().0, 2);
 }
 
 #[tokio::test]
@@ -606,7 +704,7 @@ proptest! {
         ],
     ) {
         let dictionary = MemoryDictionary::default();
-        let facts = MemoryFactStore::default();
+        let facts = MemoryStore::default();
         if fact::load_facts(&text, &dictionary, &facts).is_err() {
             let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
             prop_assert_eq!(runtime.block_on(facts.head()).unwrap().0, 0);

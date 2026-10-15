@@ -2,7 +2,9 @@
 //! and a store only supplies primitives every store has: a [`FactWriter`]
 //! keeps the history of each fact, a [`NamespaceWriter`] keeps the versions
 //! of each namespace, and [`crate::intern::LeasingInterner`] mints ids over
-//! a [`NameStore`].
+//! a [`NameStore`]. Both writers stamp their writes from one revision
+//! clock, the `Clock` port in `sungma-clock`, so facts and namespace
+//! versions share one timeline.
 //!
 //! `fn ... -> impl Future<Output = ...> + Send` is an `async fn` in a trait
 //! that also promises its future can move between threads. Implementations
@@ -20,6 +22,7 @@ use sungma::{
     store::{Dictionary, FactStore, NamespaceStore, Pool, StoreError},
     version::HistoryError,
 };
+use sungma_clock::ClockFault;
 
 #[derive(Debug, Error)]
 pub enum InternError {
@@ -76,6 +79,20 @@ pub enum FactWrite {
     Delete(Fact),
 }
 
+#[derive(Debug, Error)]
+pub enum FactWriteError {
+    /// The namespace version current at the write doesn't declare the
+    /// fact's relation, or a subjectset subject's namespace doesn't declare
+    /// the subject's relation. The fact would never count.
+    #[error("the fact names a relation its namespace doesn't declare")]
+    Undeclared(Fact),
+    /// The clock can't give a revision it trusts.
+    #[error(transparent)]
+    Clock(#[from] ClockFault),
+    #[error(transparent)]
+    Store(#[from] StoreError),
+}
+
 /// Writes facts. Sungma keeps the history itself rather than relying on the
 /// store's own versioning: a fact is stored with the revision that wrote it
 /// and, once deleted, the revision that deleted it, and is never removed.
@@ -84,13 +101,20 @@ pub enum FactWrite {
 ///
 /// A write is stamped with a revision. Once it returns revision R, a read
 /// at R sees that write and every write acknowledged before it began.
+///
+/// An insert is refused unless the current namespace versions declare the
+/// fact's relation and, for a subjectset subject, the subject's relation.
+/// Inserting a fact whose stored span was written before its relation's
+/// epoch closes that span and opens a new one, so a grant asserted again
+/// after its relation comes back counts. [`crate::fact`] has both rules,
+/// for every store to apply. See `docs/specs/one-timeline.md`.
 pub trait FactWriter: FactStore {
     /// Applies `writes` atomically and returns the revision they're stamped
-    /// with.
+    /// with, or refuses them all and stores nothing.
     fn write(
         &self,
         writes: &[FactWrite],
-    ) -> impl Future<Output = Result<Revision, StoreError>> + Send;
+    ) -> impl Future<Output = Result<Revision, FactWriteError>> + Send;
 }
 
 /// One change to a namespace. See `docs/specs/namespace-writes.md`.
@@ -120,6 +144,9 @@ pub enum NamespaceWriteError {
     /// The namespace's history refuses the revision the store stamped.
     #[error(transparent)]
     History(#[from] HistoryError),
+    /// The clock can't give a revision it trusts.
+    #[error(transparent)]
+    Clock(#[from] ClockFault),
     #[error(transparent)]
     Store(#[from] StoreError),
 }

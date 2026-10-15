@@ -12,11 +12,13 @@ use proptest::{prelude::*, sample::subsequence, test_runner::TestCaseError};
 use sungma::{
     closure::{Closure, ClosureError, Expansion, MAX_DEPTH},
     graph::{Subject, Subjectset},
-    id::{NamespaceId, RelationId},
+    id::NamespaceId,
+    namespace::Namespace,
     non_empty::NonEmpty,
     revision::Revision,
     rewrite::Rewrite::{self, Computed, Exclusion, Intersection, This, Union},
-    store::{FactStore, NamespaceStore, StoreError},
+    store::{FactStore, NamespaceStore, Pool, StoreError},
+    version::{History, Version},
 };
 use sungma_lang::fact::load_facts;
 
@@ -32,7 +34,7 @@ async fn check_at(
     };
     let subject = identity(who);
     agree(
-        &Closure::new(&world.namespaces, &world.facts, &set, revision),
+        &Closure::new(&world.store, &world.store, &set, revision),
         subject,
     )
     .await
@@ -168,7 +170,7 @@ fn ringed_world() -> World {
         { "namespace": "file", "resource": "ring.md", "relation": "viewer", "subject": { "namespace": "group", "resource": "ring_a", "relation": "member" } },
         { "namespace": "file", "resource": "ring.md", "relation": "owner", "subject": { "identity": "alice" } }
     ]"#;
-    load_facts(facts, &world.dictionary, &world.facts).unwrap();
+    load_facts(facts, &world.dictionary, &world.store).unwrap();
     world
 }
 
@@ -220,7 +222,7 @@ async fn chain(length: usize, more: &[&str]) -> Result<bool, ClosureError> {
         .collect();
     facts.extend(more.iter().map(ToString::to_string));
     let facts = format!("[{}]", facts.join(","));
-    load_facts(&facts, &world.dictionary, &world.facts).unwrap();
+    load_facts(&facts, &world.dictionary, &world.store).unwrap();
     check(&world, "group:g0#member", "alice").await
 }
 
@@ -267,8 +269,11 @@ async fn late_bound_relation_missing_on_target_is_empty() {
 #[tokio::test]
 async fn a_parent_of_an_undeclared_namespace_is_empty() {
     let world = world();
+    // `ghost` is a known name that no version declares, as for a retired
+    // namespace.
+    world.dictionary.intern(Pool::Namespaces, "ghost").unwrap();
     let fact = r#"[{ "namespace": "file", "resource": "haunted.md", "relation": "parent", "subject": { "namespace": "ghost", "resource": "attic" } }]"#;
-    load_facts(fact, &world.dictionary, &world.facts).unwrap();
+    load_facts(fact, &world.dictionary, &world.store).unwrap();
     assert!(
         !check(&world, "file:haunted.md#viewer", "alice")
             .await
@@ -278,11 +283,12 @@ async fn a_parent_of_an_undeclared_namespace_is_empty() {
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Read {
-    Contains,
+    Written,
     Subjectsets,
     Subjects,
-    /// The rewrite of the subjectset's namespace and relation, for any resource.
-    Rewrite,
+    /// The version of the subjectset's namespace, for any resource and
+    /// relation.
+    Version,
 }
 
 /// The docs namespace and fact stores, failing the listed reads. With a seed,
@@ -360,51 +366,69 @@ fn shuffled(rewrite: &Rewrite, seed: &mut u64) -> Rewrite {
 }
 
 impl NamespaceStore for Probe<'_> {
-    async fn rewrite(
+    async fn version(
         &self,
         namespace: NamespaceId,
-        relation: RelationId,
-    ) -> Result<Option<Arc<Rewrite>>, StoreError> {
-        let failed = self.failures.iter().any(|(set, read)| {
-            *read == Read::Rewrite
-                && (set.resource.namespace, set.relation) == (namespace, relation)
-        });
+        revision: Revision,
+    ) -> Result<Option<Arc<Version>>, StoreError> {
+        let failed = self
+            .failures
+            .iter()
+            .any(|(set, read)| *read == Read::Version && set.resource.namespace == namespace);
         if failed {
             return Err(StoreError("injected".to_owned()));
         }
-        let rewrite = self.world.namespaces.rewrite(namespace, relation).await?;
-        Ok(match self.shuffle {
-            Some(seed) => {
-                let mut seed = seed_for(seed, (namespace, relation));
-                rewrite.map(|rewrite| Arc::new(shuffled(&rewrite, &mut seed)))
-            }
-            None => rewrite,
+        let version = self.world.store.version(namespace, revision).await?;
+        Ok(match (self.shuffle, version) {
+            (Some(seed), Some(version)) => Some(reordered(&version, namespace, seed)),
+            (_, version) => version,
         })
     }
 }
 
+/// `version` with every rewrite [`shuffled`]. The copy is the first
+/// version of a history of its own, at revision 0, so its epochs are 0 and
+/// every fact under a relation it declares counts. That matches the
+/// version only where every fact was written after its relation's epoch,
+/// as in the worlds the shuffling probe reads.
+fn reordered(version: &Version, namespace: NamespaceId, seed: u64) -> Arc<Version> {
+    let relations = version
+        .namespace()
+        .relations()
+        .map(|(relation, rewrite)| {
+            let mut seed = seed_for(seed, (namespace, *relation));
+            (*relation, shuffled(rewrite, &mut seed))
+        })
+        .collect();
+    let mut history = History::default();
+    history
+        .write(Namespace::new(relations).unwrap(), Revision(0))
+        .unwrap();
+    Arc::clone(history.current().unwrap())
+}
+
 impl FactStore for Probe<'_> {
     async fn head(&self) -> Result<Revision, StoreError> {
-        self.world.facts.head().await
+        self.world.store.head().await
     }
 
-    async fn contains(
+    async fn written(
         &self,
         set: &Subjectset,
         subject: &Subject,
         revision: Revision,
-    ) -> Result<bool, StoreError> {
-        self.fail(set, Read::Contains)?;
-        self.world.facts.contains(set, subject, revision).await
+    ) -> Result<Option<Revision>, StoreError> {
+        self.fail(set, Read::Written)?;
+        self.world.store.written(set, subject, revision).await
     }
 
     async fn subjectsets(
         &self,
         set: &Subjectset,
         revision: Revision,
-    ) -> Result<Vec<Subjectset>, StoreError> {
+    ) -> Result<Vec<(Subjectset, Revision)>, StoreError> {
         self.fail(set, Read::Subjectsets)?;
-        let mut nested = self.world.facts.subjectsets(set, revision).await?;
+        let mut nested = self.world.store.subjectsets(set, revision).await?;
         self.permute(&mut nested, set);
         Ok(nested)
     }
@@ -413,9 +437,9 @@ impl FactStore for Probe<'_> {
         &self,
         set: &Subjectset,
         revision: Revision,
-    ) -> Result<Vec<Subject>, StoreError> {
+    ) -> Result<Vec<(Subject, Revision)>, StoreError> {
         self.fail(set, Read::Subjects)?;
-        let mut subjects = self.world.facts.subjects(set, revision).await?;
+        let mut subjects = self.world.store.subjects(set, revision).await?;
         self.permute(&mut subjects, set);
         Ok(subjects)
     }
@@ -468,27 +492,27 @@ async fn a_store_error_that_nothing_outweighs_fails_the_check() {
             "file:design.md#viewer",
             "alice",
             "group:eng#member",
-            Read::Contains,
+            Read::Written,
         ),
         (
             "file:design.md#viewer",
             "alice",
             "folder:specs#viewer",
-            Read::Rewrite,
+            Read::Version,
         ),
         // The base holds, and whether alice is banned is unknown.
         (
             "file:design.md#viewer",
             "alice",
             "file:design.md#banned",
-            Read::Contains,
+            Read::Written,
         ),
         // alice is stored as an auditor, and whether she views is unknown.
         (
             "file:design.md#auditor",
             "alice",
             "group:eng#member",
-            Read::Contains,
+            Read::Written,
         ),
     ];
     for (checked, who, failed, read) in cases {
@@ -508,14 +532,14 @@ async fn an_operand_that_settles_the_check_outweighs_a_store_error() {
         { "namespace": "file", "resource": "twin.md", "relation": "parent", "subject": { "namespace": "folder", "resource": "shared" } },
         { "namespace": "folder", "resource": "shared", "relation": "viewer", "subject": { "identity": "alice" } }
     ]"#;
-    load_facts(facts, &world.dictionary, &world.facts).unwrap();
+    load_facts(facts, &world.dictionary, &world.store).unwrap();
     let cases = [
         // A union's later operand holds: alice views through the parent.
         (
             "file:design.md#viewer",
             "alice",
             "file:design.md#viewer",
-            Read::Contains,
+            Read::Written,
             true,
         ),
         (
@@ -530,7 +554,7 @@ async fn an_operand_that_settles_the_check_outweighs_a_store_error() {
             "file:design.md#viewer",
             "alice",
             "folder:root#viewer",
-            Read::Contains,
+            Read::Written,
             true,
         ),
         // The second parent holds after the first fails.
@@ -546,7 +570,7 @@ async fn an_operand_that_settles_the_check_outweighs_a_store_error() {
             "file:design.md#auditor",
             "erin",
             "file:design.md#auditor",
-            Read::Contains,
+            Read::Written,
             false,
         ),
         // The base fails, and bob is banned.
@@ -554,7 +578,7 @@ async fn an_operand_that_settles_the_check_outweighs_a_store_error() {
             "file:design.md#viewer",
             "bob",
             "group:eng#member",
-            Read::Contains,
+            Read::Written,
             false,
         ),
     ];
@@ -574,14 +598,7 @@ async fn a_store_error_anywhere_in_the_tree_fails_expand() {
     // The docs namespaces exclude only computed subjectsets, which expand
     // leaves as references without a read.
     let unowned = Exclusion(Box::new(Computed("owner")), Box::new(This));
-    declare(
-        &world.namespaces,
-        &world.dictionary,
-        "file",
-        "unowned",
-        unowned,
-    )
-    .unwrap();
+    declare(&world.store, &world.dictionary, "file", "unowned", unowned).unwrap();
     let cases = [
         (
             "file:design.md#viewer",
@@ -606,7 +623,7 @@ async fn a_store_error_anywhere_in_the_tree_fails_expand() {
         (
             "file:design.md#viewer",
             "file:design.md#viewer",
-            Read::Rewrite,
+            Read::Version,
         ),
     ];
     for (checked, failed, read) in cases {
@@ -624,7 +641,7 @@ async fn a_store_error_anywhere_in_the_tree_fails_expand() {
 async fn expand_of_an_undeclared_relation_is_none() {
     let world = world();
     let viewer = subjectset(&world, "group:eng#viewer").await.unwrap();
-    let expansion = Closure::new(&world.namespaces, &world.facts, &viewer, head(&world).await)
+    let expansion = Closure::new(&world.store, &world.store, &viewer, head(&world).await)
         .expand()
         .await
         .unwrap();
@@ -635,15 +652,10 @@ async fn expand_of_an_undeclared_relation_is_none() {
 async fn expand_keeps_an_intersection() {
     let world = world();
     let auditor = subjectset(&world, "file:design.md#auditor").await.unwrap();
-    let expansion = Closure::new(
-        &world.namespaces,
-        &world.facts,
-        &auditor,
-        head(&world).await,
-    )
-    .expand()
-    .await
-    .unwrap();
+    let expansion = Closure::new(&world.store, &world.store, &auditor, head(&world).await)
+        .expand()
+        .await
+        .unwrap();
     let alice = identity("alice");
     let dave = identity("dave");
     let viewer = subjectset(&world, "file:design.md#viewer").await.unwrap();
@@ -659,7 +671,7 @@ async fn facts_written_after_the_revision_are_not_visible() {
     let world = world();
     let before = head(&world).await;
     let fact = r#"[{ "namespace": "file", "resource": "design.md", "relation": "viewer", "subject": { "identity": "zed" } }]"#;
-    load_facts(fact, &world.dictionary, &world.facts).unwrap();
+    load_facts(fact, &world.dictionary, &world.store).unwrap();
     assert!(
         !check_at(&world, "file:design.md#viewer", "zed", before)
             .await
@@ -673,7 +685,7 @@ async fn expand_leaves_referenced_subjectsets_as_leaves() {
     let world = world();
     let set = |text| subjectset(&world, text);
     let viewer = set("file:design.md#viewer").await.unwrap();
-    let expansion = Closure::new(&world.namespaces, &world.facts, &viewer, head(&world).await)
+    let expansion = Closure::new(&world.store, &world.store, &viewer, head(&world).await)
         .expand()
         .await
         .unwrap()
@@ -697,15 +709,10 @@ async fn expand_leaves_referenced_subjectsets_as_leaves() {
 async fn expand_lists_direct_subjects_including_subjectsets() {
     let world = world();
     let root_viewer = subjectset(&world, "folder:root#viewer").await.unwrap();
-    let expansion = Closure::new(
-        &world.namespaces,
-        &world.facts,
-        &root_viewer,
-        head(&world).await,
-    )
-    .expand()
-    .await
-    .unwrap();
+    let expansion = Closure::new(&world.store, &world.store, &root_viewer, head(&world).await)
+        .expand()
+        .await
+        .unwrap();
     let Some(Expansion::Exclusion(base, _)) = expansion else {
         panic!("viewer is an exclusion");
     };
@@ -784,10 +791,10 @@ fn candidate_facts() -> Vec<String> {
 /// Every read of a random subjectset that a probe may fail.
 fn candidate_failures() -> Vec<(String, Read)> {
     let reads = [
-        Read::Contains,
+        Read::Written,
         Read::Subjectsets,
         Read::Subjects,
-        Read::Rewrite,
+        Read::Version,
     ];
     random_sets()
         .into_iter()
@@ -799,7 +806,7 @@ fn candidate_failures() -> Vec<(String, Read)> {
 fn random_world(facts: &[String]) -> World {
     let world = world();
     let facts = format!("[{}]", facts.join(","));
-    load_facts(&facts, &world.dictionary, &world.facts).unwrap();
+    load_facts(&facts, &world.dictionary, &world.store).unwrap();
     world
 }
 
