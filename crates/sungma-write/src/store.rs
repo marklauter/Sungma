@@ -75,8 +75,8 @@ pub trait NameStore: Dictionary {
 pub enum FactWrite {
     /// Stores the fact. Storing a fact already stored changes nothing.
     Insert(Fact),
-    /// Deletes the fact. Deleting a fact not stored changes nothing.
-    Delete(Fact),
+    /// Retires the fact. Retiring a fact not stored changes nothing.
+    Retire(Fact),
 }
 
 #[derive(Debug, Error)]
@@ -95,9 +95,9 @@ pub enum FactWriteError {
 
 /// Writes facts. Sungma keeps the history itself rather than relying on the
 /// store's own versioning: a fact is stored with the revision that wrote it
-/// and, once deleted, the revision that deleted it, and is never removed.
+/// and, once retired, the revision that retired it, and is never removed.
 /// A read at revision R sees the facts written at or before R and not
-/// deleted at or before R, so a replay can read any past revision.
+/// retired at or before R, so a replay can read any past revision.
 ///
 /// A write is stamped with a revision. Once it returns revision R, a read
 /// at R sees that write and every write acknowledged before it began.

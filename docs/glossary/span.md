@@ -13,8 +13,8 @@ An interval of revisions over which a fact or a namespace version holds.
 
 ## Examples
 
-- `file:x#owner@carol`, written at revision 4 and deleted at revision 9, holds over [4, 9).
+- `file:x#owner@carol`, written at revision 4 and retired at revision 9, holds over [4, 9).
 
 ## Rationale
 
-A fact deleted and written again holds over two spans.
+A fact retired and written again holds over two spans.

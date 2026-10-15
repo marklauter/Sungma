@@ -74,5 +74,5 @@ Fact writes and namespace writes draw revisions from one [[revision-clock]], so 
 
 ## Pieces already in place
 
-- `FactWriter` keeps each fact's history as spans (the revision that wrote it and the one that deleted it), and reads filter by revision. Namespace versions keep history the same way.
+- `FactWriter` keeps each fact's history as spans (the revision that wrote it and the one that retired it), and reads filter by revision. Namespace versions keep history the same way.
 - Namespace and relation names intern in `Pool::Namespaces` and `Pool::Relations` through the `Interner` port. See [[interner]].
