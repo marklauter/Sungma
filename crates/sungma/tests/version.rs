@@ -2,12 +2,14 @@
 //! which the relation keeps for as long as each next version declares it,
 //! and refuses an entry that doesn't come after the last.
 
+use std::{collections::HashMap, sync::Arc};
+
 use sungma::{
     id::RelationId,
     namespace::Namespace,
     revision::Revision,
     rewrite::Rewrite::This,
-    version::{Entry, History, HistoryError},
+    version::{Entry, History, HistoryError, StoredVersionError, Version},
 };
 
 const OWNER: RelationId = RelationId(0);
@@ -102,4 +104,65 @@ fn only_a_current_version_can_be_retired() {
         HistoryError::NothingToRetire.to_string(),
         "the namespace has no current version to retire"
     );
+}
+
+fn stored(
+    relations: &[RelationId],
+    epochs: &[(RelationId, u64)],
+) -> Result<Version, StoredVersionError> {
+    let epochs = epochs
+        .iter()
+        .map(|&(relation, epoch)| (relation, Revision(epoch)))
+        .collect::<HashMap<_, _>>();
+    Version::stored(declaring(relations), Revision(30), epochs)
+}
+
+#[test]
+fn a_stored_version_keeps_its_epochs() {
+    let version = stored(&[OWNER, BANNED], &[(OWNER, 10), (BANNED, 30)]).unwrap();
+    assert_eq!(version.revision(), Revision(30));
+    assert_eq!(version.epoch(OWNER), Some(Revision(10)));
+    assert_eq!(version.epoch(BANNED), Some(Revision(30)));
+}
+
+#[test]
+fn a_stored_version_needs_an_epoch_for_exactly_each_relation() {
+    assert_eq!(
+        stored(&[OWNER, BANNED], &[(OWNER, 10)]).unwrap_err(),
+        StoredVersionError::NoEpoch(BANNED)
+    );
+    assert_eq!(
+        stored(&[OWNER], &[(OWNER, 10), (BANNED, 10)]).unwrap_err(),
+        StoredVersionError::Undeclared(BANNED)
+    );
+    assert_eq!(
+        stored(&[OWNER], &[(OWNER, 31)]).unwrap_err(),
+        StoredVersionError::LaterEpoch(OWNER)
+    );
+}
+
+/// A history resumed from a stored version carries its epochs on and
+/// refuses an entry that isn't later.
+#[test]
+fn a_resumed_history_goes_on_from_its_latest_entry() {
+    let latest = Arc::new(stored(&[OWNER], &[(OWNER, 10)]).unwrap());
+    let mut history = History::resume(Entry::Version(latest));
+    assert_eq!(
+        history.write(declaring(&[OWNER]), Revision(30)),
+        Err(HistoryError::NotLater {
+            last: Revision(30),
+            revision: Revision(30)
+        })
+    );
+    written(&mut history, &[OWNER, BANNED], 40);
+    let next = history.current().unwrap();
+    assert_eq!(next.epoch(OWNER), Some(Revision(10)));
+    assert_eq!(next.epoch(BANNED), Some(Revision(40)));
+    let mut retired = History::resume(Entry::Retired(Revision(30)));
+    assert_eq!(
+        retired.retire(Revision(40)),
+        Err(HistoryError::NothingToRetire)
+    );
+    written(&mut retired, &[OWNER], 40);
+    assert_eq!(retired.current().unwrap().epoch(OWNER), Some(Revision(40)));
 }

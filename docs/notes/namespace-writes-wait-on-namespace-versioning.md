@@ -42,7 +42,7 @@ Namespace documents are JSON and carry no grammar version; the REST endpoint tha
 - **Retiring a namespace.** Retiring closes a namespace's last span. [One timeline](../specs/one-timeline.md#retiring-a-namespace) says what happens to its facts and why writing it again doesn't resurrect them. Which call retires it is the transport's concern.
 - **Concurrent writes.** A namespace write carries the revision token of the version it was based on, as an etag; a write that creates the namespace expects none. The write is refused when the namespace's latest version has moved on, and the caller reads the latest version and tries again. The `NamespaceWriter` port takes the expected version, and each adapter meets it with its store's conditional write, as the interner does with `insert_if_absent`.
 - **Effects on facts.** A namespace write never scans facts, so it neither reports the facts it orphans nor refuses past some count. With billions of facts, a scan would make every namespace write as slow as the graph is large. [[one-timeline]] says which facts count afterward.
-- **Storage and ports.** A `NamespaceWriter` port in `sungma-write`, beside `FactWriter`, writes namespace versions, and `NamespaceReader::version` reads at a revision. A namespace version is stored parsed and interned, not as document text; the printer gives back the same document every time, because it sorts relations by name.
+- **Storage and ports.** A `NamespaceWriter` port in `sungma-write`, beside `FactWriter`, writes namespace versions, and `NamespaceReader::version` reads at a revision. A namespace version is stored as its printed document; the printer gives back the same document every time, because it sorts relations by name.
 
 ## Open questions
 

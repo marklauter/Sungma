@@ -8,6 +8,14 @@ test_workspace = true
 # job still denies warnings in the real code.
 cap_lints = true
 
+# The sungma-dynamodb tests make a table per test and per property case, so
+# under parallel mutants they run well past the timeout cargo-mutants sets
+# from one baseline run.
+minimum_test_timeout = 180
+
+# The tests every store runs: test code, not code under test.
+exclude_globs = ["crates/sungma-write/src/testkit.rs"]
+
 # Mutants no test should catch.
 exclude_re = [
     # Default::default() for a Vec is Vec::new().
@@ -27,4 +35,20 @@ exclude_re = [
     # A lookup exactly as old as the stale limit, to the nanosecond, is
     # either side of it; no test can time one that closely.
     'servers\.rs:.*replace < with <= in Lookups::start',
+    # These keys are already vec![0], and the counter works at any key no
+    # other item uses.
+    'replace latest -> Vec<u8> with vec!\[0\]',
+    'replace counter -> Vec<u8> with vec!\[[01]\]',
+    # The latest item answers only reads the history answers the same way.
+    'replace match guard latest\.revision\(\) <= revision with false in Table::version_at',
+    # DynamoDB Local reads consistently whatever a read asks for, and runs
+    # one transaction at a time, so no test there can tell an eventually
+    # consistent read, or a TransactionConflict, from the alternative.
+    'namespaces\.rs:.*(delete !|replace && with \|\|) in Table::entry',
+    'delete ! in DynamoWriter<C>::try_write_namespace',
+    'replace > with (==|>=) in <impl (Fact|Namespace)Writer for DynamoWriter<C>>::write',
+    # A namespace write retries a conflict it read eventually, so its < is
+    # caught; a fact write only reads, so its < is like the two above.
+    'replace > with < in <impl FactWriter for DynamoWriter<C>>::write',
+    'TransactionConflict"\) with false in Table::insert_name',
 ]

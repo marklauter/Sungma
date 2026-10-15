@@ -71,6 +71,13 @@ jobs:
       matrix:
         os: [ ubuntu-latest, windows-latest ]
         profile: [ dev, release ]
+    # DynamoDB Local for the sungma-dynamodb tests, the image
+    # scripts/dynamodb.sh runs. Service containers run on Linux only.
+    services:
+      dynamodb:
+        image: ${{ matrix.os == 'ubuntu-latest' && 'docker.io/amazon/dynamodb-local:3.3.1@sha256:744bf7138f0e893a6438de89bc3374501105b42bc7473cef6d561f30ff2dec6a' || '' }}
+        ports:
+          - 8000:8000
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - uses: ./.github/actions/setup-rust
@@ -78,13 +85,22 @@ jobs:
     - name: Build
       run: cargo build --workspace --all-targets --locked --profile ${{ matrix.profile }}
 
+    # Windows runners can't run the DynamoDB Local service, so they skip
+    # the crate that needs it.
     - name: Test
-      run: cargo test --workspace --locked --profile ${{ matrix.profile }}
+      run: cargo test --workspace --locked --profile ${{ matrix.profile }} ${{ matrix.os == 'windows-latest' && '--exclude sungma-dynamodb' || '' }}
 
   coverage:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    # DynamoDB Local for the sungma-dynamodb tests, the image
+    # scripts/dynamodb.sh runs. Service containers run on Linux only.
+    services:
+      dynamodb:
+        image: docker.io/amazon/dynamodb-local:3.3.1@sha256:744bf7138f0e893a6438de89bc3374501105b42bc7473cef6d561f30ff2dec6a
+        ports:
+          - 8000:8000
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - uses: ./.github/actions/setup-rust
@@ -114,6 +130,13 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    # DynamoDB Local for the sungma-dynamodb tests, the image
+    # scripts/dynamodb.sh runs. Service containers run on Linux only.
+    services:
+      dynamodb:
+        image: docker.io/amazon/dynamodb-local:3.3.1@sha256:744bf7138f0e893a6438de89bc3374501105b42bc7473cef6d561f30ff2dec6a
+        ports:
+          - 8000:8000
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:

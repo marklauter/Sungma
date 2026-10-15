@@ -45,7 +45,7 @@ This is roadmap item 4. Development runs against DynamoDB Local in a container, 
 
 1. Each span of a fact is one item.
    1. `pk` is the subjectset: tag `1`, the namespace id, the relation id, then the resource id.
-   2. `sk` is the subject, then the revision that wrote the span. An identity is tag `1` and the identity. A subjectset is tag `2`, the namespace id, the relation id and the resource id. A resource member is tag `3`, the namespace id and the resource id.
+   2. `sk` is the subject, then the revision that wrote the span. An identity is tag `1` and the identity. A subjectset is tag `2`, the namespace id, the resource id and the relation id, so subjects sort as the kernel sorts them. A resource member is tag `3`, the namespace id and the resource id.
    3. `written` is the revision that wrote the span. `retired` is the revision that retired it, absent while the span is open. A span is never removed.
 2. A read at revision R filters in the store: `written <= R` and either no `retired` or `retired > R`. DynamoDB filters after it reads, so a read pays for every span in the range, closed ones included, and its cost grows with the subjectset's history rather than its live facts. That suits a cache that holds whole partitions. If it becomes a problem, open spans can move to a range of their own.
    1. `subjects` queries the subjectset's partition.
@@ -56,7 +56,7 @@ This is roadmap item 4. Development runs against DynamoDB Local in a container, 
 ## 4. Namespace versions
 
 1. `pk` is tag `2` and the namespace id. `sk` is tag `1` and the revision the entry opens at.
-   1. A version has `revision`, a map from relation id to its rewrite, and a map from relation id to its epoch.
+   1. A version has `revision`, `document`, the namespace document as text, and `epochs`, a map from relation id to its epoch.
    2. A retirement has `revision` and `retired`, set to true.
 2. Each namespace has one more item, `sk` = tag `0`, its latest item: a copy of its latest entry, as `:latest` names the newest image of a container. It is the latest the reader has seen, not a promise that no newer write is on its way. A namespace write stores the new entry and overwrites the latest item in one transaction, on condition the latest item's `revision` is the write's `based_on`, which gives `based_on` its etag behaviour. A create has no `based_on`, so it is conditioned on the namespace having no latest item yet; of two creates, one is refused.
 3. Reads:
@@ -64,7 +64,7 @@ This is roadmap item 4. Development runs against DynamoDB Local in a container, 
    2. Otherwise a newer version landed after R, or R is in the past, and it queries the entries at or before R, descending, limit 1.
    3. Point reads batch, so one `BatchGetItem` loads the latest versions of up to 100 namespaces in one round trip. A query can't batch.
 4. A `Version` read back from the store is built from its stored epochs, so `Version` needs a constructor for stored versions. It refuses a version where a relation the namespace declares has no epoch, or an epoch is later than the version's revision. `History` still orders versions on the write path.
-5. Open question: how to store a rewrite. DynamoDB nests maps and lists only 32 levels deep, and the rewrite grammar has no such limit. Either each rewrite is a binary attribute in a compact id form, or rewrites are capped at a depth that fits and stored as native maps.
+5. A namespace is stored as its document, as SQLite keeps each table's `CREATE` statement. A write prints the version it's given with names in place of ids, so every stored document has the one form the printer gives, as a post office rewrites an address in its standard format, and stores it minified. Epochs stay native attributes. A read parses the document and maps its names to ids. Rewrites aren't modeled as items or attributes.
 
 ## 5. Names
 

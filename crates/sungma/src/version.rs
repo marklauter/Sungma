@@ -4,8 +4,10 @@
 //!
 //! Each entry opens at its revision, and the span before it closes there,
 //! so every revision is stored once. A [`History`] is the only way to build
-//! a [`Version`], and it refuses an entry that doesn't come after the last,
-//! so no history is out of order, whatever clock its revisions come from.
+//! a new [`Version`], and it refuses an entry that doesn't come after the
+//! last, so no history is out of order, whatever clock its revisions come
+//! from. A store reads a version back with [`Version::stored`], and picks a
+//! history up from its latest entry with [`History::resume`].
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -49,6 +51,35 @@ impl Version {
             revision,
             epochs,
         }
+    }
+
+    /// A version a store wrote, read back with the epochs it stored.
+    /// Refused unless every relation the namespace declares has an epoch,
+    /// no other relation has one, and none is later than `revision`.
+    pub fn stored(
+        namespace: Namespace,
+        revision: Revision,
+        epochs: HashMap<RelationId, Revision>,
+    ) -> Result<Self, StoredVersionError> {
+        for (relation, _) in namespace.relations() {
+            let epoch = epochs
+                .get(relation)
+                .ok_or(StoredVersionError::NoEpoch(*relation))?;
+            if *epoch > revision {
+                return Err(StoredVersionError::LaterEpoch(*relation));
+            }
+        }
+        if let Some(relation) = epochs
+            .keys()
+            .find(|relation| namespace.rewrite(relation).is_none())
+        {
+            return Err(StoredVersionError::Undeclared(*relation));
+        }
+        Ok(Self {
+            namespace: Arc::new(namespace),
+            revision,
+            epochs,
+        })
     }
 
     pub fn namespace(&self) -> &Arc<Namespace> {
@@ -95,6 +126,17 @@ impl Entry {
     }
 }
 
+/// Why [`Version::stored`] refused what a store read back.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum StoredVersionError {
+    #[error("relation {0:?} is declared but has no epoch")]
+    NoEpoch(RelationId),
+    #[error("relation {0:?} has an epoch but isn't declared")]
+    Undeclared(RelationId),
+    #[error("relation {0:?} has an epoch later than its version")]
+    LaterEpoch(RelationId),
+}
+
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum HistoryError {
     /// Each entry must come after the last.
@@ -112,6 +154,14 @@ pub struct History {
 }
 
 impl History {
+    /// A history that goes on from `latest`, a store's latest entry, so the
+    /// next entry gets its epochs from it and must come after it.
+    pub fn resume(latest: Entry) -> Self {
+        Self {
+            entries: vec![latest],
+        }
+    }
+
     /// The version whose span is still open, `None` when the namespace was
     /// never created or is retired.
     pub fn current(&self) -> Option<&Arc<Version>> {
