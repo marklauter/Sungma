@@ -45,7 +45,7 @@ This is roadmap item 4. Development runs against DynamoDB Local in a container, 
 
 1. Each span of a fact is one item.
    1. `pk` is the subjectset: tag `1`, the namespace id, the relation id, then the resource id.
-   2. `sk` is the subject, then the revision that wrote the span. An identity is tag `1` and the identity. A subjectset is tag `2`, the namespace id, the relation id and the resource id. A resource member is tag `3`, the namespace id and the resource id.
+   2. `sk` is the subject, then the revision that wrote the span. An identity is tag `1` and the identity. A subjectset is tag `2`, the namespace id, the resource id and the relation id, so subjects sort as the kernel sorts them. A resource member is tag `3`, the namespace id and the resource id.
    3. `written` is the revision that wrote the span. `retired` is the revision that retired it, absent while the span is open. A span is never removed.
 2. A read at revision R filters in the store: `written <= R` and either no `retired` or `retired > R`. DynamoDB filters after it reads, so a read pays for every span in the range, closed ones included, and its cost grows with the subjectset's history rather than its live facts. That suits a cache that holds whole partitions. If it becomes a problem, open spans can move to a range of their own.
    1. `subjects` queries the subjectset's partition.
