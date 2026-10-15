@@ -54,6 +54,24 @@ pub trait NameReader {
     ) -> impl Future<Output = Result<Option<String>, StoreError>> + Send;
 }
 
+impl<R: NameReader + Sync + ?Sized> NameReader for &R {
+    fn id(
+        &self,
+        pool: Pool,
+        name: &str,
+    ) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send {
+        R::id(self, pool, name)
+    }
+
+    fn name(
+        &self,
+        pool: Pool,
+        id: u32,
+    ) -> impl Future<Output = Result<Option<String>, StoreError>> + Send {
+        R::name(self, pool, id)
+    }
+}
+
 /// Maps names to their interned ids and back, within a [`Pool`]. Read-only:
 /// Check never mints ids.
 pub trait Dictionary {

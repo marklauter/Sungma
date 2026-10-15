@@ -15,7 +15,7 @@ use sungma::{
     replay::{Replay, replay},
     revision::Revision,
     rewrite::Rewrite::This,
-    store::Pool,
+    store::{Pool, ReadingDictionary},
 };
 use sungma_check::{
     resolve, {CheckRequest, CheckService, MemoryAuditLog, RequestContext, SubjectName, Verdict},
@@ -33,7 +33,11 @@ async fn fact(world: &World, set: &str, subject: Subject) -> Fact {
 
 /// `namespace:id#...`
 async fn member(world: &World, resource: &str) -> Subject {
-    let resource = resolve::resource(&world.dictionary, &resource.parse().unwrap()).await;
+    let resource = resolve::resource(
+        &ReadingDictionary(&world.dictionary),
+        &resource.parse().unwrap(),
+    )
+    .await;
     Subject::ResourceMember(resource.unwrap().unwrap())
 }
 
@@ -224,7 +228,8 @@ fn person(name: &str) -> SubjectName {
 async fn check_records_each_verdict_with_its_context() {
     let world = world();
     let audit = MemoryAuditLog::default();
-    let service = CheckService::new(&world.dictionary, &world.store, &world.store, &audit);
+    let names = ReadingDictionary(&world.dictionary);
+    let service = CheckService::new(&names, &world.store, &world.store, &audit);
 
     let allowed = request("file:design.md", "viewer", person("alice"));
     let verdict = service.check(context("r1"), allowed.clone()).await.unwrap();
@@ -245,7 +250,8 @@ async fn check_records_each_verdict_with_its_context() {
 async fn check_records_unknown_names_and_failures() {
     let world = world();
     let audit = MemoryAuditLog::default();
-    let service = CheckService::new(&world.dictionary, &world.store, &world.store, &audit);
+    let names = ReadingDictionary(&world.dictionary);
+    let service = CheckService::new(&names, &world.store, &world.store, &audit);
 
     // Only namespace and relation names are interned, so an unknown one
     // ends the check before the fact store is read.
@@ -282,7 +288,8 @@ async fn check_records_unknown_names_and_failures() {
 async fn check_accepts_a_zookie_at_the_latest_revision() {
     let world = world();
     let audit = MemoryAuditLog::default();
-    let service = CheckService::new(&world.dictionary, &world.store, &world.store, &audit);
+    let names = ReadingDictionary(&world.dictionary);
+    let service = CheckService::new(&names, &world.store, &world.store, &audit);
 
     let mut current = request("file:design.md", "viewer", person("alice"));
     current.zookie = Some(head(&world).await);
@@ -294,7 +301,8 @@ async fn check_accepts_a_zookie_at_the_latest_revision() {
 async fn check_accepts_a_subjectset_as_the_subject() {
     let world = world();
     let audit = MemoryAuditLog::default();
-    let service = CheckService::new(&world.dictionary, &world.store, &world.store, &audit);
+    let names = ReadingDictionary(&world.dictionary);
+    let service = CheckService::new(&names, &world.store, &world.store, &audit);
 
     let eng = SubjectName::Subjectset("group:eng#member".parse().unwrap());
     let verdict = service

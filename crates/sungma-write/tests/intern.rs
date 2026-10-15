@@ -152,7 +152,7 @@ async fn the_first_insert_of_a_name_wins() {
     let first = a.intern(Relations, "alice").await.unwrap();
     // b misses a's insert, mints 10 from its own block, and loses.
     assert_eq!(b.intern(Relations, "alice").await.unwrap(), first);
-    assert_eq!(NameReader::name(&store, Relations, 10).await.unwrap(), None);
+    assert_eq!(store.name(Relations, 10).await.unwrap(), None);
 }
 
 #[tokio::test]
@@ -211,10 +211,7 @@ async fn ids_are_unique_and_stable(
         let id = node.intern(POOLS[pool], &name).await.unwrap();
         let first = *ids.entry((pool, name.clone())).or_insert(id);
         prop_assert_eq!(id, first, "{} in {:?}", name, POOLS[pool]);
-        prop_assert_eq!(
-            NameReader::name(&store, POOLS[pool], id).await.unwrap(),
-            Some(name)
-        );
+        prop_assert_eq!(store.name(POOLS[pool], id).await.unwrap(), Some(name));
     }
     let mut taken = HashSet::new();
     for ((pool, name), id) in ids {

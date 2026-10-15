@@ -2,7 +2,7 @@
 
 use sungma::{
     revision::Revision,
-    store::{Dictionary, FactReader, Pool},
+    store::{FactReader, Pool},
 };
 use sungma_lang::{
     fact::{FactError, load_facts},
@@ -46,7 +46,7 @@ async fn a_refused_fact_document_interns_no_name() {
         "{loaded:?}"
     );
     for (pool, name) in [(Pool::Namespaces, "file"), (Pool::Relations, "owner")] {
-        assert_eq!(dictionary.lookup(pool, name).await.unwrap(), None);
+        assert_eq!(dictionary.id(pool, name), None);
     }
     assert_eq!(facts.head().await.unwrap(), Revision(0));
 }
@@ -61,6 +61,6 @@ async fn a_refused_namespace_document_interns_no_name() {
     let loaded = load_namespaces(&documents, &dictionary, &MemoryStore::default());
     assert!(matches!(loaded, Err(LoadError::Refused(_))), "{loaded:?}");
     for (pool, name) in [(Pool::Namespaces, "file"), (Pool::Relations, "owner")] {
-        assert_eq!(dictionary.lookup(pool, name).await.unwrap(), None);
+        assert_eq!(dictionary.id(pool, name), None);
     }
 }

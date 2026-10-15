@@ -13,7 +13,7 @@ use sungma::{
     id::NamespaceId,
     namespace::Namespace,
     revision::Revision,
-    store::{Dictionary, FactReader, NameReader, NamespaceReader, Pool, StoreError},
+    store::{FactReader, NameReader, NamespaceReader, Pool, StoreError},
     version::{History, HistoryError, Version},
 };
 use sungma_clock::{Clock, ClockFault, DevClock, Reading};
@@ -93,18 +93,6 @@ impl NameReader for MemoryDictionary {
             .get(&pool)
             .and_then(|names| names.names.get(&id))
             .cloned())
-    }
-}
-
-/// Setup code and tests read a [`MemoryDictionary`] as the [`Dictionary`]
-/// a service is given.
-impl Dictionary for MemoryDictionary {
-    async fn lookup(&self, pool: Pool, name: &str) -> Result<Option<u32>, StoreError> {
-        NameReader::id(self, pool, name).await
-    }
-
-    async fn name(&self, pool: Pool, id: u32) -> Result<Option<String>, StoreError> {
-        NameReader::name(self, pool, id).await
     }
 }
 
