@@ -76,7 +76,7 @@ This is roadmap item 4. Development runs against DynamoDB Local in a container, 
 ## 6. The head and one timeline
 
 1. One item, `pk` = tag `4` and `sk` = tag `0`, with a `revision` attribute.
-2. Every fact write and every namespace write is a single transaction, which also updates the head on condition its `revision` is below the new one. A write stamped below a revision already committed is refused and tried again, so a read at R sees every write at or before R, and unrelated writes don't queue behind each other.
+2. Every fact write and every namespace write is a single transaction, which also updates the head on condition its `revision` is below the new one. A write stamped below a revision already committed is refused and tried again, so a read at R sees every write at or before R. Every write updates this one item, so concurrent writes contend for it, and DynamoDB refuses one of two that land at once. That is accepted until it shows up as a performance problem.
 3. A fact write also checks the latest item of each namespace it touches, so `check_inserts` judged the inserts against the versions that were latest when the write landed.
 4. Facts and namespaces share the table and the head, so `FactReader::head` includes namespace writes.
 5. The writer is generic over its clock, `DynamoWriter<C: Clock>`, so the same code runs with any clock. Development uses `DevClock::starting_after(head)`, read when the writer opens. A write takes its reading under an async lock, as `MemoryStore` does under its mutex.
