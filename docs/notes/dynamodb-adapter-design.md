@@ -19,9 +19,14 @@ This is roadmap item 4. Development runs against DynamoDB Local in a container, 
 ## 1. Crate and SDK
 
 1. The crate is `sungma-dynamodb`. Readers and writers are separate types, so code that only reads is given only a reader. Both share one DynamoDB client.
-   1. `DynamoReader` implements `FactStore`, `NamespaceStore` and `Dictionary`. It takes no clock.
-   2. `DynamoWriter<C: Clock>` implements `FactWriter`, `NamespaceWriter` and `NameStore`. The reads it makes inside a write, of pointers and latest items, are its own, not the read ports.
-2. The write ports stop extending the read ports: `FactWriter` no longer requires `FactStore`, `NamespaceWriter` no longer requires `NamespaceStore`, and `NameStore` no longer requires `Dictionary`. Minting stays in `LeasingInterner`, which is given a `Dictionary` and a `NameStore` and looks a name up before it mints. `MemoryStore` and `MemoryDictionary` still implement both sides, for tests.
+   1. `DynamoReader` implements `FactReader`, `NamespaceReader` and `NameReader`. It takes no clock.
+   2. `DynamoWriter<C: Clock>` implements `FactWriter`, `NamespaceWriter` and `NameWriter`. The reads it makes inside a write, of pointers and latest items, are its own, not the read ports.
+2. The store ports become three pairs of reader and writer, and no writer extends a reader:
+   1. `FactStore` becomes `FactReader`, and `FactWriter` no longer requires it.
+   2. `NamespaceStore` becomes `NamespaceReader`, and `NamespaceWriter` no longer requires it.
+   3. `NameReader` is new and has the two point reads, a name's id and an id's name. `NameStore` becomes `NameWriter`, with `insert_if_absent` and `lease`, and no longer requires `Dictionary`.
+   4. `Dictionary` and `Interner` stay above the store. `LeasingInterner` is given a `NameReader` and a `NameWriter` and implements both. Check, which never mints, gets a `Dictionary` over a `NameReader` alone, the natural place for a cache, since a name never changes its id.
+   5. `MemoryStore` and `MemoryDictionary` still implement both sides, for tests.
 3. It uses the official `aws-sdk-dynamodb` and `aws-config` crates, on tokio.
 
 ## 2. The table
