@@ -2,7 +2,7 @@
 title: DynamoDB adapter design
 type: note
 summary: "A proposal for roadmap item 4: one DynamoDB table holding facts, namespace versions, names and the head on one timeline, with DynamoDB Local for development."
-status: proposal
+status: evolving
 cites:
   - "[[fact]]"
   - "[[span]]"
@@ -13,6 +13,8 @@ cites:
 ---
 
 # DynamoDB adapter design
+
+The adapter is built, and [The DynamoDB adapter](../specs/dynamodb-adapter.md) specifies it. This note keeps the reasoning behind the design.
 
 This is roadmap item 4. Development runs against DynamoDB Local in a container, but nothing here is specific to Local, so the same adapter runs against DynamoDB.
 
