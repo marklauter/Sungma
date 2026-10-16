@@ -19,26 +19,28 @@ use sungma_api::{AppState, router};
 use sungma_dynamodb::{DynamoReader, DynamoWriter, Table, local};
 use tower::ServiceExt;
 
-/// The API on an empty in-memory store, and on an empty table in
-/// DynamoDB Local at `SUNGMA_DYNAMODB_URL`, `http://localhost:8000` by
-/// default.
+/// The API on an empty in-memory store and, with `SUNGMA_DYNAMODB_URL`
+/// set, on an empty table in DynamoDB Local at that URL. An empty value
+/// counts as unset, so CI can leave it out where DynamoDB Local can't run.
 pub async fn stores() -> Vec<(&'static str, Router)> {
-    vec![
-        ("memory", router(Arc::new(AppState::memory()))),
-        ("dynamodb", router(Arc::new(dynamodb().await))),
-    ]
+    let mut stores = vec![("memory", router(Arc::new(AppState::memory())))];
+    if let Some(url) = std::env::var("SUNGMA_DYNAMODB_URL")
+        .ok()
+        .filter(|url| !url.is_empty())
+    {
+        stores.push(("dynamodb", router(Arc::new(dynamodb(&url).await))));
+    }
+    stores
 }
 
-async fn dynamodb() -> AppState<DynamoReader, DynamoWriter<sungma_clock::DevClock>> {
+async fn dynamodb(url: &str) -> AppState<DynamoReader, DynamoWriter<sungma_clock::DevClock>> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    let url =
-        std::env::var("SUNGMA_DYNAMODB_URL").unwrap_or_else(|_| "http://localhost:8000".to_owned());
     let name = format!(
         "sungma-api-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     );
-    let table = Table::new(local(&url), name);
+    let table = Table::new(local(url), name);
     table.create().await.unwrap_or_else(|error| {
         panic!("DynamoDB Local at {url} refused a table; run scripts/dynamodb.sh: {error}")
     });

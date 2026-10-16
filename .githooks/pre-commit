@@ -6,4 +6,6 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked --quiet
 scripts/dynamodb.sh
+# The API tests run on DynamoDB as well as in memory only with this set.
+export SUNGMA_DYNAMODB_URL="${SUNGMA_DYNAMODB_URL:-http://localhost:8000}"
 cargo test --workspace --locked --quiet

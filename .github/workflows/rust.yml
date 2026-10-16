@@ -71,13 +71,17 @@ jobs:
       matrix:
         os: [ ubuntu-latest, windows-latest ]
         profile: [ dev, release ]
-    # DynamoDB Local for the sungma-dynamodb and sungma-api tests, the
-    # image scripts/dynamodb.sh runs. Service containers run on Linux only.
+    # DynamoDB Local for the sungma-dynamodb tests, the image
+    # scripts/dynamodb.sh runs. Service containers run on Linux only.
     services:
       dynamodb:
         image: ${{ matrix.os == 'ubuntu-latest' && 'docker.io/amazon/dynamodb-local:3.3.1@sha256:744bf7138f0e893a6438de89bc3374501105b42bc7473cef6d561f30ff2dec6a' || '' }}
         ports:
           - 8000:8000
+    # The API tests run on DynamoDB Local where it runs, and in memory only
+    # where it's empty.
+    env:
+      SUNGMA_DYNAMODB_URL: ${{ matrix.os == 'ubuntu-latest' && 'http://localhost:8000' || '' }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - uses: ./.github/actions/setup-rust
@@ -86,9 +90,9 @@ jobs:
       run: cargo build --workspace --all-targets --locked --profile ${{ matrix.profile }}
 
     # Windows runners can't run the DynamoDB Local service, so they skip
-    # the crates that need it.
+    # the crate that needs it.
     - name: Test
-      run: cargo test --workspace --locked --profile ${{ matrix.profile }} ${{ matrix.os == 'windows-latest' && '--exclude sungma-dynamodb --exclude sungma-api' || '' }}
+      run: cargo test --workspace --locked --profile ${{ matrix.profile }} ${{ matrix.os == 'windows-latest' && '--exclude sungma-dynamodb' || '' }}
 
   coverage:
     needs: changes
@@ -101,6 +105,8 @@ jobs:
         image: docker.io/amazon/dynamodb-local:3.3.1@sha256:744bf7138f0e893a6438de89bc3374501105b42bc7473cef6d561f30ff2dec6a
         ports:
           - 8000:8000
+    env:
+      SUNGMA_DYNAMODB_URL: http://localhost:8000
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - uses: ./.github/actions/setup-rust
@@ -137,6 +143,8 @@ jobs:
         image: docker.io/amazon/dynamodb-local:3.3.1@sha256:744bf7138f0e893a6438de89bc3374501105b42bc7473cef6d561f30ff2dec6a
         ports:
           - 8000:8000
+    env:
+      SUNGMA_DYNAMODB_URL: http://localhost:8000
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
