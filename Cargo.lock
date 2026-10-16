@@ -1909,6 +1909,7 @@ dependencies = [
  "serde_json",
  "sungma",
  "sungma-clock",
+ "sungma-edge",
  "sungma-lang",
  "sungma-write",
  "tokio",

@@ -6,6 +6,7 @@
 //! write ports, so code that only reads is given only a reader. Both share
 //! one [`Table`].
 
+pub mod edge;
 mod facts;
 pub mod key;
 mod names;
