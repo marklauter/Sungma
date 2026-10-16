@@ -13,9 +13,10 @@ use sungma::{
     id::NamespaceId,
     namespace::Namespace,
     revision::Revision,
-    store::{FactReader, NameReader, NamespaceReader, Pool, StoreError},
+    store::{NameReader, Pool, StoreError},
     version::{Epochs, History, HistoryError, Version},
 };
+use sungma_check::{store::FactReader, store::NamespaceReader};
 use sungma_clock::{Clock, ClockFault, DevClock, Reading};
 use sungma_write::{
     fact::{check_inserts, opens_span},

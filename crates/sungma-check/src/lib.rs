@@ -15,17 +15,25 @@ use parking_lot::Mutex;
 
 use thiserror::Error;
 
-use sungma::{
+use crate::{
     closure::{Closure, ClosureError},
     decision::Decision,
+    store::FactReader,
+    store::NamespaceReader,
+};
+use sungma::{
     name::{SubjectName, SubjectsetName},
     resolve::{self, ResolveError},
     revision::Revision,
-    store::{Dictionary, FactReader, NamespaceReader, StoreError},
+    store::{Dictionary, StoreError},
 };
 
+pub mod closure;
+pub mod decision;
 pub mod read;
+pub mod replay;
 pub mod rows;
+pub mod store;
 
 use read::ReadError;
 

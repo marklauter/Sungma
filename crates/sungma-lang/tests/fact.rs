@@ -18,8 +18,9 @@ use sungma::{
     },
     namespace::Namespace,
     rewrite::Rewrite::This,
-    store::{FactReader, Pool, ReadingDictionary},
+    store::{Pool, ReadingDictionary},
 };
+use sungma_check::store::FactReader;
 use sungma_lang::fact;
 use sungma_memory::{MemoryDictionary, MemoryStore};
 

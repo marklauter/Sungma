@@ -10,15 +10,19 @@ use std::{
 use common::{World, declare, head, identity, subjectset, world};
 use proptest::{prelude::*, sample::subsequence, test_runner::TestCaseError};
 use sungma::{
-    closure::{Closure, ClosureError, Expansion, MAX_DEPTH},
     graph::{Subject, Subjectset},
     id::NamespaceId,
     namespace::Namespace,
     non_empty::NonEmpty,
     revision::Revision,
     rewrite::Rewrite::{self, Computed, Exclusion, Intersection, This, Union},
-    store::{FactReader, NamespaceReader, Pool, StoreError},
+    store::{Pool, StoreError},
     version::{History, Version},
+};
+use sungma_check::{
+    closure::{Closure, ClosureError, Expansion, MAX_DEPTH},
+    store::FactReader,
+    store::NamespaceReader,
 };
 use sungma_lang::fact::load_facts;
 

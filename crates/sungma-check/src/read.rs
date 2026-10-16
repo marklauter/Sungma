@@ -6,12 +6,13 @@
 
 use thiserror::Error;
 
+use crate::{store::FactReader, store::NamespaceReader};
 use sungma::{
     graph::Subject,
     name::{FactName, NamespaceName, SubjectName, SubjectsetName},
     resolve,
     revision::Revision,
-    store::{Dictionary, DocumentReader, FactReader, NamespaceReader, StoreError},
+    store::{Dictionary, DocumentReader, StoreError},
 };
 
 #[derive(Debug, Error)]

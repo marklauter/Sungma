@@ -15,8 +15,9 @@ use sungma::{
     namespace::Namespace,
     revision::Revision,
     rewrite::Rewrite::This,
-    store::{Dictionary, DocumentReader, FactReader, NameReader, NamespaceReader, Pool},
+    store::{Dictionary, DocumentReader, NameReader, Pool},
 };
+use sungma_check::{store::FactReader, store::NamespaceReader};
 use sungma_clock::DevClock;
 use sungma_dynamodb::{DynamoReader, DynamoWriter, Table, key};
 use sungma_write::{

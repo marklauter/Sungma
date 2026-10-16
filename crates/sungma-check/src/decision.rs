@@ -1,7 +1,7 @@
 //! A decision: one membership judged at one revision, carrying what a
 //! replay needs to judge it again.
 
-use crate::{
+use sungma::{
     graph::{Fact, Subject, Subjectset},
     non_empty::NonEmpty,
     revision::Revision,

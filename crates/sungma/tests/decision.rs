@@ -7,18 +7,20 @@ use std::time::SystemTime;
 
 use common::{World, declare, head, identity, subjectset, world};
 use sungma::{
-    closure::Closure,
-    decision::{Decision, Outcome, SEMANTICS, Semantics},
     graph::{Fact, Subject},
     id::NamespaceId,
     non_empty::NonEmpty,
-    replay::{Replay, replay},
     revision::Revision,
     rewrite::Rewrite::This,
     store::{Pool, ReadingDictionary},
 };
 use sungma::{name::SubjectName, resolve};
 use sungma_check::{CheckRequest, CheckService, MemoryAuditLog, RequestContext, Verdict};
+use sungma_check::{
+    closure::Closure,
+    decision::{Decision, Outcome, SEMANTICS, Semantics},
+    replay::{Replay, replay},
+};
 use sungma_lang::fact::load_facts;
 use sungma_write::store::{NamespaceWrite::Retire, NamespaceWriter};
 

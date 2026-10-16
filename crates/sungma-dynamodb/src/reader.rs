@@ -6,9 +6,10 @@ use sungma::{
     graph::{Subject, Subjectset},
     id::NamespaceId,
     revision::Revision,
-    store::{DocumentReader, FactReader, NameReader, NamespaceReader, Pool, StoreError},
+    store::{DocumentReader, NameReader, Pool, StoreError},
     version::Version,
 };
+use sungma_check::{store::FactReader, store::NamespaceReader};
 
 use crate::{key, table::Table};
 

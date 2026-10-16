@@ -7,14 +7,11 @@
 //! Everything in the core works on interned integer ids. Strings are
 //! resolved to ids at the edge, through a [`store::Dictionary`].
 
-pub mod closure;
-pub mod decision;
 pub mod graph;
 pub mod id;
 pub mod name;
 pub mod namespace;
 pub mod non_empty;
-pub mod replay;
 pub mod resolve;
 pub mod revision;
 pub mod rewrite;

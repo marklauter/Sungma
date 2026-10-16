@@ -67,11 +67,12 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 use sungma::{
     name::{NameError, SubjectName},
     revision::Revision,
-    store::{DocumentReader, FactReader, NameReader, NamespaceReader, ReadingDictionary},
+    store::{DocumentReader, NameReader, ReadingDictionary},
 };
 use sungma_check::{
     CheckRequest, CheckService, Failure, MemoryAuditLog, RequestContext, Verdict, read::ReadError,
 };
+use sungma_check::{store::FactReader, store::NamespaceReader};
 use sungma_lang::{fact, namespace};
 use sungma_write::{
     intern::LeasingInterner,

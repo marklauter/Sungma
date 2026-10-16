@@ -1,81 +1,20 @@
-//! The closure of a subjectset: the set of subjects derivable for it from
-//! the facts under the namespaces, fixed at one revision.
-//!
-//! A closure is never built. [`Closure::decide`] judges one membership,
-//! answering at each rewrite node and stopping as soon as the answer is
-//! known, and cites the facts that establish an allowed membership.
-//! [`Closure::contains`] walks the same way without collecting the facts.
-//! [`Closure::expand`] materializes one level of the rewrite tree, leaving
-//! referenced subjectsets as leaves.
-//!
-//! Namespaces are read at the same revision as facts. A subjectset whose
-//! namespace or relation isn't declared then has no rewrite, and its
-//! closure is empty. A fact counts only when its namespace's version
-//! declares its relation and the fact was written at or after the
-//! relation's epoch; see `docs/specs/one-timeline.md`.
-//!
-//! Cycles end without an error. A membership check that reaches a
-//! subjectset it is already evaluating finds nothing on that branch, and
-//! the other branches go on. Evaluating a subjectset again from inside
-//! itself would repeat the same steps forever, so the branch can't
-//! contribute a derivation.
-//!
-//! Store errors follow Kleene's three-valued logic: a failed read is an
-//! unknown verdict, and an operand that settles the result outweighs it. A
-//! true union operand or a false intersection operand settles its
-//! operator; a false base or a true excluded side settles an exclusion.
-//! The verdict then doesn't depend on the order operands are evaluated in.
-//! When nothing settles the result and a read failed, the check fails with
-//! the first error met.
-//!
-//! The depth limit is not an unknown. It caps the work one check may do,
-//! so passing it ends the whole check with
-//! [`ClosureError::DepthExceeded`], whatever the operands not yet evaluated
-//! would give.
+//! Check: whether a subject is in the closure, and the facts that say so.
 
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{future::Future, sync::Arc};
 
-use thiserror::Error;
-
-use crate::{
-    decision::{Decision, Outcome, SEMANTICS},
+use sungma::{
     graph::{Fact, Subject, Subjectset},
-    id::RelationId,
     non_empty::NonEmpty,
-    revision::Revision,
     rewrite::Rewrite,
-    store::{FactReader, NamespaceReader, StoreError},
+    store::StoreError,
     version::Version,
 };
 
-/// How many subjectsets one membership check may pass through without
-/// repeating one.
-pub const MAX_DEPTH: usize = 100;
-
-#[derive(Debug, Error)]
-pub enum ClosureError {
-    #[error("membership check passed through more than {0} subjectsets")]
-    DepthExceeded(usize),
-    #[error(transparent)]
-    Store(#[from] StoreError),
-}
-
-/// One level of a subjectset's rewrite tree.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Expansion {
-    /// `this`: the subjects stored directly. Subjectsets among them are
-    /// references, not expanded.
-    Subjects(Vec<Subject>),
-    /// A subjectset to expand separately.
-    Reference(Subjectset),
-    Union(Vec<Expansion>),
-    Intersection(Vec<Expansion>),
-    Exclusion(Box<Expansion>, Box<Expansion>),
-}
-
-/// A recursive `async fn` has a future of infinite size, so the recursive
-/// steps return their futures boxed.
-type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+use super::{BoxFuture, Closure, ClosureError, MAX_DEPTH, counted, ruled};
+use crate::{
+    decision::{Decision, Outcome, SEMANTICS},
+    store::{FactReader, NamespaceReader},
+};
 
 /// The subjectsets being evaluated, innermost first. Each step links to the
 /// one before it on the caller's stack, so a step costs no copy.
@@ -192,25 +131,6 @@ impl<P: Proof> Verdict<P> {
     }
 }
 
-/// The items of facts stored under `relation` that count under `version`.
-fn counted<'a, T: 'a>(
-    stored: Vec<(T, Revision)>,
-    version: &'a Version,
-    relation: RelationId,
-) -> impl Iterator<Item = T> + 'a {
-    stored
-        .into_iter()
-        .filter(move |(_, written)| version.counts(relation, *written))
-        .map(|(item, _)| item)
-}
-
-/// `version` with the rewrite it gives `set`'s relation, `None` when it
-/// doesn't declare the relation.
-fn ruled(version: Arc<Version>, set: &Subjectset) -> Option<(Arc<Version>, Arc<Rewrite>)> {
-    let rewrite = Arc::clone(version.namespace().rewrite(&set.relation)?);
-    Some((version, rewrite))
-}
-
 /// Kleene's or over `items`, judged in turn by `judge` until one holds.
 async fn any<I, P, J>(items: impl IntoIterator<Item = I>, mut judge: impl FnMut(I) -> J) -> Walk<P>
 where
@@ -226,28 +146,7 @@ where
     Ok(answer)
 }
 
-pub struct Closure<'a, T, F> {
-    namespaces: &'a T,
-    facts: &'a F,
-    subjectset: &'a Subjectset,
-    revision: Revision,
-}
-
 impl<'a, T: NamespaceReader + Sync, F: FactReader + Sync> Closure<'a, T, F> {
-    pub fn new(
-        namespaces: &'a T,
-        facts: &'a F,
-        subjectset: &'a Subjectset,
-        revision: Revision,
-    ) -> Self {
-        Self {
-            namespaces,
-            facts,
-            subjectset,
-            revision,
-        }
-    }
-
     /// Judges whether `subject` is in the closure.
     pub async fn decide(&self, subject: Subject) -> Result<Decision, ClosureError> {
         let outcome = match self.judge(&subject).await? {
@@ -282,32 +181,6 @@ impl<'a, T: NamespaceReader + Sync, F: FactReader + Sync> Closure<'a, T, F> {
             Fails => Ok(None),
             Unknown(error) => Err(error.into()),
         }
-    }
-
-    /// One level of the rewrite tree, with the facts read at the revision.
-    /// `None` when the subjectset has no rewrite.
-    pub async fn expand(&self) -> Result<Option<Expansion>, ClosureError> {
-        let Some((version, rewrite)) = self.rule(self.subjectset).await? else {
-            return Ok(None);
-        };
-        Ok(Some(
-            self.expand_node(&rewrite, &version, self.subjectset)
-                .await?,
-        ))
-    }
-
-    /// The version of `set`'s namespace at the revision, and the rewrite it
-    /// gives `set`'s relation. `None` when the namespace or the relation
-    /// isn't declared then.
-    async fn rule(
-        &self,
-        set: &Subjectset,
-    ) -> Result<Option<(Arc<Version>, Arc<Rewrite>)>, StoreError> {
-        let version = self
-            .namespaces
-            .version(set.resource.namespace, self.revision)
-            .await?;
-        Ok(version.and_then(|version| ruled(version, set)))
     }
 
     /// `path` holds the subjectsets being evaluated, outermost first. The
@@ -473,88 +346,5 @@ impl<'a, T: NamespaceReader + Sync, F: FactReader + Sync> Closure<'a, T, F> {
             Err(error) => Unknown(error),
         };
         Ok(direct.or(nested))
-    }
-
-    fn expand_node<'b>(
-        &'b self,
-        rewrite: &'b Rewrite,
-        version: &'b Version,
-        set: &'b Subjectset,
-    ) -> BoxFuture<'b, Result<Expansion, ClosureError>> {
-        Box::pin(async move {
-            Ok(match rewrite {
-                Rewrite::This => {
-                    let subjects = self.facts.subjects(set, self.revision).await?;
-                    Expansion::Subjects(counted(subjects, version, set.relation).collect())
-                }
-                Rewrite::Computed(relation) => Expansion::Reference(Subjectset {
-                    resource: set.resource.clone(),
-                    relation: *relation,
-                }),
-                Rewrite::FactTo { factset, computed } => {
-                    let factset = Subjectset {
-                        resource: set.resource.clone(),
-                        relation: *factset,
-                    };
-                    Expansion::Union(
-                        self.fact_targets(&factset, version, *computed)
-                            .await?
-                            .into_iter()
-                            .map(|(_, target)| Expansion::Reference(target))
-                            .collect(),
-                    )
-                }
-                Rewrite::Union(operands) => {
-                    Expansion::Union(self.expand_all(operands, version, set).await?)
-                }
-                Rewrite::Intersection(operands) => {
-                    Expansion::Intersection(self.expand_all(operands, version, set).await?)
-                }
-                Rewrite::Exclusion(base, excluded) => Expansion::Exclusion(
-                    Box::new(self.expand_node(base, version, set).await?),
-                    Box::new(self.expand_node(excluded, version, set).await?),
-                ),
-            })
-        })
-    }
-
-    async fn expand_all(
-        &self,
-        operands: &[Rewrite],
-        version: &Version,
-        set: &Subjectset,
-    ) -> Result<Vec<Expansion>, ClosureError> {
-        let mut expanded = Vec::with_capacity(operands.len());
-        for operand in operands {
-            expanded.push(self.expand_node(operand, version, set).await?);
-        }
-        Ok(expanded)
-    }
-
-    /// Each subject stored under `factset` that counts and names a resource,
-    /// paired with that resource's `computed` subjectset. A resource member names its
-    /// resource and a subjectset names the resource it belongs to, as in
-    /// Zanzibar; identities name no resource and are skipped.
-    async fn fact_targets(
-        &self,
-        factset: &Subjectset,
-        version: &Version,
-        computed: RelationId,
-    ) -> Result<Vec<(Subject, Subjectset)>, StoreError> {
-        let subjects = self.facts.subjects(factset, self.revision).await?;
-        Ok(counted(subjects, version, factset.relation)
-            .filter_map(|subject| {
-                let resource = match &subject {
-                    Subject::ResourceMember(resource)
-                    | Subject::Subjectset(Subjectset { resource, .. }) => resource.clone(),
-                    Subject::Identity(_) => return None,
-                };
-                let target = Subjectset {
-                    resource,
-                    relation: computed,
-                };
-                Some((subject, target))
-            })
-            .collect())
     }
 }

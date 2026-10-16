@@ -5,12 +5,13 @@ edition.workspace = true
 
 [features]
 # The tests every store runs: see `testkit`.
-testkit = ["dep:proptest", "tokio/rt"]
+testkit = ["dep:proptest", "dep:sungma-check", "tokio/rt"]
 
 [dependencies]
 parking_lot.workspace = true
 proptest = { workspace = true, optional = true }
 sungma.workspace = true
+sungma-check = { workspace = true, optional = true }
 sungma-clock.workspace = true
 sungma-edge.workspace = true
 sungma-schema.workspace = true

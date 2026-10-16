@@ -10,12 +10,10 @@ use sungma::{
     id::NamespaceId,
     resolve,
     revision::Revision,
-    store::{
-        DocumentReader, FactReader, NameReader, NamespaceReader, Pool, ReadingDictionary,
-        StoreError,
-    },
+    store::{DocumentReader, NameReader, Pool, ReadingDictionary, StoreError},
     version::Version,
 };
+use sungma_check::{store::FactReader, store::NamespaceReader};
 use sungma_memory::{MemoryDictionary, MemoryStore};
 use sungma_write::store::{
     FactWrite, FactWriteError, FactWriter, NameWriter, NamespaceWrite, NamespaceWriteError,

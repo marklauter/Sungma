@@ -1,9 +1,7 @@
 //! Loading documents into the in-memory stores.
 
-use sungma::{
-    revision::Revision,
-    store::{FactReader, Pool},
-};
+use sungma::{revision::Revision, store::Pool};
+use sungma_check::store::FactReader;
 use sungma_lang::{
     fact::{FactError, load_facts},
     namespace::{LoadError, load_namespaces},

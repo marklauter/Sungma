@@ -10,6 +10,7 @@ use std::{
     sync::Arc,
 };
 
+use crate::{store::FactReader, store::NamespaceReader};
 use parking_lot::Mutex;
 use sungma::{
     graph::{Subject, Subjectset},
@@ -17,7 +18,7 @@ use sungma::{
     name::{NamespaceName, RelationName},
     namespace::{Namespace, NamespaceError},
     revision::Revision,
-    store::{FactReader, NameReader, NamespaceReader, Pool, StoreError},
+    store::{NameReader, Pool, StoreError},
     version::Version,
 };
 use sungma_edge::read::{Consistency, ItemReader};

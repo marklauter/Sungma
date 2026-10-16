@@ -12,8 +12,9 @@ use sungma::{
     namespace::{Namespace, NamespaceError},
     revision::Revision,
     rewrite::Rewrite,
-    store::{FactReader, Pool, ReadingDictionary},
+    store::{Pool, ReadingDictionary},
 };
+use sungma_check::store::FactReader;
 use sungma_lang::{fact::load_facts, namespace::load_namespaces};
 use sungma_memory::{MemoryDictionary, MemoryStore};
 

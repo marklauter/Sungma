@@ -8,15 +8,19 @@ use std::{collections::HashSet, future::Future, sync::Arc};
 
 use proptest::{prop_assert, prop_assert_eq, test_runner::TestCaseError};
 use sungma::{
-    closure::{Closure, Expansion},
     graph::{Fact, Resource, Subject, Subjectset},
     id::{NamespaceId, RelationId},
     name::{Identity, ResourceId},
     namespace::Namespace,
     revision::Revision,
     rewrite::Rewrite::{self, FactTo, This},
-    store::{FactReader, NamespaceReader, Pool},
+    store::Pool,
     version::{HistoryError, Version},
+};
+use sungma_check::{
+    closure::{Closure, Expansion},
+    store::FactReader,
+    store::NamespaceReader,
 };
 
 use crate::store::{

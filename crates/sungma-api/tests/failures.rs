@@ -8,14 +8,14 @@ use std::{ops::Range, sync::Arc};
 use axum::{Router, http::StatusCode};
 use serde_json::{Value, json};
 use sungma::{
-    closure::MAX_DEPTH,
     graph::{Subject, Subjectset},
     id::NamespaceId,
     revision::Revision,
-    store::{DocumentReader, FactReader, NameReader, NamespaceReader, Pool, StoreError},
+    store::{DocumentReader, NameReader, Pool, StoreError},
     version::Version,
 };
 use sungma_api::{AppState, router};
+use sungma_check::{closure::MAX_DEPTH, store::FactReader, store::NamespaceReader};
 use sungma_clock::{ClockFault, ManualClock, Reading};
 use sungma_dynamodb::{DynamoReader, DynamoWriter, Table, local};
 use sungma_write::store::{
