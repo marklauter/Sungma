@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::{
     EdgeError,
-    item::{Item, Value},
+    item::{Item, PARTITION_KEY, SORT_KEY, Value},
     key::Key,
 };
 
@@ -58,6 +58,32 @@ impl Step {
         }
     }
 
+    /// Every attribute the step names.
+    fn names(&self) -> Vec<&str> {
+        fn expected(expect: &[Expect]) -> impl Iterator<Item = &str> {
+            expect.iter().map(|expect| match expect {
+                Expect::Equals(name, _) | Expect::Missing(name) => name.as_str(),
+            })
+        }
+        match self {
+            Step::Insert { item, .. } => item.0.keys().map(String::as_str).collect(),
+            Step::Update {
+                set,
+                remove,
+                expect,
+                ..
+            } => set
+                .0
+                .keys()
+                .map(String::as_str)
+                .chain(remove.iter().map(String::as_str))
+                .chain(expected(expect))
+                .collect(),
+            Step::Check { expect, .. } => expected(expect).collect(),
+            Step::Absent { .. } => Vec::new(),
+        }
+    }
+
     /// Whether the step holds against `stored`, the item at its key.
     pub fn holds(&self, stored: Option<&Item>) -> bool {
         match (self, stored) {
@@ -77,6 +103,36 @@ pub struct Work(pub Vec<Step>);
 impl Work {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Refuses work no store commits: more than `most` steps, two steps on
+    /// one key, or an attribute named as a key attribute.
+    pub fn check(&self, most: usize) -> Result<(), CommitError> {
+        if self.len() > most {
+            return Err(CommitError::Unwritable(format!(
+                "a unit of work of {} steps is more than {most}",
+                self.len()
+            )));
+        }
+        let mut keys = std::collections::HashSet::new();
+        if let Some(step) = self.0.iter().find(|step| !keys.insert(step.key())) {
+            return Err(CommitError::Unwritable(format!(
+                "two steps on {:?}",
+                step.key()
+            )));
+        }
+        let reserved = |name: &str| name == PARTITION_KEY || name == SORT_KEY;
+        if let Some(name) = self
+            .0
+            .iter()
+            .flat_map(Step::names)
+            .find(|name| reserved(name))
+        {
+            return Err(CommitError::Unwritable(format!(
+                "attribute '{name}' is a key attribute"
+            )));
+        }
+        Ok(())
     }
 
     pub fn push(&mut self, step: Step) {

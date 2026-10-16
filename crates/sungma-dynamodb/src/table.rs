@@ -10,9 +10,9 @@ use aws_sdk_dynamodb::{
 };
 use sungma_edge::EdgeError;
 
-/// The hash key and range key attribute names.
-pub const PK: &str = "pk";
-pub const SK: &str = "sk";
+/// The hash key and range key attribute names, the edge's key attributes.
+pub const PK: &str = sungma_edge::item::PARTITION_KEY;
+pub const SK: &str = sungma_edge::item::SORT_KEY;
 
 fn failed(error: impl std::error::Error) -> EdgeError {
     EdgeError(DisplayErrorContext(error).to_string())

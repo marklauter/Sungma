@@ -10,7 +10,7 @@ use sungma_edge::{
     write::{Expect, Step},
 };
 
-use crate::{HEAD, failed};
+use crate::{failed, tags::HEAD};
 
 const REVISION: &str = "revision";
 

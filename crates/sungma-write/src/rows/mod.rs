@@ -143,10 +143,26 @@ where
 
     /// Commits `work`, whose first step moves the head from `head`. When
     /// that step was refused, another writer moved the head, so the clock
-    /// moves past it before the next try.
-    async fn commit(&self, work: Work, reading: Reading) -> Result<Tried, Failure> {
+    /// moves past it before the next try. `follows` says which steps only
+    /// follow from what the guarded steps read, such as a fact's spans
+    /// from its pointer: a refusal of those alone is no race, since trying
+    /// again reads the same, so the write fails naming them.
+    async fn commit(
+        &self,
+        work: Work,
+        reading: Reading,
+        follows: impl Fn(usize) -> bool,
+    ) -> Result<Tried, Failure> {
+        let keys: Vec<_> = work.0.iter().map(|step| step.key().clone()).collect();
         match self.items.commit(work).await {
             Ok(()) => Ok(Tried::Written(reading)),
+            Err(CommitError::Refused(steps)) if steps.iter().all(|&at| follows(at)) => {
+                let rows: Vec<_> = steps.iter().map(|&at| &keys[at]).collect();
+                Err(StoreError(format!(
+                    "span rows {rows:?} aren't as their facts' pointers say"
+                ))
+                .into())
+            }
             Err(CommitError::Refused(steps)) => {
                 if steps.first() == Some(&0)
                     && let Some(head) = head::read(&self.reader, Consistency::Strong).await?

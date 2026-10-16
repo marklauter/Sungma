@@ -221,9 +221,7 @@ async fn a_write_past_one_unit_of_work_is_refused<E: Edge>(edge: E) {
     for (refused, fits) in [(&past, &full), (&retires, &retires[..99].to_vec())] {
         let refusal = writer.write(refused).await.unwrap_err();
         assert!(
-            refusal
-                .to_string()
-                .contains("more than one write holds"),
+            refusal.to_string().contains("more than one write holds"),
             "{refusal}"
         );
         assert_eq!(reader.head().await.unwrap(), head);
@@ -242,7 +240,7 @@ async fn a_namespace_without_names_is_refused<E: Edge>(edge: E) {
         .unwrap_err();
     assert_eq!(
         refused.to_string(),
-        "store failure: namespace 0 has no interned name"
+        "store failure: Namespaces id 0 has no name"
     );
     let names = names(&edge);
     names
@@ -255,7 +253,7 @@ async fn a_namespace_without_names_is_refused<E: Edge>(edge: E) {
         .unwrap_err();
     assert_eq!(
         refused.to_string(),
-        "store failure: relation 0 has no interned name"
+        "store failure: Relations id 0 has no name"
     );
 }
 
@@ -463,4 +461,28 @@ async fn a_version_read_that_misses_a_name_reads_it_again() {
     let reader = RowReader::new(edge.clone(), lagging, parse as Parse, 16);
     let version = reader.version(DOC, Revision(1)).await;
     assert!(matches!(version, Ok(Some(_))), "{version:?}");
+}
+
+/// A span whose row disagrees with its fact's pointer can't be closed by
+/// trying again: the write reports the row rather than a lost race.
+#[tokio::test]
+async fn a_span_its_pointer_disagrees_with_is_reported() {
+    let edge = memory();
+    declared(&edge).await;
+    let writer = writer(&edge, DevClock::default());
+    let fact = owner("a", "alice");
+    let written = writer.write(&[Insert(fact.clone())]).await.unwrap();
+    // Retire the span behind the pointer's back.
+    let span = sungma_schema::facts::span(&fact.subjectset, &fact.subject, written);
+    let retire = Step::Update {
+        key: span,
+        set: Item::new().with("retired", Value::Number(written.0 + 1)),
+        remove: vec![],
+        expect: vec![],
+    };
+    edge.commit(Work(vec![retire])).await.unwrap();
+    let refused = writer.write(&[Retire(fact)]).await.unwrap_err();
+    let message = refused.to_string();
+    assert!(!message.contains("races"), "{message}");
+    assert!(message.contains("span"), "{message}");
 }

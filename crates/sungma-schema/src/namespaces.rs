@@ -19,7 +19,7 @@ use sungma_edge::{
     write::{Expect, Step},
 };
 
-use crate::{NAMESPACE, failed};
+use crate::{failed, tags::NAMESPACE};
 
 const LATEST: u8 = 0;
 const ENTRY: u8 = 1;

@@ -285,6 +285,47 @@ pub async fn unwritable_work_is_refused<E: ItemReader + ItemWriter>(edge: E) {
     );
 }
 
+/// The key attributes are the edge's own: an item that names one is
+/// refused before anything is written.
+pub async fn an_item_naming_a_key_attribute_is_refused<E: ItemReader + ItemWriter>(edge: E) {
+    for name in ["pk", "sk"] {
+        let named = Item::new().with(name, Value::Number(1));
+        let steps = [
+            Step::Insert {
+                key: key("p", 1),
+                item: named.clone(),
+            },
+            Step::Update {
+                key: key("p", 1),
+                set: named,
+                remove: vec![],
+                expect: vec![],
+            },
+            Step::Update {
+                key: key("p", 1),
+                set: Item::new(),
+                remove: vec![name.to_owned()],
+                expect: vec![],
+            },
+            Step::Check {
+                key: key("p", 1),
+                expect: vec![Expect::Missing(name.to_owned())],
+            },
+        ];
+        for step in steps {
+            let refused = commit(&edge, vec![step.clone()]).await;
+            assert!(
+                matches!(refused, Err(CommitError::Unwritable(_))),
+                "{step:?}: {refused:?}"
+            );
+        }
+    }
+    assert_eq!(
+        edge.get(&key("p", 1), Consistency::Strong).await.unwrap(),
+        None
+    );
+}
+
 /// A sequence hands out each number once, from 0, per counter.
 pub async fn a_sequence_hands_out_each_number_once<E: Sequence>(edge: E) {
     let a = key("seq", 0);
@@ -320,6 +361,11 @@ macro_rules! edge_tests {
         #[tokio::test]
         async fn unwritable_work_is_refused() {
             $crate::testkit::unwritable_work_is_refused($fresh).await;
+        }
+
+        #[tokio::test]
+        async fn an_item_naming_a_key_attribute_is_refused() {
+            $crate::testkit::an_item_naming_a_key_attribute_is_refused($fresh).await;
         }
 
         #[tokio::test]

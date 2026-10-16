@@ -322,19 +322,7 @@ impl ItemWriter for DynamoEdge {
     }
 
     async fn commit(&self, work: Work) -> Result<(), CommitError> {
-        if work.len() > MAX_STEPS {
-            return Err(CommitError::Unwritable(format!(
-                "a unit of work of {} steps is more than {MAX_STEPS}",
-                work.len()
-            )));
-        }
-        let mut keys = std::collections::HashSet::new();
-        if let Some(step) = work.0.iter().find(|step| !keys.insert(step.key())) {
-            return Err(CommitError::Unwritable(format!(
-                "two steps on {:?}",
-                step.key()
-            )));
-        }
+        work.check(MAX_STEPS)?;
         let items = work
             .0
             .into_iter()

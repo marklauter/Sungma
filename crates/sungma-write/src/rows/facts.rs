@@ -156,6 +156,8 @@ where
         };
         let at = reading.revision;
         let mut work = Work::new();
+        // The steps that only follow from a pointer the write read.
+        let mut spans = Vec::new();
         work.push(head::step(seen_head, at));
         for (namespace, seen) in &latest {
             work.push(namespaces::latest_unchanged(*namespace, seen.as_ref()));
@@ -167,14 +169,16 @@ where
                 continue;
             }
             if let (true, Some(written)) = (closed, seen.flatten()) {
+                spans.push(work.len());
                 work.push(facts::span_closed(set, of, written, at));
             }
             if opened {
+                spans.push(work.len());
                 work.push(facts::span_opened(set, of, at));
             }
             work.push(facts::pointer_moved(set, of, seen, opened.then_some(at)));
         }
-        Ok(self.commit(work, reading).await?)
+        Ok(self.commit(work, reading, |at| spans.contains(&at)).await?)
     }
 }
 

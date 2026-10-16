@@ -5,8 +5,7 @@ use sungma::store::StoreError;
 use crate::store::Pool;
 use sungma_edge::{EdgeError, key::Key};
 
-/// The partition tag for names, apart from every other context's.
-const NAMES: u8 = 3;
+use sungma_schema::tags::NAMES;
 
 /// Sort key tags inside a pool's partition.
 const COUNTER: u8 = 0;

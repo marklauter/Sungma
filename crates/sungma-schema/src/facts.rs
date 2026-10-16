@@ -22,7 +22,7 @@ use sungma_edge::{
     write::{Expect, Step},
 };
 
-use crate::{FACT, failed};
+use crate::{failed, tags::FACT};
 
 const IDENTITY: u8 = 1;
 const SUBJECTSET: u8 = 2;

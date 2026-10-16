@@ -4,7 +4,7 @@
 //! counter per key.
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     ops::Range,
 };
 
@@ -72,19 +72,7 @@ impl ItemWriter for MemoryTable {
     }
 
     async fn commit(&self, work: Work) -> Result<(), CommitError> {
-        if work.len() > MAX_STEPS {
-            return Err(CommitError::Unwritable(format!(
-                "a unit of work of {} steps is more than {MAX_STEPS}",
-                work.len()
-            )));
-        }
-        let mut keys = HashSet::new();
-        if let Some(step) = work.0.iter().find(|step| !keys.insert(step.key())) {
-            return Err(CommitError::Unwritable(format!(
-                "two steps on {:?}",
-                step.key()
-            )));
-        }
+        work.check(MAX_STEPS)?;
         let mut items = self.items.write();
         let refused: Vec<usize> = work
             .0

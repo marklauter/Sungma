@@ -5,22 +5,18 @@
 //! writes based on one version, one is refused. A version is stored as its
 //! printed document with names, beside its epochs.
 
-use std::collections::HashMap;
-
 use sungma::{
-    id::NamespaceId,
-    name::RelationName,
-    namespace::{Namespace, NamespaceError},
-    revision::Revision,
-    store::StoreError,
-    version::Epochs,
+    id::NamespaceId, namespace::Namespace, revision::Revision, store::StoreError, version::Epochs,
 };
 use sungma_clock::Clock;
 use sungma_edge::{
     read::{Consistency, ItemReader},
     write::{ItemWriter, Work},
 };
-use sungma_names::{store::NameReader, store::Pool};
+use sungma_names::{
+    resolve,
+    store::{NameReader, ReadingDictionary},
+};
 use sungma_schema::{
     head,
     namespaces::{self, Entry},
@@ -35,15 +31,6 @@ impl From<Failure> for NamespaceWriteError {
             Failure::Store(error) => error.into(),
             Failure::Clock(fault) => fault.into(),
         }
-    }
-}
-
-/// A rename that failed as a store does.
-struct Unnamed(StoreError);
-
-impl From<NamespaceError> for Unnamed {
-    fn from(error: NamespaceError) -> Self {
-        Self(StoreError(error.to_string()))
     }
 }
 
@@ -62,32 +49,9 @@ where
         namespace: NamespaceId,
         relations: &Namespace,
     ) -> Result<String, StoreError> {
-        let unnamed = |what: String| StoreError(format!("{what} has no interned name"));
-        let name = self
-            .names
-            .name(Pool::Namespaces, namespace.0)
-            .await?
-            .ok_or_else(|| unnamed(format!("namespace {namespace}")))?;
-        let name = name
-            .parse()
-            .map_err(|_| StoreError(format!("namespace {namespace} is named '{name}'")))?;
-        let mut names = HashMap::new();
-        for relation in relations.names() {
-            let named = self
-                .names
-                .name(Pool::Relations, relation.0)
-                .await?
-                .ok_or_else(|| unnamed(format!("relation {relation}")))?;
-            names.insert(*relation, RelationName::new_unchecked(named));
-        }
-        let named = relations
-            .try_map(|relation| {
-                names
-                    .get(relation)
-                    .cloned()
-                    .ok_or_else(|| Unnamed(unnamed(format!("relation {relation}"))))
-            })
-            .map_err(|Unnamed(error)| error)?;
+        let names = ReadingDictionary(&self.names);
+        let name = resolve::namespace_name(&names, namespace).await?;
+        let named = resolve::namespace_names(&names, relations).await?;
         self.printer.print(&name, &named).map_err(StoreError)
     }
 
@@ -143,7 +107,8 @@ where
         for step in namespaces::written(namespace, seen.as_ref(), &entry) {
             work.push(step);
         }
-        Ok(self.commit(work, reading).await?)
+        // Every step guards what the write read.
+        Ok(self.commit(work, reading, |_| false).await?)
     }
 }
 

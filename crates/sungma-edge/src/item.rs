@@ -4,6 +4,11 @@ use std::collections::BTreeMap;
 
 use crate::EdgeError;
 
+/// The attributes a store keeps an item's key in. They're the edge's
+/// own: no item may name one.
+pub const PARTITION_KEY: &str = "pk";
+pub const SORT_KEY: &str = "sk";
+
 /// An attribute's value.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Value {
