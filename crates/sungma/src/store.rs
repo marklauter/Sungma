@@ -72,6 +72,24 @@ impl<R: NameReader + Sync + ?Sized> NameReader for &R {
     }
 }
 
+impl<R: NameReader + Send + Sync + ?Sized> NameReader for Arc<R> {
+    fn id(
+        &self,
+        pool: Pool,
+        name: &str,
+    ) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send {
+        R::id(self, pool, name)
+    }
+
+    fn name(
+        &self,
+        pool: Pool,
+        id: u32,
+    ) -> impl Future<Output = Result<Option<String>, StoreError>> + Send {
+        R::name(self, pool, id)
+    }
+}
+
 /// Maps names to their interned ids and back, within a [`Pool`]. Read-only:
 /// Check never mints ids.
 pub trait Dictionary {
@@ -138,6 +156,21 @@ pub trait FactReader {
         set: &Subjectset,
         revision: Revision,
     ) -> impl Future<Output = Result<Vec<(Subject, Revision)>, StoreError>> + Send;
+}
+
+/// Namespace documents as stored, for a caller that shows or edits them,
+/// such as a UI. A store keeps each version as the printer's canonical
+/// document, so the text it gives is the one it stored. Check reads
+/// versions through [`NamespaceReader`] instead.
+pub trait DocumentReader {
+    /// The document of the version whose span covers `revision`, and the
+    /// revision that version opened at; `None` when the namespace wasn't
+    /// created yet or was retired then.
+    fn document(
+        &self,
+        namespace: NamespaceId,
+        revision: Revision,
+    ) -> impl Future<Output = Result<Option<(Revision, String)>, StoreError>> + Send;
 }
 
 /// Namespace versions, keyed by namespace and then by the revision each

@@ -54,4 +54,25 @@ impl<R> Rewrite<R> {
             }
         })
     }
+
+    /// Calls `f` with each relation the tree names, in tree order.
+    pub fn visit<'a>(&'a self, f: &mut impl FnMut(&'a R)) {
+        match self {
+            Rewrite::This => {}
+            Rewrite::Computed(relation) => f(relation),
+            Rewrite::FactTo { factset, computed } => {
+                f(factset);
+                f(computed);
+            }
+            Rewrite::Union(operands) | Rewrite::Intersection(operands) => {
+                for operand in operands.iter() {
+                    operand.visit(f);
+                }
+            }
+            Rewrite::Exclusion(base, excluded) => {
+                base.visit(f);
+                excluded.visit(f);
+            }
+        }
+    }
 }

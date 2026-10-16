@@ -352,3 +352,35 @@ impl fmt::Display for SubjectsetName {
         write!(f, "{}#{}", self.resource, self.relation)
     }
 }
+
+/// A subject as a caller names it.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub enum SubjectName {
+    Identity(Identity),
+    /// `namespace:id`, a resource member.
+    Resource(ResourceName),
+    Subjectset(SubjectsetName),
+}
+
+impl fmt::Display for SubjectName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Identity(identity) => identity.fmt(f),
+            Self::Resource(resource) => resource.fmt(f),
+            Self::Subjectset(set) => set.fmt(f),
+        }
+    }
+}
+
+/// A fact as a caller names it: `namespace:id#relation@subject`.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct FactName {
+    pub subjectset: SubjectsetName,
+    pub subject: SubjectName,
+}
+
+impl fmt::Display for FactName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}@{}", self.subjectset, self.subject)
+    }
+}

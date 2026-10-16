@@ -8,6 +8,7 @@ use std::{
 
 use proptest::prelude::*;
 use serde_json::{Value, json};
+use sungma::resolve;
 use sungma::{
     graph::Subject,
     id::{NamespaceId, RelationId},
@@ -19,7 +20,6 @@ use sungma::{
     rewrite::Rewrite::This,
     store::{FactReader, Pool, ReadingDictionary},
 };
-use sungma_check::resolve;
 use sungma_lang::fact;
 use sungma_memory::{MemoryDictionary, MemoryStore};
 
@@ -55,11 +55,13 @@ async fn a_subject_is_read_by_its_keys() {
     let declared = declare_all(json, &dictionary, &facts);
     fact::load_facts(json, &dictionary, &facts).unwrap();
     assert_eq!(facts.head().await.unwrap().0, declared + 1);
-    let folder = resolve::resource(
-        &ReadingDictionary(&dictionary),
-        &"folder:root".parse().unwrap(),
-    )
-    .await;
+    let folder = resolve::known(
+        resolve::resource(
+            &ReadingDictionary(&dictionary),
+            &"folder:root".parse().unwrap(),
+        )
+        .await,
+    );
     assert!(folder.unwrap().is_some());
 }
 
@@ -263,7 +265,9 @@ async fn a_refused_document_declares_no_facts() {
     ]"#;
     assert!(fact::load_facts(json, &dictionary, &facts).is_err());
     assert_eq!(facts.head().await.unwrap().0, 0);
-    let file = resolve::resource(&ReadingDictionary(&dictionary), &"file:a".parse().unwrap()).await;
+    let file = resolve::known(
+        resolve::resource(&ReadingDictionary(&dictionary), &"file:a".parse().unwrap()).await,
+    );
     assert_eq!(file.unwrap(), None);
 }
 
@@ -377,9 +381,8 @@ async fn holds(
     subject: &Who,
 ) -> bool {
     let set = set_name(namespace, resource, relation);
-    let Some(set) = resolve::subjectset(&ReadingDictionary(dictionary), &set)
-        .await
-        .unwrap()
+    let Some(set) =
+        resolve::known(resolve::subjectset(&ReadingDictionary(dictionary), &set).await).unwrap()
     else {
         return false;
     };
@@ -387,16 +390,17 @@ async fn holds(
         Who::Identity(identity) => Some(Subject::Identity(identity.parse().unwrap())),
         Who::Resource(namespace, resource) => {
             let name = ResourceName::new(namespace.parse().unwrap(), resource.parse().unwrap());
-            resolve::resource(&ReadingDictionary(dictionary), &name)
-                .await
+            resolve::known(resolve::resource(&ReadingDictionary(dictionary), &name).await)
                 .unwrap()
                 .map(Subject::ResourceMember)
         }
-        Who::Subjectset(namespace, resource, relation) => resolve::subjectset(
-            &ReadingDictionary(dictionary),
-            &set_name(namespace, resource, relation),
+        Who::Subjectset(namespace, resource, relation) => resolve::known(
+            resolve::subjectset(
+                &ReadingDictionary(dictionary),
+                &set_name(namespace, resource, relation),
+            )
+            .await,
         )
-        .await
         .unwrap()
         .map(Subject::Subjectset),
     };
@@ -718,4 +722,70 @@ proptest! {
             prop_assert_eq!(runtime.block_on(facts.head()).unwrap().0, 0);
         }
     }
+}
+
+#[test]
+fn a_document_parses_to_named_facts_and_prints_back() {
+    let json = json!([
+        { "namespace": "file", "resource": "readme", "relation": "owner",
+          "subject": { "identity": "alice" } },
+        { "namespace": "folder", "resource": "root", "relation": "viewer",
+          "subject": { "namespace": "group", "resource": "eng", "relation": "member" } },
+        { "namespace": "file", "resource": "readme", "relation": "parent",
+          "subject": { "namespace": "folder", "resource": "root" } }
+    ]);
+    let facts = fact::parse(&json.to_string()).unwrap();
+    assert_eq!(facts.len(), 3);
+    assert_eq!(facts[0].to_string(), "file:readme#owner@alice");
+    assert_eq!(fact::document(&facts), json);
+}
+
+#[test]
+fn a_write_request_holds_add_retire_or_both() {
+    let alice = json!({ "namespace": "file", "resource": "readme", "relation": "owner",
+                        "subject": { "identity": "alice" } });
+    for (body, adds, retires) in [
+        (json!({ "add": [alice] }), 1, 0),
+        (json!({ "retire": [alice] }), 0, 1),
+        (json!({ "add": [alice], "retire": [alice, alice] }), 1, 2),
+        (json!({ "add": [alice], "retire": [] }), 1, 0),
+    ] {
+        let request = fact::parse_write(&body.to_string()).unwrap();
+        assert_eq!(
+            (request.add.len(), request.retire.len()),
+            (adds, retires),
+            "{body}"
+        );
+    }
+    for body in [
+        json!({}),
+        json!({ "add": null }),
+        json!({ "add": [] }),
+        json!({ "add": [], "retire": [] }),
+        json!({ "add": [], "remove": [] }),
+        json!({ "add": [{ "namespace": "file" }] }),
+        json!([]),
+    ] {
+        assert!(fact::parse_write(&body.to_string()).is_err(), "{body}");
+    }
+    let twice = r#"{ "add": [], "add": [] }"#;
+    assert!(
+        fact::parse_write(twice)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate")
+    );
+}
+
+#[test]
+fn a_subject_reads_in_a_fact_document_form() {
+    #[derive(serde::Deserialize)]
+    struct Holder {
+        #[serde(deserialize_with = "fact::subject")]
+        subject: sungma::name::SubjectName,
+    }
+    let held: Holder = serde_json::from_str(r#"{ "subject": { "identity": "alice" } }"#).unwrap();
+    assert_eq!(held.subject.to_string(), "alice");
+    let refused = serde_json::from_str::<Holder>(r#"{ "subject": { "relation": "owner" } }"#);
+    assert!(refused.is_err());
 }

@@ -56,20 +56,6 @@ impl From<NamespaceError> for Failed {
     }
 }
 
-/// Every relation a namespace names, in its declarations and its rewrites.
-fn relations<R: Clone + Eq + std::hash::Hash + std::fmt::Display>(
-    namespace: &Namespace<R>,
-) -> Result<Vec<R>, StoreError> {
-    let mut seen = Vec::new();
-    namespace
-        .map(|relation| {
-            seen.push(relation.clone());
-            relation.clone()
-        })
-        .map_err(|error| StoreError(error.to_string()))?;
-    Ok(seen)
-}
-
 impl Table {
     /// The namespace's latest item, `None` when it was never written.
     pub(crate) async fn latest(
@@ -94,13 +80,53 @@ impl Table {
         namespace: NamespaceId,
         revision: Revision,
     ) -> Result<Option<Arc<Version>>, StoreError> {
-        match self.latest(namespace, false).await? {
-            None => return Ok(None),
-            Some(latest) if latest.revision() <= revision => {
-                return Ok(latest.version().cloned());
-            }
+        let Some(item) = self.entry_at(namespace, revision).await? else {
+            return Ok(None);
+        };
+        match self.entry(&item, false).await? {
+            Entry::Version(version) => Ok(Some(version)),
+            Entry::Retired(_) => Ok(None),
+        }
+    }
+
+    /// The stored document of the version whose span covers `revision`,
+    /// as it was stored, and the revision it opened at.
+    pub(crate) async fn document_at(
+        &self,
+        namespace: NamespaceId,
+        revision: Revision,
+    ) -> Result<Option<(Revision, String)>, StoreError> {
+        let Some(item) = self.entry_at(namespace, revision).await? else {
+            return Ok(None);
+        };
+        if table::flag(&item, RETIRED) {
+            return Ok(None);
+        }
+        Ok(Some((
+            table::required_revision(&item, REVISION)?,
+            table::required_string(&item, DOCUMENT)?.to_owned(),
+        )))
+    }
+
+    /// The item of the entry whose span covers `revision`, `None` when the
+    /// namespace has no entry at or before it.
+    async fn entry_at(
+        &self,
+        namespace: NamespaceId,
+        revision: Revision,
+    ) -> Result<Option<Item>, StoreError> {
+        let latest = self
+            .get(key::namespace(namespace), key::latest(), false)
+            .await?;
+        let opened = match &latest {
+            Some(item) => Some(table::required_revision(item, REVISION)?),
+            None => None,
+        };
+        match (latest, opened) {
+            (None, _) => return Ok(None),
+            (Some(latest), Some(opened)) if opened <= revision => return Ok(Some(latest)),
             // A newer entry landed after `revision`, so the history answers.
-            Some(_) => {}
+            (Some(_), _) => {}
         }
         let mut query = Query::new(key::namespace(namespace));
         query.condition = Some("sk BETWEEN :first AND :at");
@@ -110,13 +136,7 @@ impl Table {
         ];
         query.descending = true;
         query.limit = Some(1);
-        let Some(item) = self.query(query).await?.pop() else {
-            return Ok(None);
-        };
-        match self.entry(&item, false).await? {
-            Entry::Version(version) => Ok(Some(version)),
-            Entry::Retired(_) => Ok(None),
-        }
+        Ok(self.query(query).await?.pop())
     }
 
     /// The entry an item holds, its document parsed and its names mapped to
@@ -135,7 +155,7 @@ impl Table {
             ))
         })?;
         let mut ids = HashMap::new();
-        for name in relations(&document.relations)? {
+        for name in document.relations.names() {
             let mut id = self
                 .id_of(Pool::Relations, name.as_str(), consistent)
                 .await?;
@@ -143,7 +163,7 @@ impl Table {
                 id = self.id_of(Pool::Relations, name.as_str(), true).await?;
             }
             let id = id.ok_or_else(|| StoreError(format!("relation '{name}' isn't interned")))?;
-            ids.insert(name, RelationId(id));
+            ids.insert(name.clone(), RelationId(id));
         }
         let namespace = document
             .relations
@@ -210,12 +230,12 @@ impl Table {
             .await?
             .ok_or_else(|| unnamed(format!("namespace {}", id.0)))?;
         let mut names = HashMap::new();
-        for relation in relations(namespace)? {
+        for relation in namespace.names() {
             let name = self
                 .name_of(Pool::Relations, relation.0, true)
                 .await?
                 .ok_or_else(|| unnamed(format!("relation {}", relation.0)))?;
-            names.insert(relation, RelationName::new_unchecked(name));
+            names.insert(*relation, RelationName::new_unchecked(name));
         }
         let named = namespace
             .try_map(|relation| {

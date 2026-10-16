@@ -17,9 +17,8 @@ use sungma::{
     rewrite::Rewrite::This,
     store::{Pool, ReadingDictionary},
 };
-use sungma_check::{
-    resolve, {CheckRequest, CheckService, MemoryAuditLog, RequestContext, SubjectName, Verdict},
-};
+use sungma::{name::SubjectName, resolve};
+use sungma_check::{CheckRequest, CheckService, MemoryAuditLog, RequestContext, Verdict};
 use sungma_lang::fact::load_facts;
 use sungma_write::store::{NamespaceWrite::Retire, NamespaceWriter};
 
@@ -33,11 +32,13 @@ async fn fact(world: &World, set: &str, subject: Subject) -> Fact {
 
 /// `namespace:id#...`
 async fn member(world: &World, resource: &str) -> Subject {
-    let resource = resolve::resource(
-        &ReadingDictionary(&world.dictionary),
-        &resource.parse().unwrap(),
-    )
-    .await;
+    let resource = resolve::known(
+        resolve::resource(
+            &ReadingDictionary(&world.dictionary),
+            &resource.parse().unwrap(),
+        )
+        .await,
+    );
     Subject::ResourceMember(resource.unwrap().unwrap())
 }
 

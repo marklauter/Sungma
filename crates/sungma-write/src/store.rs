@@ -10,13 +10,13 @@
 //! that also promises its future can move between threads. Implementations
 //! still write a plain `async fn`.
 
-use std::{future::Future, ops::Range};
+use std::{future::Future, ops::Range, sync::Arc};
 
 use thiserror::Error;
 
 use sungma::{
     graph::Fact,
-    id::NamespaceId,
+    id::{NamespaceId, RelationId},
     namespace::Namespace,
     revision::Revision,
     store::{Dictionary, Pool, StoreError},
@@ -70,6 +70,44 @@ pub trait NameWriter {
     ) -> impl Future<Output = Result<Range<u32>, StoreError>> + Send;
 }
 
+impl<W: NameWriter + Sync + ?Sized> NameWriter for &W {
+    fn insert_if_absent(
+        &self,
+        pool: Pool,
+        name: &str,
+        id: u32,
+    ) -> impl Future<Output = Result<u32, StoreError>> + Send {
+        W::insert_if_absent(self, pool, name, id)
+    }
+
+    fn lease(
+        &self,
+        pool: Pool,
+        count: u32,
+    ) -> impl Future<Output = Result<Range<u32>, StoreError>> + Send {
+        W::lease(self, pool, count)
+    }
+}
+
+impl<W: NameWriter + Send + Sync + ?Sized> NameWriter for Arc<W> {
+    fn insert_if_absent(
+        &self,
+        pool: Pool,
+        name: &str,
+        id: u32,
+    ) -> impl Future<Output = Result<u32, StoreError>> + Send {
+        W::insert_if_absent(self, pool, name, id)
+    }
+
+    fn lease(
+        &self,
+        pool: Pool,
+        count: u32,
+    ) -> impl Future<Output = Result<Range<u32>, StoreError>> + Send {
+        W::lease(self, pool, count)
+    }
+}
+
 /// One change to the stored facts.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum FactWrite {
@@ -121,14 +159,17 @@ pub trait FactWriter {
 ///
 /// A write that follows a version names it by its revision, the version the
 /// caller read, as an etag names what a write expects to replace.
+///
+/// Generic over how relations are named, as [`Namespace`] is: a store
+/// writes interned ids, and a caller names its relations.
 #[derive(Debug)]
-pub enum NamespaceWrite {
+pub enum NamespaceWrite<R = RelationId> {
     /// Stores the first version of a namespace that has no latest version.
-    Create(Namespace),
+    Create(Namespace<R>),
     /// Stores the next version, closing the latest version's span.
     NewVersion {
         based_on: Revision,
-        namespace: Namespace,
+        namespace: Namespace<R>,
     },
     /// Closes the latest version's span and stores no new version.
     Retire { based_on: Revision },

@@ -15,6 +15,7 @@ pub mod name;
 pub mod namespace;
 pub mod non_empty;
 pub mod replay;
+pub mod resolve;
 pub mod revision;
 pub mod rewrite;
 pub mod store;

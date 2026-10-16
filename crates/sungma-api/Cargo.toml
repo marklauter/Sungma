@@ -6,14 +6,18 @@ edition.workspace = true
 [dependencies]
 axum.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 sungma.workspace = true
 sungma-check.workspace = true
+sungma-dynamodb.workspace = true
 sungma-lang.workspace = true
 sungma-memory.workspace = true
+sungma-write.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
 
 [dev-dependencies]
 http-body-util.workspace = true
+sungma-clock = { workspace = true, features = ["test-util"] }
+sungma-write.workspace = true
 tower = { workspace = true, features = ["util"] }

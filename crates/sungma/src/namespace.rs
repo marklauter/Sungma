@@ -124,6 +124,23 @@ impl<R: Eq + Hash + Clone + Display> Namespace<R> {
             .map(|(relation, rewrite)| (relation, &**rewrite))
     }
 
+    /// Every relation the namespace names, declared or referenced from a
+    /// rewrite, each once, in the order first met.
+    pub fn names(&self) -> Vec<&R> {
+        let mut seen = HashSet::new();
+        let mut names = Vec::new();
+        let mut name = |relation| {
+            if seen.insert(relation) {
+                names.push(relation);
+            }
+        };
+        for (relation, rewrite) in &self.relations {
+            name(relation);
+            rewrite.visit(&mut name);
+        }
+        names
+    }
+
     /// The same namespace with every relation renamed by `rename`, as when its
     /// names are interned. Renaming doesn't change any rewrite's shape, so a
     /// one-to-one rename keeps the namespace valid. A rename that gives two

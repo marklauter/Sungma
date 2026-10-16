@@ -5,6 +5,7 @@
 // Each test file compiles this module separately and uses only part of it.
 #![allow(dead_code)]
 
+use sungma::resolve;
 use sungma::{
     graph::{Subject, Subjectset},
     id::{NamespaceId, RelationId},
@@ -13,7 +14,6 @@ use sungma::{
     rewrite::Rewrite,
     store::{FactReader, Pool, ReadingDictionary},
 };
-use sungma_check::resolve;
 use sungma_lang::{fact::load_facts, namespace::load_namespaces};
 use sungma_memory::{MemoryDictionary, MemoryStore};
 
@@ -43,11 +43,13 @@ pub fn world() -> World {
 
 /// Resolves `namespace:id#relation`; `None` if any name was never interned.
 pub async fn subjectset(world: &World, text: &str) -> Option<Subjectset> {
-    resolve::subjectset(
-        &ReadingDictionary(&world.dictionary),
-        &text.parse().unwrap(),
+    resolve::known(
+        resolve::subjectset(
+            &ReadingDictionary(&world.dictionary),
+            &text.parse().unwrap(),
+        )
+        .await,
     )
-    .await
     .unwrap()
 }
 

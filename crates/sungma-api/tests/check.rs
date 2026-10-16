@@ -22,8 +22,10 @@ const NAMESPACES: [&str; 3] = [
 ];
 const FACTS: &str = include_str!("../../sungma/tests/fixtures/docs.facts.json");
 
-fn state() -> Arc<AppState> {
-    Arc::new(AppState::load(&NAMESPACES, FACTS).unwrap())
+async fn state() -> Arc<AppState> {
+    let state = AppState::memory();
+    state.seed(&NAMESPACES, FACTS).await.unwrap();
+    Arc::new(state)
 }
 
 async fn post(app: Router, body: Value, headers: &[(&str, &str)]) -> (StatusCode, Value) {
@@ -50,7 +52,7 @@ fn head() -> u64 {
 
 #[tokio::test]
 async fn allowed_returns_the_zookie_it_was_decided_at() {
-    let state = state();
+    let state = state().await;
     let head = head();
     let (status, reply) = check(
         &state,
@@ -66,7 +68,7 @@ async fn allowed_returns_the_zookie_it_was_decided_at() {
 
 #[tokio::test]
 async fn denied_and_unknown() {
-    let state = state();
+    let state = state().await;
     let (_, reply) = check(
         &state,
         json!({ "set": "file:design.md#viewer", "identity": "bob" }),
@@ -89,7 +91,7 @@ async fn denied_and_unknown() {
 
 #[tokio::test]
 async fn a_subjectset_can_be_the_subject() {
-    let state = state();
+    let state = state().await;
     let (_, reply) = check(
         &state,
         json!({ "set": "folder:root#viewer", "subjectset": "group:eng#member" }),
@@ -100,7 +102,7 @@ async fn a_subjectset_can_be_the_subject() {
 
 #[tokio::test]
 async fn a_zookie_at_or_behind_the_head_is_accepted() {
-    let state = state();
+    let state = state().await;
     let head = head();
     let (_, reply) = check(
         &state,
@@ -111,15 +113,15 @@ async fn a_zookie_at_or_behind_the_head_is_accepted() {
 }
 
 #[tokio::test]
-async fn a_zookie_ahead_of_the_head_fails_and_is_audited() {
-    let state = state();
+async fn a_zookie_ahead_of_the_head_is_refused_and_audited() {
+    let state = state().await;
     let ahead = head() + 1;
     let (status, reply) = check(
         &state,
         json!({ "set": "file:design.md#viewer", "identity": "alice", "zookie": { "revision": ahead } }),
     )
     .await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(reply["error"].as_str().unwrap().contains("ahead"));
     let records = state.audit.records();
     assert!(matches!(records[0].verdict, Verdict::Failed(_)));
@@ -127,7 +129,7 @@ async fn a_zookie_ahead_of_the_head_fails_and_is_audited() {
 
 #[tokio::test]
 async fn headers_fill_the_audit_context() {
-    let state = state();
+    let state = state().await;
     let (_, reply) = post(
         router(state.clone()),
         json!({ "set": "file:design.md#viewer", "identity": "alice" }),
@@ -144,7 +146,7 @@ async fn headers_fill_the_audit_context() {
 
 #[tokio::test]
 async fn malformed_names_are_rejected() {
-    let state = state();
+    let state = state().await;
     for body in [
         json!({ "set": "file:design.md", "identity": "alice" }),
         json!({ "set": "design.md#viewer", "identity": "alice" }),
@@ -159,7 +161,7 @@ async fn malformed_names_are_rejected() {
 
 #[tokio::test]
 async fn an_identity_outside_its_rules_is_rejected() {
-    let state = state();
+    let state = state().await;
     for (identity, error) in [
         ("bob\u{1b}[31m".to_owned(), "other than printable ASCII"),
         ("jos\u{e9}".to_owned(), "other than printable ASCII"),
@@ -181,7 +183,7 @@ async fn an_identity_outside_its_rules_is_rejected() {
 
 #[tokio::test]
 async fn a_resource_is_not_a_subject() {
-    let state = state();
+    let state = state().await;
     let body = json!({ "set": "file:design.md#parent", "subjectset": "folder:specs#..." });
     let (status, reply) = check(&state, body).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -192,15 +194,9 @@ async fn a_resource_is_not_a_subject() {
     assert!(state.audit.records().is_empty());
 }
 
-#[test]
-fn load_reports_bad_json() {
-    assert!(AppState::load(&["{"], FACTS).is_err());
-    assert!(AppState::load(&NAMESPACES, "[{}]").is_err());
-}
-
 #[tokio::test]
 async fn two_subjects_are_rejected() {
-    let state = state();
+    let state = state().await;
     let (status, reply) = check(
         &state,
         json!({ "set": "folder:root#viewer", "identity": "alice", "subjectset": "group:eng#member" }),
@@ -214,7 +210,7 @@ async fn two_subjects_are_rejected() {
 
 #[tokio::test]
 async fn no_subject_is_rejected() {
-    let state = state();
+    let state = state().await;
     let (status, reply) = check(&state, json!({ "set": "folder:root#viewer" })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(reply["error"].is_string());
@@ -241,7 +237,7 @@ async fn post_raw(
 
 #[tokio::test]
 async fn rejected_bodies_get_json_errors() {
-    let state = state();
+    let state = state().await;
     let json = Some("application/json");
     let cases = [
         (
@@ -250,15 +246,11 @@ async fn rejected_bodies_get_json_errors() {
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
         ),
         ("{", json, StatusCode::BAD_REQUEST),
-        (
-            r#"{"identity":"alice"}"#,
-            json,
-            StatusCode::UNPROCESSABLE_ENTITY,
-        ),
+        (r#"{"identity":"alice"}"#, json, StatusCode::BAD_REQUEST),
         (
             r#"{"set":"file:design.md#viewer","identty":"alice"}"#,
             json,
-            StatusCode::UNPROCESSABLE_ENTITY,
+            StatusCode::BAD_REQUEST,
         ),
     ];
     for (body, content_type, expected) in cases {

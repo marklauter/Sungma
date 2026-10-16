@@ -70,3 +70,13 @@ This covers roadmap items 7 and 8, the Read and Write services, and the namespac
 1. Reading by resource, every relation of one resource. The table keys facts by subjectset, so this needs an index.
 2. Paging. A read gives every fact under the subjectset at once.
 3. gRPC, audit of writes and opaque zookies. Callers aren't authenticated, and nothing here needs it.
+
+## Appendix: left open
+
+Found in review, after the API was built.
+
+1. Fact writes and namespace retirements look names up with eventually consistent reads. On DynamoDB, a fact write made right after its namespace is created can miss the new names and be refused as naming something never declared. A fix reads a missed name again consistently, as a namespace read already does, which needs the writer to offer that read. DynamoDB Local reads consistently, so no test can show it.
+2. A fact read looks up the names of each subject it finds one at a time, so a large subjectset repeats the same lookups. A lookup cache per read would cut them.
+3. The fixture loader in `sungma-lang` resolves names its own way, beside `sungma::resolve`, because it doesn't await.
+4. When a fact is in both `add` and `retire`, the retirement applies first, so the fact is held after the write. The fact documents spec doesn't say which comes first.
+5. Domain knowledge leaked to the store edge: the DynamoDB adapter maps names and prints and parses namespace documents, and the read ports speak in facts and versions. The next step restructures around a domain-ignorant edge, a point get, a query and a unit-of-work write over keys and items, with the memory store as a sorted map behind the same methods. API write, API read and Check become contexts with their own readers, writers and shapes, over a shared kernel of names, graph values, the rewrite tree and the epoch rule.

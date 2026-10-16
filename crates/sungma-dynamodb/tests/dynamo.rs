@@ -15,7 +15,7 @@ use sungma::{
     namespace::Namespace,
     revision::Revision,
     rewrite::Rewrite::This,
-    store::{Dictionary, FactReader, NameReader, NamespaceReader, Pool},
+    store::{Dictionary, DocumentReader, FactReader, NameReader, NamespaceReader, Pool},
 };
 use sungma_clock::DevClock;
 use sungma_dynamodb::{DynamoReader, DynamoWriter, Table, key};
@@ -466,4 +466,49 @@ async fn an_insert_racing_a_drop_lands_before_it_or_not_at_all() {
             ),
         }
     }
+}
+
+#[tokio::test]
+async fn a_table_knows_whether_it_exists() {
+    let table = table().await;
+    assert!(table.exists().await.unwrap());
+    let missing = Table::new(table.client().clone(), format!("{}-missing", table.name()));
+    assert!(!missing.exists().await.unwrap());
+}
+
+#[tokio::test]
+async fn a_table_that_cannot_be_reached_is_a_store_failure() {
+    let table = Table::new(
+        sungma_dynamodb::local("http://127.0.0.1:9"),
+        "sungma-unreachable",
+    );
+    assert!(table.exists().await.is_err());
+}
+
+/// A document read gives the stored text as it is, the printer's form
+/// minified, and nothing once the namespace is retired.
+#[tokio::test]
+async fn a_document_reads_back_as_it_was_stored() {
+    let table = table().await;
+    let writer = writer(&table);
+    let created = declared(&writer).await;
+    let reader = DynamoReader::new(table);
+    let read = reader.document(DOC, created).await.unwrap();
+    assert_eq!(
+        read,
+        Some((created, r#"{"doc":{"owner":"this"}}"#.to_owned()))
+    );
+    assert_eq!(
+        reader.document(DOC, Revision(created.0 - 1)).await.unwrap(),
+        None
+    );
+    let retired = writer
+        .write_namespace(DOC, NamespaceWrite::Retire { based_on: created })
+        .await
+        .unwrap();
+    assert_eq!(reader.document(DOC, retired).await.unwrap(), None);
+    assert_eq!(
+        reader.document(DOC, created).await.unwrap().map(|(r, _)| r),
+        Some(created)
+    );
 }

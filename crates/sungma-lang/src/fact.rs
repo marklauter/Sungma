@@ -13,9 +13,10 @@
 //! ```
 //!
 //! Every part has its own key, so nothing is split. Every name is checked,
-//! as [`sungma::name`] describes. Namespace and relation names are looked
-//! up, never interned: a name is interned when a namespace is written, so
-//! a fact can only name what a namespace declared.
+//! as [`sungma::name`] describes. [`parse`] gives the facts as named, and
+//! touches no store; a write resolves the names. Namespace and relation
+//! names are looked up, never interned: a name is interned when a
+//! namespace is written, so a fact can only name what a namespace declared.
 
 use std::{fmt, str::FromStr};
 
@@ -23,13 +24,15 @@ use serde::{
     Deserialize, Deserializer,
     de::{self, MapAccess, Visitor},
 };
+use serde_json::{Map, Value, json};
 use thiserror::Error;
 
 use sungma::{
     graph::{Fact, Resource, Subject, Subjectset},
     id::{NamespaceId, RelationId},
     name::{
-        Identity, NameError, NamespaceName, RelationName, ResourceId, ResourceName, SubjectsetName,
+        FactName, Identity, NameError, NamespaceName, RelationName, ResourceId, ResourceName,
+        SubjectName, SubjectsetName,
     },
     store::Pool,
 };
@@ -50,17 +53,11 @@ pub enum FactError {
     Write(#[from] FactWriteError),
 }
 
-/// One fact as written: its subjectset and its subject.
-struct FactDto {
-    set: SubjectsetName,
-    subject: SubjectDto,
-}
+/// One fact as written.
+struct FactDto(FactName);
 
-enum SubjectDto {
-    Identity(Identity),
-    Resource(ResourceName),
-    Subjectset(SubjectsetName),
-}
+/// One subject as written.
+struct SubjectDto(SubjectName);
 
 const FACT_KEYS: &[&str] = &["namespace", "resource", "relation", "subject"];
 
@@ -144,10 +141,10 @@ impl<'de> Visitor<'de> for FactVisitor {
         let subject = keys
             .subject
             .ok_or_else(|| de::Error::missing_field("subject"))?;
-        Ok(FactDto {
-            set: SubjectsetName::new(ResourceName::new(namespace, id), relation),
-            subject,
-        })
+        Ok(FactDto(FactName {
+            subjectset: SubjectsetName::new(ResourceName::new(namespace, id), relation),
+            subject: subject.0,
+        }))
     }
 }
 
@@ -169,13 +166,16 @@ impl<'de> Visitor<'de> for SubjectVisitor {
     fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
         let keys = Keys::read(map, SUBJECT_KEYS)?;
         match (keys.identity, keys.namespace, keys.resource, keys.relation) {
-            (Some(identity), None, None, None) => Ok(SubjectDto::Identity(identity)),
-            (None, Some(namespace), Some(id), None) => {
-                Ok(SubjectDto::Resource(ResourceName::new(namespace, id)))
+            (Some(identity), None, None, None) => Ok(SubjectDto(SubjectName::Identity(identity))),
+            (None, Some(namespace), Some(id), None) => Ok(SubjectDto(SubjectName::Resource(
+                ResourceName::new(namespace, id),
+            ))),
+            (None, Some(namespace), Some(id), Some(relation)) => {
+                Ok(SubjectDto(SubjectName::Subjectset(SubjectsetName::new(
+                    ResourceName::new(namespace, id),
+                    relation,
+                ))))
             }
-            (None, Some(namespace), Some(id), Some(relation)) => Ok(SubjectDto::Subjectset(
-                SubjectsetName::new(ResourceName::new(namespace, id), relation),
-            )),
             _ => Err(de::Error::custom(format!("a subject is {SUBJECT_SHAPES}"))),
         }
     }
@@ -185,6 +185,86 @@ impl<'de> Deserialize<'de> for SubjectDto {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_map(SubjectVisitor)
     }
+}
+
+/// Reads a subject in a fact document's form, for a document that holds
+/// one, such as a read request. Use it with `#[serde(deserialize_with)]`.
+pub fn subject<'de, D: Deserializer<'de>>(deserializer: D) -> Result<SubjectName, D::Error> {
+    SubjectDto::deserialize(deserializer).map(|subject| subject.0)
+}
+
+/// Parses a fact document whole. A refused document gives no facts.
+pub fn parse(json: &str) -> Result<Vec<FactName>, serde_json::Error> {
+    let dtos = serde_json::from_str::<Vec<FactDto>>(json)?;
+    Ok(dtos.into_iter().map(|dto| dto.0).collect())
+}
+
+/// A write request, `{ "add": [..], "retire": [..] }`, each list a fact
+/// document. Both keys are optional, but add and retire can't both be
+/// empty: a request with no facts is refused.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize)]
+#[serde(try_from = "WriteDto")]
+pub struct WriteRequest {
+    pub add: Vec<FactName>,
+    pub retire: Vec<FactName>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WriteDto {
+    add: Option<Vec<FactDto>>,
+    retire: Option<Vec<FactDto>>,
+}
+
+impl TryFrom<WriteDto> for WriteRequest {
+    type Error = &'static str;
+
+    fn try_from(dto: WriteDto) -> Result<Self, Self::Error> {
+        let facts =
+            |dtos: Option<Vec<FactDto>>| dtos.into_iter().flatten().map(|dto| dto.0).collect();
+        let request = Self {
+            add: facts(dto.add),
+            retire: facts(dto.retire),
+        };
+        if request.add.is_empty() && request.retire.is_empty() {
+            return Err("a write request adds or retires at least one fact");
+        }
+        Ok(request)
+    }
+}
+
+/// Parses a [`WriteRequest`].
+pub fn parse_write(json: &str) -> Result<WriteRequest, serde_json::Error> {
+    serde_json::from_str(json)
+}
+
+/// The facts as a fact document.
+pub fn document(facts: &[FactName]) -> Value {
+    Value::Array(facts.iter().map(fact_value).collect())
+}
+
+fn fact_value(fact: &FactName) -> Value {
+    let mut value = subjectset_value(&fact.subjectset);
+    let subject = match &fact.subject {
+        SubjectName::Identity(identity) => json!({ "identity": identity.as_str() }),
+        SubjectName::Resource(resource) => Value::Object(resource_value(resource)),
+        SubjectName::Subjectset(set) => Value::Object(subjectset_value(set)),
+    };
+    value.insert("subject".to_owned(), subject);
+    Value::Object(value)
+}
+
+fn resource_value(resource: &ResourceName) -> Map<String, Value> {
+    let mut value = Map::new();
+    value.insert("namespace".to_owned(), resource.namespace().as_str().into());
+    value.insert("resource".to_owned(), resource.id().as_str().into());
+    value
+}
+
+fn subjectset_value(set: &SubjectsetName) -> Map<String, Value> {
+    let mut value = resource_value(set.resource());
+    value.insert("relation".to_owned(), set.relation().as_str().into());
+    value
 }
 
 /// Parses a fact document whole, then looks up every fact's namespace and
@@ -197,16 +277,15 @@ pub fn load_facts(
     dictionary: &MemoryDictionary,
     store: &MemoryStore,
 ) -> Result<(), FactError> {
-    let dtos = serde_json::from_str::<Vec<FactDto>>(json)?;
-    let mut facts = Vec::with_capacity(dtos.len());
-    for dto in dtos {
-        let subjectset = find_subjectset(dictionary, &dto.set)?;
-        let subject = match dto.subject {
-            SubjectDto::Identity(identity) => Subject::Identity(identity),
-            SubjectDto::Resource(resource) => {
+    let mut facts = Vec::new();
+    for name in parse(json)? {
+        let subjectset = find_subjectset(dictionary, &name.subjectset)?;
+        let subject = match name.subject {
+            SubjectName::Identity(identity) => Subject::Identity(identity),
+            SubjectName::Resource(resource) => {
                 Subject::ResourceMember(find_resource(dictionary, &resource)?)
             }
-            SubjectDto::Subjectset(set) => Subject::Subjectset(find_subjectset(dictionary, &set)?),
+            SubjectName::Subjectset(set) => Subject::Subjectset(find_subjectset(dictionary, &set)?),
         };
         facts.push(Fact {
             subjectset,
