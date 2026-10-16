@@ -8,11 +8,10 @@ use thiserror::Error;
 
 use sungma::{
     graph::Subject,
-    name::{FactName, NamespaceName, RelationName, SubjectName, SubjectsetName},
-    namespace::Namespace,
+    name::{FactName, NamespaceName, SubjectName, SubjectsetName},
     resolve,
     revision::Revision,
-    store::{Dictionary, FactReader, NamespaceReader, StoreError},
+    store::{Dictionary, DocumentReader, FactReader, NamespaceReader, StoreError},
 };
 
 #[derive(Debug, Error)]
@@ -125,10 +124,11 @@ where
     }
 }
 
-/// A namespace's version and the revision it opened at.
+/// A namespace version's document as stored, and the revision the version
+/// opened at.
 #[derive(Debug)]
 pub struct NamespaceVersion {
-    pub relations: Namespace<RelationName>,
+    pub document: String,
     pub revision: Revision,
 }
 
@@ -140,24 +140,25 @@ pub struct NamespaceRead {
     pub revision: Revision,
 }
 
-/// Reads one namespace's version.
+/// Reads one namespace's version as its stored document, for a caller
+/// that shows or edits it. Check reads versions another way.
 pub struct NamespaceReadService<'a, D, T, F> {
     dictionary: &'a D,
-    namespaces: &'a T,
+    documents: &'a T,
     facts: &'a F,
 }
 
 impl<'a, D, T, F> NamespaceReadService<'a, D, T, F>
 where
     D: Dictionary + Sync,
-    T: NamespaceReader + Sync,
+    T: DocumentReader + Sync,
     F: FactReader + Sync,
 {
     /// `facts` gives the latest revision, which facts and namespaces share.
-    pub fn new(dictionary: &'a D, namespaces: &'a T, facts: &'a F) -> Self {
+    pub fn new(dictionary: &'a D, documents: &'a T, facts: &'a F) -> Self {
         Self {
             dictionary,
-            namespaces,
+            documents,
             facts,
         }
     }
@@ -182,12 +183,7 @@ where
         let Some(id) = resolve::known(resolve::namespace(self.dictionary, name).await)? else {
             return Ok(None);
         };
-        let Some(version) = self.namespaces.version(id, revision).await? else {
-            return Ok(None);
-        };
-        Ok(Some(NamespaceVersion {
-            relations: resolve::namespace_names(self.dictionary, version.namespace()).await?,
-            revision: version.revision(),
-        }))
+        let document = self.documents.document(id, revision).await?;
+        Ok(document.map(|(revision, document)| NamespaceVersion { document, revision }))
     }
 }

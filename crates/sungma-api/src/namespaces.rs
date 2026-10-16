@@ -26,7 +26,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, value::RawValue};
+use serde_json::value::RawValue;
 use sungma::{name::NamespaceName, revision::Revision, version::HistoryError};
 use sungma_check::read::NamespaceReadService;
 use sungma_lang::namespace::{self, Refusal};
@@ -168,7 +168,8 @@ pub(crate) struct ReadBody {
 #[derive(Serialize)]
 struct ReadReply {
     request_id: String,
-    document: Value,
+    /// The stored document as it is.
+    document: Box<RawValue>,
     version: Zookie,
     zookie: Zookie,
 }
@@ -199,10 +200,9 @@ pub(crate) async fn read<R: Reader, W: Writer>(
         );
         return failure(StatusCode::NOT_FOUND, &request_id, error);
     };
-    let document = namespace::print(&body.namespace, &version.relations)
-        .map_err(|error| error.to_string())
-        .and_then(|text| serde_json::from_str(&text).map_err(|error| error.to_string()));
-    match document {
+    // The store gives the text it stored; a store whose text isn't JSON
+    // has failed.
+    match RawValue::from_string(version.document) {
         Ok(document) => Json(ReadReply {
             request_id,
             document,
@@ -210,6 +210,10 @@ pub(crate) async fn read<R: Reader, W: Writer>(
             zookie: read.revision.into(),
         })
         .into_response(),
-        Err(error) => failure(StatusCode::INTERNAL_SERVER_ERROR, &request_id, error),
+        Err(error) => failure(
+            StatusCode::BAD_GATEWAY,
+            &request_id,
+            format!("the stored document isn't JSON: {error}"),
+        ),
     }
 }

@@ -12,7 +12,7 @@ use sungma::{
     graph::{Subject, Subjectset},
     id::NamespaceId,
     revision::Revision,
-    store::{FactReader, NameReader, NamespaceReader, Pool, StoreError},
+    store::{DocumentReader, FactReader, NameReader, NamespaceReader, Pool, StoreError},
     version::Version,
 };
 use sungma_api::{AppState, router};
@@ -95,6 +95,16 @@ impl NamespaceReader for Down {
         _: NamespaceId,
         _: Revision,
     ) -> Result<Option<Arc<Version>>, StoreError> {
+        Err(down())
+    }
+}
+
+impl DocumentReader for Down {
+    async fn document(
+        &self,
+        _: NamespaceId,
+        _: Revision,
+    ) -> Result<Option<(Revision, String)>, StoreError> {
         Err(down())
     }
 }

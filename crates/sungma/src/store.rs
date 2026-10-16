@@ -158,6 +158,21 @@ pub trait FactReader {
     ) -> impl Future<Output = Result<Vec<(Subject, Revision)>, StoreError>> + Send;
 }
 
+/// Namespace documents as stored, for a caller that shows or edits them,
+/// such as a UI. A store keeps each version as the printer's canonical
+/// document, so the text it gives is the one it stored. Check reads
+/// versions through [`NamespaceReader`] instead.
+pub trait DocumentReader {
+    /// The document of the version whose span covers `revision`, and the
+    /// revision that version opened at; `None` when the namespace wasn't
+    /// created yet or was retired then.
+    fn document(
+        &self,
+        namespace: NamespaceId,
+        revision: Revision,
+    ) -> impl Future<Output = Result<Option<(Revision, String)>, StoreError>> + Send;
+}
+
 /// Namespace versions, keyed by namespace and then by the revision each
 /// opens at. A version is shared, so a cache can evict it while a check
 /// still walks it.

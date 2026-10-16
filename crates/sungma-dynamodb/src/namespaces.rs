@@ -80,13 +80,53 @@ impl Table {
         namespace: NamespaceId,
         revision: Revision,
     ) -> Result<Option<Arc<Version>>, StoreError> {
-        match self.latest(namespace, false).await? {
-            None => return Ok(None),
-            Some(latest) if latest.revision() <= revision => {
-                return Ok(latest.version().cloned());
-            }
+        let Some(item) = self.entry_at(namespace, revision).await? else {
+            return Ok(None);
+        };
+        match self.entry(&item, false).await? {
+            Entry::Version(version) => Ok(Some(version)),
+            Entry::Retired(_) => Ok(None),
+        }
+    }
+
+    /// The stored document of the version whose span covers `revision`,
+    /// as it was stored, and the revision it opened at.
+    pub(crate) async fn document_at(
+        &self,
+        namespace: NamespaceId,
+        revision: Revision,
+    ) -> Result<Option<(Revision, String)>, StoreError> {
+        let Some(item) = self.entry_at(namespace, revision).await? else {
+            return Ok(None);
+        };
+        if table::flag(&item, RETIRED) {
+            return Ok(None);
+        }
+        Ok(Some((
+            table::required_revision(&item, REVISION)?,
+            table::required_string(&item, DOCUMENT)?.to_owned(),
+        )))
+    }
+
+    /// The item of the entry whose span covers `revision`, `None` when the
+    /// namespace has no entry at or before it.
+    async fn entry_at(
+        &self,
+        namespace: NamespaceId,
+        revision: Revision,
+    ) -> Result<Option<Item>, StoreError> {
+        let latest = self
+            .get(key::namespace(namespace), key::latest(), false)
+            .await?;
+        let opened = match &latest {
+            Some(item) => Some(table::required_revision(item, REVISION)?),
+            None => None,
+        };
+        match (latest, opened) {
+            (None, _) => return Ok(None),
+            (Some(latest), Some(opened)) if opened <= revision => return Ok(Some(latest)),
             // A newer entry landed after `revision`, so the history answers.
-            Some(_) => {}
+            (Some(_), _) => {}
         }
         let mut query = Query::new(key::namespace(namespace));
         query.condition = Some("sk BETWEEN :first AND :at");
@@ -96,13 +136,7 @@ impl Table {
         ];
         query.descending = true;
         query.limit = Some(1);
-        let Some(item) = self.query(query).await?.pop() else {
-            return Ok(None);
-        };
-        match self.entry(&item, false).await? {
-            Entry::Version(version) => Ok(Some(version)),
-            Entry::Retired(_) => Ok(None),
-        }
+        Ok(self.query(query).await?.pop())
     }
 
     /// The entry an item holds, its document parsed and its names mapped to

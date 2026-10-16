@@ -1,13 +1,19 @@
 //! The in-memory store as one reader and writer: names in a
 //! [`MemoryDictionary`], facts and namespace versions in a [`MemoryStore`].
+//! The memory store keeps versions as ids, so it prints a document when
+//! one is read.
 
 use std::{ops::Range, sync::Arc};
 
 use sungma::{
     graph::{Subject, Subjectset},
     id::NamespaceId,
+    resolve,
     revision::Revision,
-    store::{FactReader, NameReader, NamespaceReader, Pool, StoreError},
+    store::{
+        DocumentReader, FactReader, NameReader, NamespaceReader, Pool, ReadingDictionary,
+        StoreError,
+    },
     version::Version,
 };
 use sungma_memory::{MemoryDictionary, MemoryStore};
@@ -86,6 +92,24 @@ impl NamespaceReader for Memory {
         revision: Revision,
     ) -> Result<Option<Arc<Version>>, StoreError> {
         self.store.version(namespace, revision).await
+    }
+}
+
+impl DocumentReader for Memory {
+    async fn document(
+        &self,
+        namespace: NamespaceId,
+        revision: Revision,
+    ) -> Result<Option<(Revision, String)>, StoreError> {
+        let Some(version) = self.store.version(namespace, revision).await? else {
+            return Ok(None);
+        };
+        let names = ReadingDictionary(&self.names);
+        let name = resolve::namespace_name(&names, namespace).await?;
+        let relations = resolve::namespace_names(&names, version.namespace()).await?;
+        let document = sungma_lang::namespace::print(&name, &relations)
+            .map_err(|error| StoreError(error.to_string()))?;
+        Ok(Some((version.revision(), document)))
     }
 }
 

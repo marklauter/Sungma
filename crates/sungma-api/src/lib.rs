@@ -67,7 +67,7 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 use sungma::{
     name::{NameError, SubjectName},
     revision::Revision,
-    store::{FactReader, NameReader, NamespaceReader, ReadingDictionary},
+    store::{DocumentReader, FactReader, NameReader, NamespaceReader, ReadingDictionary},
 };
 use sungma_check::{
     CheckRequest, CheckService, Failure, MemoryAuditLog, RequestContext, Verdict, read::ReadError,
@@ -85,9 +85,15 @@ use thiserror::Error;
 use memory::Memory;
 
 /// What every route reads through.
-pub trait Reader: NameReader + FactReader + NamespaceReader + Send + Sync + 'static {}
+pub trait Reader:
+    NameReader + FactReader + NamespaceReader + DocumentReader + Send + Sync + 'static
+{
+}
 
-impl<T: NameReader + FactReader + NamespaceReader + Send + Sync + 'static> Reader for T {}
+impl<T> Reader for T where
+    T: NameReader + FactReader + NamespaceReader + DocumentReader + Send + Sync + 'static
+{
+}
 
 /// What every route writes through.
 pub trait Writer: NameWriter + FactWriter + NamespaceWriter + Send + Sync + 'static {}

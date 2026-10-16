@@ -6,7 +6,7 @@ use sungma::{
     graph::{Subject, Subjectset},
     id::NamespaceId,
     revision::Revision,
-    store::{FactReader, NameReader, NamespaceReader, Pool, StoreError},
+    store::{DocumentReader, FactReader, NameReader, NamespaceReader, Pool, StoreError},
     version::Version,
 };
 
@@ -77,6 +77,16 @@ impl NamespaceReader for DynamoReader {
         revision: Revision,
     ) -> Result<Option<Arc<Version>>, StoreError> {
         self.table.version_at(namespace, revision).await
+    }
+}
+
+impl DocumentReader for DynamoReader {
+    async fn document(
+        &self,
+        namespace: NamespaceId,
+        revision: Revision,
+    ) -> Result<Option<(Revision, String)>, StoreError> {
+        self.table.document_at(namespace, revision).await
     }
 }
 
