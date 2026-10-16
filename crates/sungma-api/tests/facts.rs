@@ -320,3 +320,18 @@ async fn an_empty_add_writes_a_revision() {
         assert!(reply["zookie"]["revision"].as_u64() > declared["revision"].as_u64());
     }
 }
+
+#[tokio::test]
+async fn a_seed_whose_facts_no_namespace_declares_is_refused() {
+    let state = sungma_api::AppState::memory();
+    let namespace = r#"{ "file": { "owner": "this" } }"#;
+    let facts = serde_json::to_string(&json!([owner("alice")])).unwrap();
+    assert!(state.seed(&[namespace], &facts).await.is_ok());
+    let state = sungma_api::AppState::memory();
+    let folder = r#"{ "folder": { "viewer": "this" } }"#;
+    let refused = state.seed(&[folder], &facts).await;
+    assert!(
+        matches!(refused, Err(sungma_api::LoadError::Fact(_))),
+        "{refused:?}"
+    );
+}

@@ -1,7 +1,6 @@
-//! The Write API: check a write against the rules that span models, then
-//! apply it through the store's writer ports.
-//!
-//! A namespace write comes first; fact writes join it with the Write service.
+//! The write side: check a write against the rules that span models, then
+//! apply it through the store's writer ports. [`service`] takes writes as
+//! a caller names them.
 
 pub mod fact;
 pub mod intern;

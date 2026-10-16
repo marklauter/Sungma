@@ -121,15 +121,21 @@ pub(crate) async fn write<R: Reader, W: Writer>(
             zookie: revision.into(),
         })
         .into_response(),
-        Err(NamespaceWriteServiceError::Write(NamespaceWriteError::Conflict { latest })) => {
-            let reply = Conflict {
-                request_id,
-                error: NamespaceWriteError::Conflict { latest }.to_string(),
-                latest: latest.map(Zookie::from),
-            };
-            (StatusCode::CONFLICT, Json(reply)).into_response()
-        }
-        Err(error) => failure(status(&error), &request_id, error),
+        Err(error) => match (status(&error), error) {
+            // A conflict names the latest version, so the caller can read it.
+            (
+                status,
+                error @ NamespaceWriteServiceError::Write(NamespaceWriteError::Conflict { latest }),
+            ) => {
+                let reply = Conflict {
+                    request_id,
+                    error: error.to_string(),
+                    latest: latest.map(Zookie::from),
+                };
+                (status, Json(reply)).into_response()
+            }
+            (status, error) => failure(status, &request_id, error),
+        },
     }
 }
 

@@ -133,6 +133,14 @@ async fn a_refused_document_lists_every_problem() {
 
         let (status, _) = read(&app, json!({ "namespace": "file" })).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{store}");
+
+        let (_, created) = write(&app, json!({ "create": { "file": {} } })).await;
+        let (status, reply) = write(
+            &app,
+            json!({ "new_version": { "file": { "viewer": "editor" } }, "based_on": created["zookie"] }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{store}: {reply}");
     }
 }
 
