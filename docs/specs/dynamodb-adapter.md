@@ -1,7 +1,7 @@
 ---
 title: The DynamoDB adapter
 type: specification
-summary: "The DynamoDB adapter keeps facts, namespace versions, interned names and the head in one table on one timeline: each fact span, namespace entry and name is an item under a binary key, and each write is one transaction that moves the head."
+summary: "The DynamoDB adapter keeps facts, namespace versions, interned names and the head in one table on one timeline: each fact span, namespace entry and name is an item under a key that sorts in the order reads need, and each write is one transaction that moves the head."
 status: evolving
 cites:
   - "[[fact]]"
@@ -19,7 +19,7 @@ cites:
 
 # The DynamoDB adapter
 
-The DynamoDB adapter implements Sungma's storage ports on one DynamoDB table. The table holds every [[fact]] [[span]], every [[namespace]] version, the interned names, and the head, all on one [[revision]] timeline, as [One timeline](one-timeline.md) specifies. Development and tests run it against DynamoDB Local. Nothing in the adapter is specific to Local.
+The DynamoDB adapter implements Sungma's storage ports on one DynamoDB table. The table holds every [[fact]] [[span]], every [[namespace]] version, the interned names, and the head, all on one [[revision]] timeline, as [One timeline](one-timeline.md) specifies. Tests run it against DynamoDB Local. Local reads consistently whatever a read asks for, and runs one transaction at a time, so tests can't reach the paths for stale reads and transaction conflicts.
 
 ## Readers and writers
 
@@ -32,13 +32,13 @@ No write port extends a read port. The interner mints through a name reader and 
 
 ## The table
 
-The table declares only its partition key and its sort key, both binary, and is billed per request. Every other value is a native attribute, and each kind of item has its own attributes.
+Each item has a partition key and a sort key. Within a partition, items are kept in sort key order, and a read takes a run of them by a prefix or a range. Every other value is an attribute of its own, and each kind of item has its own attributes.
 
-Binary keys sort byte by byte, so each key is built from bytes that sort in the order reads need:
+Keys compare symbol by symbol, so each key is written so that it sorts in the order reads need:
 
-- An id and a revision are fixed width, big-endian.
-- A resource id or an [[identity]] is its bytes followed by a zero byte. Both are printable ASCII, so a zero byte never appears in one. It sorts below every printable character, so a prefix read never picks up a longer id.
-- Each key starts with a tag byte that names the kind of item.
+- An id and a revision are written at a fixed width, most significant digit first, so they sort as numbers do.
+- A resource id or an [[identity]] is followed by an end mark that sorts below every character either may hold, so a prefix read never picks up a longer id.
+- Each key starts with a tag that names the kind of item.
 
 | Item | Partition | Sort key | Holds |
 | --- | --- | --- | --- |
@@ -49,11 +49,11 @@ Binary keys sort byte by byte, so each key is built from bytes that sort in the 
 | Name pool counter | the pool | sorts first | the next id to lease |
 | Name to id | the pool | the name | its id |
 | Id to name | the pool | the id | its name |
-| Head | the head | | the latest write's revision |
+| Head | the head | fixed | the latest write's revision |
 
 Interned ids keep keys small. The longest key, a span of a [[subjectset]] subject with the longest resource id, fits within DynamoDB's key limit.
 
-The adapter prints any key as text for logs and test failures, with ids, resource ids, identities and revisions in place of bytes, and bytes it can't read as hex. A key Sungma didn't write, or an item without an attribute Sungma writes, is refused with a store error that names the key.
+Every key can be read back as text, naming its kind, ids, resource id or identity, and revision. A key Sungma didn't write, or an item without an attribute Sungma writes, is refused with a store error that names the key.
 
 ## Facts
 
@@ -78,9 +78,9 @@ A namespace's entries are items keyed by the revision the entry opens at:
 - A version holds its revision, its namespace document, and the [[epoch]] of each relation it declares, keyed by relation id.
 - A retirement holds its revision and is marked retired.
 
-A version is stored as its document. A write prints the version with names in place of ids, through the printer in [Namespace documents](namespace-documents.md#printing), and stores it minified, so every stored document has the printer's one form. A version whose namespace or relations have no interned name is refused. A read parses the document, maps its names to ids, and rebuilds the version from its stored epochs. The read refuses a version where a declared relation has no epoch, an undeclared relation has one, or an epoch is later than the version's revision.
+A version is stored as its document. A write prints the version with names in place of ids, through the printer in [Namespace documents](namespace-documents.md#printing), so every stored document has the printer's one form. A version whose namespace or relations have no interned name is refused. A read parses the document, maps its names to ids, and rebuilds the version from its stored epochs. The read refuses a version where a declared relation has no epoch, an undeclared relation has one, or an epoch is later than the version's revision.
 
-Each namespace has one more item, its latest item, which sorts before its entries: a copy of its newest entry. It is the newest entry the reader has seen, not a promise that no newer write is on its way.
+Each namespace has one more item, its latest item, which sorts before its entries: a copy of its newest entry. A read of it can be stale; it isn't a promise that no newer write is on its way.
 
 A read of a namespace at R reads the latest item, and uses it when it opens at or before R; a retirement there reads as no version. Otherwise a newer entry landed after R, and the read takes the newest entry that opens at or before R.
 
@@ -96,11 +96,11 @@ Each pool has a counter. A lease advances the counter by the count asked for in 
 
 The head is one item that holds the revision of the latest write, or zero before the first. Facts and namespaces share it, so the head a fact reader reports includes namespace writes.
 
-Every fact write and every namespace write is one transaction whose first item moves the head to the write's revision, on condition the head is below it. A write stamped at or below the head is refused and tried again. Every write updates the head, so concurrent writes contend for it.
+Every fact write and every namespace write is one transaction whose first item moves the head to the write's revision, on condition the head is below it. A write stamped at or below the head is refused and tried again, so once a write commits, no later write lands at or before its revision. Every write updates the head, so concurrent writes contend for it.
 
 ## Writes
 
-A writer stamps its writes from its [[revision-clock]] and waits out commit-wait before it acknowledges, as [The clock](clock.md) specifies. It takes each write's reading under an async lock, so on one node revisions follow the order writes land in. A writer takes any clock. A development writer reads the head and starts a counting clock after it, so a restarted writer doesn't reuse a revision already committed.
+A writer stamps its writes from its [[revision-clock]] and waits out commit-wait before it acknowledges, as [The clock](clock.md) specifies. A writer handles one write at a time, so its revisions follow the order its writes land in. A writer takes any clock. A development writer reads the head and counts revisions on from it, so a restarted writer doesn't reuse a revision already committed.
 
 A write that loses a race is tried again, a bounded number of times, and each try after the first reads consistently, so it sees what beat it. When the head's condition refused the write, the writer reads the head and moves its clock past it before the next try, so a writer that fell behind catches up in one try.
 
@@ -112,7 +112,7 @@ A fact write:
 2. Reads each fact's pointer, and folds the fact's writes in the batch into the one change they make when applied in order. An insert opens a span by the rule in [One timeline](one-timeline.md#epochs-and-orphaned-facts). A span opened and closed within the batch covers no revision, so it isn't stored.
 3. Builds one transaction: the head, a check that each latest item it read is unchanged, and for each fact its pointer, the span it closes, and the span it opens. A fact whose writes change nothing gets a check that its pointer is unchanged instead.
 
-A fact therefore takes up to three items. A batch that needs more items than DynamoDB allows in one transaction is refused with a store error before the writer takes a reading.
+The transaction holds the head, one item per namespace judged, and up to three items per fact. A batch that needs more items than DynamoDB allows in one transaction is refused with a store error before the writer takes a reading.
 
 ### Namespace writes
 
@@ -137,4 +137,4 @@ Names are stored before the versions that use them. A version read that misses a
 7. **Names.** A name is stored once and read both ways, a lease near the end of the ids takes what is left, and the interner mints through the adapter.
 8. **Mutation testing.** No mutant in the adapter survives, apart from recorded exclusions, each with its reason.
 
-The tests run against DynamoDB Local, each with a table of its own, so they run in parallel. Without Local they fail rather than skip, so coverage counts them. CI runs them wherever it can run Local.
+Each test has a table of its own, so tests don't share state. Without DynamoDB Local the tests fail rather than skip.
