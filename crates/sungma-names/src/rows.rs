@@ -1,6 +1,8 @@
 //! Where names live: a partition per pool, sorted by name and by id.
 
-use sungma::store::{Pool, StoreError};
+use sungma::store::StoreError;
+
+use crate::store::Pool;
 use sungma_edge::{EdgeError, key::Key};
 
 /// The partition tag for names, apart from every other context's.

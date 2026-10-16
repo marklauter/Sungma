@@ -2,11 +2,11 @@
 
 use sungma::{
     name::{FactName, SubjectName, SubjectsetName},
-    resolve,
     revision::Revision,
-    store::{Dictionary, StoreError},
+    store::StoreError,
 };
 use sungma_edge::read::ItemReader;
+use sungma_names::{resolve, store::Dictionary};
 use sungma_schema::{
     facts::{self, Rows},
     namespaces,

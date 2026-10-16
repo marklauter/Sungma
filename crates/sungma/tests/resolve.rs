@@ -5,14 +5,16 @@ use sungma::{
     id::{NamespaceId, RelationId},
     name::{FactName, NamespaceName, RelationName, SubjectName},
     namespace::Namespace,
-    resolve::{self, ResolveError, UnknownName},
     rewrite::Rewrite,
-    store::Pool,
 };
 use sungma_edge::memory::MemorySequence;
+use sungma_names::store::NameWriter;
 use sungma_names::write::NameRowWriter;
+use sungma_names::{
+    resolve::{self, ResolveError, UnknownName},
+    store::Pool,
+};
 use sungma_node::testkit::World;
-use sungma_write::store::NameWriter;
 
 /// `file`, `folder` and `group`, and the relations `owner`, `parent`,
 /// `member` and `viewer`.

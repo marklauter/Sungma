@@ -6,13 +6,15 @@
 
 use thiserror::Error;
 
-use crate::{
+use sungma::{
     graph::{Fact, Resource, Subject, Subjectset},
     id::{NamespaceId, RelationId},
     name::{FactName, NamespaceName, RelationName, ResourceName, SubjectName, SubjectsetName},
     namespace::Namespace,
-    store::{Dictionary, Pool, StoreError},
+    store::StoreError,
 };
+
+use crate::store::{Dictionary, Pool};
 
 /// A namespace or relation name that was never interned.
 #[derive(Clone, PartialEq, Eq, Debug, Error)]
@@ -186,8 +188,8 @@ pub async fn namespace_names<D: Dictionary>(
 /// A rename that failed, as a store failure.
 struct Renamed(String);
 
-impl From<crate::namespace::NamespaceError> for Renamed {
-    fn from(error: crate::namespace::NamespaceError) -> Self {
+impl From<sungma::namespace::NamespaceError> for Renamed {
+    fn from(error: sungma::namespace::NamespaceError) -> Self {
         Self(error.to_string())
     }
 }

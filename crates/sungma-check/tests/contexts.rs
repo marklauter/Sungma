@@ -14,7 +14,6 @@ use sungma::{
     namespace::Namespace,
     revision::Revision,
     rewrite::Rewrite::This,
-    store::Pool,
 };
 use sungma_check::{
     rows::RowReader,
@@ -30,12 +29,14 @@ use sungma_edge::{
     sequence::Sequence,
     write::{ItemWriter, Step, Work},
 };
+use sungma_names::store::NameWriter;
+use sungma_names::store::Pool;
 use sungma_names::{read::NameRows, write::NameRowWriter};
 use sungma_write::{
     rows::RowWriter,
     store::{
         FactWrite::{Insert, Retire},
-        FactWriteError, FactWriter, NameWriter, NamespaceWrite, NamespaceWriter,
+        FactWriteError, FactWriter, NamespaceWrite, NamespaceWriter,
     },
 };
 

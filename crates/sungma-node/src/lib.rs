@@ -14,7 +14,7 @@ use sungma::{
     name::{NamespaceName, RelationName},
     namespace::Namespace,
     revision::Revision,
-    store::{ReadingDictionary, StoreError},
+    store::StoreError,
 };
 use sungma_check::rows::RowReader;
 use sungma_clock::{Clock, DevClock};
@@ -25,9 +25,10 @@ use sungma_edge::{
     write::ItemWriter,
 };
 use sungma_lang::{fact, namespace};
+use sungma_names::intern::LeasingInterner;
+use sungma_names::store::ReadingDictionary;
 use sungma_names::{read::NameRows, write::NameRowWriter};
 use sungma_write::{
-    intern::LeasingInterner,
     rows::RowWriter,
     service::{
         FactWriteService, FactWriteServiceError, NamespaceWriteService, NamespaceWriteServiceError,

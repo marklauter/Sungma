@@ -8,17 +8,17 @@ use std::{
 
 use proptest::prelude::*;
 use serde_json::{Value, json};
-use sungma::resolve;
 use sungma::{
     graph::Subject,
     name::{
         MAX_IDENTITY_BYTES, MAX_NAMESPACE_BYTES, MAX_RELATION_BYTES, MAX_RESOURCE_ID_BYTES,
         ResourceName, SubjectsetName,
     },
-    store::{Dictionary, Pool},
 };
 use sungma_check::store::FactReader;
 use sungma_lang::fact;
+use sungma_names::resolve;
+use sungma_names::{store::Dictionary, store::Pool};
 use sungma_node::testkit::World;
 
 /// The message a fact JSON document is refused with.

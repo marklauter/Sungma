@@ -12,7 +12,7 @@ use sungma::{
     name::RelationName,
     namespace::{Namespace, NamespaceError},
     revision::Revision,
-    store::{NameReader, Pool, StoreError},
+    store::StoreError,
     version::{Epochs, HistoryError},
 };
 use sungma_clock::Clock;
@@ -20,6 +20,7 @@ use sungma_edge::{
     read::{Consistency, ItemReader},
     write::{ItemWriter, Work},
 };
+use sungma_names::{store::NameReader, store::Pool};
 use sungma_schema::{
     head,
     namespaces::{self, Entry},

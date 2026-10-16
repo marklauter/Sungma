@@ -1,16 +1,14 @@
-//! The write ports. Where a guarantee spans nodes, Sungma runs the protocol
-//! and a store only supplies primitives every store has: a [`FactWriter`]
-//! keeps the history of each fact, a [`NamespaceWriter`] keeps the versions
-//! of each namespace, and [`crate::intern::LeasingInterner`] mints ids over
-//! a [`NameWriter`]. Both writers stamp their writes from one revision
-//! clock, the `Clock` port in `sungma-clock`, so facts and namespace
-//! versions share one timeline.
+//! The write ports. A [`FactWriter`] keeps the history of each fact and a
+//! [`NamespaceWriter`] keeps the versions of each namespace; both stamp
+//! their writes from one revision clock, the `Clock` port in
+//! `sungma-clock`, so facts and namespace versions share one timeline.
+//! [`crate::rows::RowWriter`] serves both over the store edge.
 //!
 //! `fn ... -> impl Future<Output = ...> + Send` is an `async fn` in a trait
 //! that also promises its future can move between threads. Implementations
 //! still write a plain `async fn`.
 
-use std::{future::Future, ops::Range, sync::Arc};
+use std::future::Future;
 
 use thiserror::Error;
 
@@ -19,94 +17,10 @@ use sungma::{
     id::{NamespaceId, RelationId},
     namespace::Namespace,
     revision::Revision,
-    store::{Dictionary, Pool, StoreError},
+    store::StoreError,
     version::HistoryError,
 };
 use sungma_clock::ClockFault;
-
-#[derive(Debug, Error)]
-pub enum InternError {
-    /// Every id in the pool has been leased. Unlike a store failure, trying
-    /// again won't help.
-    #[error("no ids left to lease in {0:?}")]
-    Exhausted(Pool),
-    #[error(transparent)]
-    Store(#[from] StoreError),
-}
-
-/// Mints ids for names. Every node that interns a name in a pool gets the
-/// same id, and an id, once minted, always names the same string. Ids are
-/// unique within their pool, not dense: an id may be skipped and is never
-/// reused.
-pub trait Interner: Dictionary {
-    /// The name's id in `pool`, minted if the name is new there.
-    fn intern(
-        &self,
-        pool: Pool,
-        name: &str,
-    ) -> impl Future<Output = Result<u32, InternError>> + Send;
-}
-
-/// The storage an id is minted through. Both writes are atomic in the
-/// store, which is all the coordination minting needs.
-pub trait NameWriter {
-    /// Stores `name` as `id` in `pool` unless the name is stored there
-    /// already, and returns the name's id afterwards: `id`, or the id
-    /// another node stored first.
-    fn insert_if_absent(
-        &self,
-        pool: Pool,
-        name: &str,
-        id: u32,
-    ) -> impl Future<Output = Result<u32, StoreError>> + Send;
-
-    /// Advances `pool`'s shared id counter by up to `count` and returns the
-    /// ids it passed over, which no other lease will return. Empty once the
-    /// pool's ids run out.
-    fn lease(
-        &self,
-        pool: Pool,
-        count: u32,
-    ) -> impl Future<Output = Result<Range<u32>, StoreError>> + Send;
-}
-
-impl<W: NameWriter + Sync + ?Sized> NameWriter for &W {
-    fn insert_if_absent(
-        &self,
-        pool: Pool,
-        name: &str,
-        id: u32,
-    ) -> impl Future<Output = Result<u32, StoreError>> + Send {
-        W::insert_if_absent(self, pool, name, id)
-    }
-
-    fn lease(
-        &self,
-        pool: Pool,
-        count: u32,
-    ) -> impl Future<Output = Result<Range<u32>, StoreError>> + Send {
-        W::lease(self, pool, count)
-    }
-}
-
-impl<W: NameWriter + Send + Sync + ?Sized> NameWriter for Arc<W> {
-    fn insert_if_absent(
-        &self,
-        pool: Pool,
-        name: &str,
-        id: u32,
-    ) -> impl Future<Output = Result<u32, StoreError>> + Send {
-        W::insert_if_absent(self, pool, name, id)
-    }
-
-    fn lease(
-        &self,
-        pool: Pool,
-        count: u32,
-    ) -> impl Future<Output = Result<Range<u32>, StoreError>> + Send {
-        W::lease(self, pool, count)
-    }
-}
 
 /// One change to the stored facts.
 #[derive(Clone, PartialEq, Eq, Debug)]

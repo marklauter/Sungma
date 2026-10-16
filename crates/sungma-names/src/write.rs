@@ -2,18 +2,18 @@
 
 use std::ops::Range;
 
-use sungma::store::{NameReader, Pool, StoreError};
+use sungma::store::StoreError;
 use sungma_edge::{
     item::{Item, Value},
     read::{Consistency, ItemReader},
     sequence::Sequence,
     write::{CommitError, ItemWriter, Step, Work},
 };
-use sungma_write::store::NameWriter;
 
 use crate::{
     read::NameRows,
     rows::{self, ID_ATTRIBUTE, NAME_ATTRIBUTE, failed},
+    store::{NameReader, NameWriter, Pool},
 };
 
 /// How many times an insert that keeps meeting other work in flight is

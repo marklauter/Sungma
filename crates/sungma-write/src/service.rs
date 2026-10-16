@@ -10,16 +10,21 @@ use sungma::{
     id::{NamespaceId, RelationId},
     name::{FactName, NamespaceName, RelationName},
     namespace::{Namespace, NamespaceError},
-    resolve::{self, ResolveError, UnknownName},
     revision::Revision,
-    store::{Dictionary, Pool, StoreError},
+    store::StoreError,
     version::HistoryError,
 };
 use sungma_clock::ClockFault;
+use sungma_names::{
+    resolve::{self, ResolveError, UnknownName},
+    store::Dictionary,
+    store::Pool,
+};
+
+use sungma_names::store::{InternError, Interner};
 
 use crate::store::{
-    FactWrite, FactWriteError, FactWriter, InternError, Interner, NamespaceWrite,
-    NamespaceWriteError, NamespaceWriter,
+    FactWrite, FactWriteError, FactWriter, NamespaceWrite, NamespaceWriteError, NamespaceWriter,
 };
 
 #[derive(Debug, Error)]

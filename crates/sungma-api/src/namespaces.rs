@@ -29,10 +29,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use sungma::{name::NamespaceName, revision::Revision, version::HistoryError};
 use sungma_lang::namespace::{self, Refusal};
+use sungma_names::store::InternError;
 use sungma_read::namespaces::NamespaceReadService;
 use sungma_write::{
     service::{NamespaceWriteService, NamespaceWriteServiceError},
-    store::{InternError, NamespaceWrite, NamespaceWriteError},
+    store::{NamespaceWrite, NamespaceWriteError},
 };
 
 use crate::{AppState, Edge, Ids, Refused, Stamps, Written, Zookie, accept, failure, read_failure};

@@ -2,11 +2,7 @@
 
 use std::sync::Arc;
 
-use sungma::{
-    resolve,
-    revision::Revision,
-    store::{Dictionary, Pool},
-};
+use sungma::revision::Revision;
 use sungma_check::store::FactReader;
 use sungma_clock::DevClock;
 use sungma_edge::{
@@ -14,8 +10,10 @@ use sungma_edge::{
     memory::{MemorySequence, MemoryTable},
     sequence::Sequence,
 };
+use sungma_names::store::InternError;
+use sungma_names::{resolve, store::Dictionary, store::Pool};
 use sungma_node::{Node, SeedError, testkit::World};
-use sungma_write::{service::NamespaceWriteServiceError, store::InternError};
+use sungma_write::service::NamespaceWriteServiceError;
 
 const FILE: &str = r#"{ "file": { "owner": "this", "viewer": "owner" } }"#;
 

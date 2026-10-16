@@ -5,21 +5,22 @@ mod world;
 
 use std::time::SystemTime;
 
+use sungma::name::SubjectName;
 use sungma::{
     graph::{Fact, Subject},
     id::NamespaceId,
     non_empty::NonEmpty,
     revision::Revision,
     rewrite::Rewrite::This,
-    store::Pool,
 };
-use sungma::{name::SubjectName, resolve};
 use sungma_check::{CheckRequest, CheckService, MemoryAuditLog, RequestContext, Verdict};
 use sungma_check::{
     closure::Closure,
     decision::{Decision, Outcome, SEMANTICS, Semantics},
     replay::{Replay, replay},
 };
+use sungma_names::resolve;
+use sungma_names::store::Pool;
 use sungma_write::store::{NamespaceWrite::Retire, NamespaceWriter};
 use world::{World, head, identity, subjectset, world};
 

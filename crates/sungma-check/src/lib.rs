@@ -24,9 +24,12 @@ use crate::{
 };
 use sungma::{
     name::{SubjectName, SubjectsetName},
-    resolve::{self, ResolveError},
     revision::Revision,
-    store::{Dictionary, StoreError},
+    store::StoreError,
+};
+use sungma_names::{
+    resolve::{self, ResolveError},
+    store::Dictionary,
 };
 
 pub mod closure;

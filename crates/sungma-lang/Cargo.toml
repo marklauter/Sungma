@@ -10,6 +10,7 @@ sungma.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+sungma-names.workspace = true
 proptest.workspace = true
 sungma-check.workspace = true
 sungma-node = { workspace = true, features = ["testkit"] }

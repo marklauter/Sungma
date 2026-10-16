@@ -13,6 +13,7 @@ sungma-clock.workspace = true
 sungma-dynamodb.workspace = true
 sungma-edge.workspace = true
 sungma-lang.workspace = true
+sungma-names.workspace = true
 sungma-node.workspace = true
 sungma-read.workspace = true
 sungma-write.workspace = true

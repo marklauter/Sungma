@@ -7,6 +7,7 @@ edition.workspace = true
 parking_lot.workspace = true
 sungma.workspace = true
 sungma-edge.workspace = true
+sungma-names.workspace = true
 sungma-schema.workspace = true
 thiserror.workspace = true
 

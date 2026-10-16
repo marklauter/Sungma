@@ -14,7 +14,6 @@ use sungma::{
     namespace::Namespace,
     revision::Revision,
     rewrite::Rewrite::{self, FactTo, This},
-    store::Pool,
     version::{HistoryError, Version},
 };
 use sungma_check::{
@@ -22,10 +21,13 @@ use sungma_check::{
     store::FactReader,
     store::NamespaceReader,
 };
+use sungma_names::store::Pool;
+
+use sungma_names::store::NameWriter;
 
 use crate::store::{
     FactWrite::{self, Insert, Retire},
-    FactWriteError, FactWriter, NameWriter,
+    FactWriteError, FactWriter,
     NamespaceWrite::{self, Create, NewVersion},
     NamespaceWriteError, NamespaceWriter,
 };

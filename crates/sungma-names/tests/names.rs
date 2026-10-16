@@ -5,10 +5,6 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use sungma::store::{
-    NameReader,
-    Pool::{Namespaces, Relations},
-};
 use sungma_edge::{
     EdgeError,
     item::{Item, Value},
@@ -18,11 +14,12 @@ use sungma_edge::{
     sequence::Sequence,
     write::{CommitError, ItemWriter, Step, Work},
 };
-use sungma_names::{read::NameRows, write::NameRowWriter};
-use sungma_write::{
-    intern::LeasingInterner,
-    store::{Interner, NameWriter},
+use sungma_names::store::{
+    NameReader,
+    Pool::{Namespaces, Relations},
 };
+use sungma_names::{intern::LeasingInterner, store::Interner, store::NameWriter};
+use sungma_names::{read::NameRows, write::NameRowWriter};
 
 fn reader(table: &MemoryTable) -> NameRows<&MemoryTable> {
     NameRows::new(table, Consistency::Eventual)

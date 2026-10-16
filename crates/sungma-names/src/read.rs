@@ -1,6 +1,8 @@
 //! Reading names by key, both ways.
 
-use sungma::store::{NameReader, Pool, StoreError};
+use sungma::store::StoreError;
+
+use crate::store::{NameReader, Pool};
 use sungma_edge::read::{Consistency, ItemReader};
 
 use crate::rows::{self, ID_ATTRIBUTE, NAME_ATTRIBUTE, failed};

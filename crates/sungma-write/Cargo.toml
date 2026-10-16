@@ -14,13 +14,11 @@ sungma.workspace = true
 sungma-check = { workspace = true, optional = true }
 sungma-clock.workspace = true
 sungma-edge.workspace = true
+sungma-names.workspace = true
 sungma-schema.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
-proptest.workspace = true
-sungma-edge.workspace = true
-sungma-names.workspace = true
 sungma-node = { workspace = true, features = ["testkit"] }
 tokio = { workspace = true, features = ["macros", "rt"] }

@@ -18,10 +18,11 @@ use sungma::{
     name::{NamespaceName, RelationName},
     namespace::{Namespace, NamespaceError},
     revision::Revision,
-    store::{NameReader, Pool, StoreError},
+    store::StoreError,
     version::Version,
 };
 use sungma_edge::read::{Consistency, ItemReader};
+use sungma_names::{store::NameReader, store::Pool};
 use sungma_schema::{
     facts::{self, Rows},
     head,

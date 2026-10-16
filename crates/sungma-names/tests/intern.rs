@@ -8,19 +8,20 @@ use std::{
 };
 
 use proptest::{collection::vec, prelude::*, test_runner::TestCaseError};
-use sungma::store::{
-    Dictionary, NameReader,
-    Pool::{self, Relations},
-    ReadingDictionary, StoreError,
-};
+use sungma::store::StoreError;
 use sungma_edge::{
     memory::{MemorySequence, MemoryTable},
     read::Consistency,
 };
-use sungma_names::{read::NameRows, write::NameRowWriter};
-use sungma_write::{
+use sungma_names::{
     intern::LeasingInterner,
-    store::{InternError, Interner, NameWriter},
+    read::NameRows,
+    store::{
+        Dictionary, InternError, Interner, NameReader, NameWriter,
+        Pool::{self, Relations},
+        ReadingDictionary,
+    },
+    write::NameRowWriter,
 };
 
 /// Names over the memory edge, which every node shares.

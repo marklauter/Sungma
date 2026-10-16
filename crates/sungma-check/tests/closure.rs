@@ -15,7 +15,7 @@ use sungma::{
     non_empty::NonEmpty,
     revision::Revision,
     rewrite::Rewrite::{self, Computed, Exclusion, Intersection, This, Union},
-    store::{Pool, StoreError},
+    store::StoreError,
     version::{History, Version},
 };
 use sungma_check::{
@@ -23,6 +23,7 @@ use sungma_check::{
     store::FactReader,
     store::NamespaceReader,
 };
+use sungma_names::store::Pool;
 use world::{World, head, identity, subjectset, world};
 
 /// Whether an identity is in the closure of `namespace:id#relation` at `revision`.

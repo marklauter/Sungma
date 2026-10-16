@@ -6,10 +6,8 @@ use sungma::{
     graph::Fact,
     name::{FactName, NamespaceName, RelationName, SubjectName, SubjectsetName},
     namespace::Namespace,
-    resolve,
     revision::Revision,
     rewrite::Rewrite,
-    store::ReadingDictionary,
 };
 use sungma_clock::DevClock;
 use sungma_edge::{
@@ -17,10 +15,11 @@ use sungma_edge::{
     read::Consistency,
 };
 use sungma_lang::namespace;
+use sungma_names::intern::LeasingInterner;
 use sungma_names::{read::NameRows, write::NameRowWriter};
+use sungma_names::{resolve, store::ReadingDictionary};
 use sungma_read::{ReadError, facts::FactReadService, namespaces::NamespaceReadService};
 use sungma_write::{
-    intern::LeasingInterner,
     rows::RowWriter,
     service::NamespaceWriteService,
     store::{FactWrite, FactWriter, NamespaceWrite},

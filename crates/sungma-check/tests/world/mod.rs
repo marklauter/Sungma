@@ -7,9 +7,9 @@
 
 use sungma::{
     graph::{Subject, Subjectset},
-    resolve,
     revision::Revision,
 };
+use sungma_names::resolve;
 
 pub use sungma_node::testkit::World;
 

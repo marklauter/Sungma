@@ -1867,6 +1867,7 @@ dependencies = [
  "sungma-dynamodb",
  "sungma-edge",
  "sungma-lang",
+ "sungma-names",
  "sungma-node",
  "sungma-read",
  "sungma-write",
@@ -1942,6 +1943,7 @@ dependencies = [
  "serde_json",
  "sungma",
  "sungma-check",
+ "sungma-names",
  "sungma-node",
  "thiserror",
  "tokio",
@@ -1951,10 +1953,11 @@ dependencies = [
 name = "sungma-names"
 version = "0.1.0"
 dependencies = [
+ "parking_lot",
  "proptest",
  "sungma",
  "sungma-edge",
- "sungma-write",
+ "thiserror",
  "tokio",
 ]
 

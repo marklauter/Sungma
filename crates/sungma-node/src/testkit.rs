@@ -9,15 +9,16 @@ use sungma::{
     namespace::{Namespace, NamespaceError},
     revision::Revision,
     rewrite::Rewrite,
-    store::Pool,
     version::Version,
 };
 use sungma_check::store::{FactReader, NamespaceReader};
 use sungma_edge::memory::{MemorySequence, MemoryTable};
 use sungma_lang::fact;
+use sungma_names::store::Interner;
+use sungma_names::store::Pool;
 use sungma_write::{
     service::FactWriteService,
-    store::{Interner, NamespaceWrite, NamespaceWriter},
+    store::{NamespaceWrite, NamespaceWriter},
 };
 
 use crate::{CheckReader, Names, Node, SeedError};

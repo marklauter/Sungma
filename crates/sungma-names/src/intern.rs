@@ -12,9 +12,9 @@ use std::{collections::HashMap, num::NonZeroU32, ops::Range};
 
 use parking_lot::{Mutex, MutexGuard};
 
-use sungma::store::{Dictionary, NameReader, Pool, StoreError};
+use sungma::store::StoreError;
 
-use crate::store::{InternError, Interner, NameWriter};
+use crate::store::{Dictionary, InternError, Interner, NameReader, NameWriter, Pool};
 
 /// An [`Interner`] that looks names up through a [`NameReader`] and mints
 /// through a [`NameWriter`], from a leased block per pool.

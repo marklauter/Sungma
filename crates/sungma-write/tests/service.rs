@@ -5,10 +5,11 @@ use sungma::{
     namespace::Namespace,
     revision::Revision,
     rewrite::Rewrite,
-    store::{Dictionary, Pool, StoreError},
+    store::StoreError,
     version::HistoryError,
 };
 use sungma_clock::ClockFault;
+use sungma_names::{store::Dictionary, store::Pool};
 use sungma_node::testkit::World;
 use sungma_write::{
     service::{

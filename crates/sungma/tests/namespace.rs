@@ -2,15 +2,15 @@
 
 use std::time::{Duration, Instant};
 
-use sungma::resolve;
 use sungma::{
     id::{NamespaceId, RelationId},
     namespace::{MAX_CYCLE_NAMES, MAX_REWRITE_DEPTH, Namespace, NamespaceError, Problem},
     nonempty,
     rewrite::Rewrite::{self, Computed, Exclusion, This, Union},
-    store::Pool,
 };
 use sungma_lang::namespace::{ErrorKind, Refusal, parse};
+use sungma_names::resolve;
+use sungma_names::store::Pool;
 use sungma_node::testkit::World;
 
 /// Parses and checks the document.
