@@ -10,10 +10,9 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 sungma = { path = "../crates/sungma" }
-sungma-check = { path = "../crates/sungma-check" }
 sungma-clock = { path = "../crates/sungma-clock" }
 sungma-lang = { path = "../crates/sungma-lang" }
-sungma-memory = { path = "../crates/sungma-memory" }
+sungma-node = { path = "../crates/sungma-node", features = ["testkit"] }
 
 [[bin]]
 name = "document"

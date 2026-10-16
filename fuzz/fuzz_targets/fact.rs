@@ -1,18 +1,17 @@
 //! Runs the fact document parser on arbitrary bytes, against the fixture
-//! namespaces: it must never panic, overflow its stack or abort, and a
-//! document it refuses must store no fact.
+//! namespaces on a memory node: it must never panic, overflow its stack or
+//! abort, and a document it refuses must store no fact.
 
 #![no_main]
 
 use std::{
+    future::Future,
     pin::pin,
     task::{Context, Poll, Waker},
 };
 
 use libfuzzer_sys::fuzz_target;
-use sungma_check::store::FactReader;
-use sungma_lang::{fact, namespace::load_namespaces};
-use sungma_memory::{MemoryDictionary, MemoryStore};
+use sungma_node::testkit::World;
 
 const NAMESPACES: [&str; 3] = [
     include_str!("../../crates/sungma/tests/fixtures/namespaces/file.json"),
@@ -20,23 +19,25 @@ const NAMESPACES: [&str; 3] = [
     include_str!("../../crates/sungma/tests/fixtures/namespaces/group.json"),
 ];
 
-fn head(facts: &MemoryStore) -> u64 {
-    // The in-memory store answers at once, so one poll settles it.
-    let Poll::Ready(head) = pin!(facts.head()).poll(&mut Context::from_waker(Waker::noop())) else {
-        panic!("the in-memory store answered later");
-    };
-    head.expect("the in-memory store never fails").0
+/// Runs `future` to its end. The memory node never waits on anything, so
+/// each poll makes progress.
+fn run<F: Future>(future: F) -> F::Output {
+    let mut future = pin!(future);
+    let mut context = Context::from_waker(Waker::noop());
+    loop {
+        if let Poll::Ready(output) = future.as_mut().poll(&mut context) {
+            return output;
+        }
+    }
 }
 
 fuzz_target!(|data: &[u8]| {
     let Ok(text) = std::str::from_utf8(data) else {
         return;
     };
-    let dictionary = MemoryDictionary::default();
-    let facts = MemoryStore::default();
-    load_namespaces(&NAMESPACES, &dictionary, &facts).expect("the fixtures load");
-    let declared = head(&facts);
-    if fact::load_facts(text, &dictionary, &facts).is_err() {
-        assert_eq!(head(&facts), declared);
+    let world = run(World::load(&NAMESPACES, "[]")).expect("the fixtures load");
+    let declared = run(world.head());
+    if run(world.load_facts(text)).is_err() {
+        assert_eq!(run(world.head()), declared);
     }
 });

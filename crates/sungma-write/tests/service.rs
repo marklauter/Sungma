@@ -1,28 +1,21 @@
 //! The write services over the in-memory store.
 
-use std::num::NonZeroU32;
-
 use sungma::{
     name::{FactName, RelationName, SubjectName},
     namespace::Namespace,
     revision::Revision,
     rewrite::Rewrite,
-    store::{Pool, ReadingDictionary, StoreError},
+    store::{Dictionary, Pool, StoreError},
     version::HistoryError,
 };
 use sungma_clock::ClockFault;
-use sungma_memory::{MemoryDictionary, MemoryStore};
+use sungma_node::testkit::World;
 use sungma_write::{
-    intern::LeasingInterner,
     service::{
         FactWriteService, FactWriteServiceError, NamespaceWriteService, NamespaceWriteServiceError,
     },
     store::{FactWrite, FactWriteError, FactWriter, NamespaceWrite, NamespaceWriteError},
 };
-
-fn interner(names: &MemoryDictionary) -> LeasingInterner<&MemoryDictionary, &MemoryDictionary> {
-    LeasingInterner::new(names, names, NonZeroU32::new(8).unwrap())
-}
 
 fn relations(names: &[&str]) -> Namespace<RelationName> {
     Namespace::new(
@@ -42,9 +35,8 @@ fn owner(identity: &str) -> FactName {
 }
 
 /// `file` declaring `owner`, written through the service.
-async fn declared(names: &MemoryDictionary, store: &MemoryStore) -> Revision {
-    let interner = interner(names);
-    NamespaceWriteService::new(&interner, store)
+async fn declared(world: &World) -> Revision {
+    NamespaceWriteService::new(world.node().interner(), world.node().writer())
         .write(
             &"file".parse().unwrap(),
             NamespaceWrite::Create(relations(&["owner"])),
@@ -55,15 +47,15 @@ async fn declared(names: &MemoryDictionary, store: &MemoryStore) -> Revision {
 
 #[tokio::test]
 async fn a_refused_insert_is_named_as_the_caller_named_it() {
-    let (names, store) = (MemoryDictionary::default(), MemoryStore::default());
-    declared(&names, &store).await;
-    names.intern(Pool::Namespaces, "folder").unwrap();
+    let world = World::new();
+    declared(&world).await;
+    world.intern(Pool::Namespaces, "folder").await;
     let undeclared = FactName {
         subjectset: "folder:root#owner".parse().unwrap(),
         subject: SubjectName::Identity("alice".parse().unwrap()),
     };
-    let dictionary = ReadingDictionary(&names);
-    let written = FactWriteService::new(&dictionary, &store)
+    let dictionary = world.names();
+    let written = FactWriteService::new(dictionary, world.node().writer())
         .write(&[owner("alice"), undeclared.clone()], &[])
         .await;
     assert!(
@@ -83,11 +75,11 @@ impl FactWriter for Failing {
 
 #[tokio::test]
 async fn a_writer_that_fails_fails_the_write() {
-    let (names, store) = (MemoryDictionary::default(), MemoryStore::default());
-    declared(&names, &store).await;
-    let dictionary = ReadingDictionary(&names);
+    let world = World::new();
+    declared(&world).await;
+    let dictionary = world.names();
     let clock = Failing(|| ClockFault::Drifted.into());
-    let written = FactWriteService::new(&dictionary, &clock)
+    let written = FactWriteService::new(dictionary, &clock)
         .write(&[owner("alice")], &[])
         .await;
     assert!(
@@ -98,7 +90,7 @@ async fn a_writer_that_fails_fails_the_write() {
         "{written:?}"
     );
     let store = Failing(|| StoreError("down".to_owned()).into());
-    let written = FactWriteService::new(&dictionary, &store)
+    let written = FactWriteService::new(dictionary, &store)
         .write(&[], &[owner("alice")])
         .await;
     assert!(
@@ -118,7 +110,7 @@ async fn a_writer_that_fails_fails_the_write() {
             subject: sungma::graph::Subject::Identity("x".parse().unwrap()),
         })
     });
-    let written = FactWriteService::new(&dictionary, &confused)
+    let written = FactWriteService::new(dictionary, &confused)
         .write(&[owner("alice")], &[])
         .await;
     assert!(
@@ -129,9 +121,8 @@ async fn a_writer_that_fails_fails_the_write() {
 
 #[tokio::test]
 async fn retiring_a_namespace_never_interned_interns_nothing() {
-    let (names, store) = (MemoryDictionary::default(), MemoryStore::default());
-    let interner = interner(&names);
-    let retired = NamespaceWriteService::new(&interner, &store)
+    let world = World::new();
+    let retired = NamespaceWriteService::new(world.node().interner(), world.node().writer())
         .write(
             &"file".parse().unwrap(),
             NamespaceWrite::Retire {
@@ -148,16 +139,22 @@ async fn retiring_a_namespace_never_interned_interns_nothing() {
         ),
         "{retired:?}"
     );
-    assert_eq!(names.id(Pool::Namespaces, "file"), None);
+    assert_eq!(
+        world
+            .names()
+            .lookup(Pool::Namespaces, "file")
+            .await
+            .unwrap(),
+        None
+    );
 }
 
 /// Names are interned before the write, so a conflict leaves them.
 #[tokio::test]
 async fn a_conflict_leaves_its_names_interned() {
-    let (names, store) = (MemoryDictionary::default(), MemoryStore::default());
-    let latest = declared(&names, &store).await;
-    let interner = interner(&names);
-    let written = NamespaceWriteService::new(&interner, &store)
+    let world = World::new();
+    let latest = declared(&world).await;
+    let written = NamespaceWriteService::new(world.node().interner(), world.node().writer())
         .write(
             &"file".parse().unwrap(),
             NamespaceWrite::Create(relations(&["owner", "viewer"])),
@@ -172,15 +169,21 @@ async fn a_conflict_leaves_its_names_interned() {
         ),
         "{written:?}"
     );
-    assert!(names.id(Pool::Relations, "viewer").is_some());
+    assert!(
+        world
+            .names()
+            .lookup(Pool::Relations, "viewer")
+            .await
+            .unwrap()
+            .is_some()
+    );
 }
 
 #[tokio::test]
 async fn a_new_version_and_a_retirement_follow_the_latest_version() {
-    let (names, store) = (MemoryDictionary::default(), MemoryStore::default());
-    let first = declared(&names, &store).await;
-    let interner = interner(&names);
-    let service = NamespaceWriteService::new(&interner, &store);
+    let world = World::new();
+    let first = declared(&world).await;
+    let service = NamespaceWriteService::new(world.node().interner(), world.node().writer());
     let file = "file".parse().unwrap();
     let second = service
         .write(
@@ -198,6 +201,6 @@ async fn a_new_version_and_a_retirement_follow_the_latest_version() {
         .await
         .unwrap();
     assert!(retired > second);
-    let id = sungma::id::NamespaceId(names.id(Pool::Namespaces, "file").unwrap());
-    assert!(store.latest(id).is_none());
+    let id = sungma::id::NamespaceId(world.intern(Pool::Namespaces, "file").await);
+    assert!(world.latest(id).await.is_none());
 }

@@ -16,5 +16,6 @@ sungma-clock.workspace = true
 sungma-dynamodb.workspace = true
 sungma-lang.workspace = true
 sungma-names.workspace = true
+sungma-node = { workspace = true, features = ["testkit"] }
 sungma-write = { workspace = true, features = ["testkit"] }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

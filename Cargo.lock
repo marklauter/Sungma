@@ -1844,9 +1844,10 @@ name = "sungma"
 version = "0.1.0"
 dependencies = [
  "proptest",
- "sungma-check",
+ "sungma-edge",
  "sungma-lang",
- "sungma-memory",
+ "sungma-names",
+ "sungma-node",
  "sungma-write",
  "thiserror",
  "tokio",
@@ -1886,6 +1887,7 @@ dependencies = [
  "sungma-edge",
  "sungma-lang",
  "sungma-names",
+ "sungma-node",
  "sungma-schema",
  "sungma-write",
  "thiserror",
@@ -1916,14 +1918,7 @@ name = "sungma-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aws-sdk-dynamodb",
- "proptest",
- "serde_json",
- "sungma",
- "sungma-check",
- "sungma-clock",
  "sungma-edge",
- "sungma-lang",
- "sungma-write",
  "tokio",
 ]
 
@@ -1947,22 +1942,8 @@ dependencies = [
  "serde_json",
  "sungma",
  "sungma-check",
- "sungma-memory",
- "sungma-write",
+ "sungma-node",
  "thiserror",
- "tokio",
-]
-
-[[package]]
-name = "sungma-memory"
-version = "0.1.0"
-dependencies = [
- "parking_lot",
- "proptest",
- "sungma",
- "sungma-check",
- "sungma-clock",
- "sungma-write",
  "tokio",
 ]
 
@@ -1988,9 +1969,11 @@ dependencies = [
  "sungma-edge",
  "sungma-lang",
  "sungma-names",
+ "sungma-node",
  "sungma-schema",
  "sungma-write",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -2026,7 +2009,8 @@ dependencies = [
  "sungma-check",
  "sungma-clock",
  "sungma-edge",
- "sungma-memory",
+ "sungma-names",
+ "sungma-node",
  "sungma-schema",
  "thiserror",
  "tokio",

@@ -5,6 +5,9 @@
 //! language. [`Node::memory`] runs it on the memory edge, for tests and
 //! development.
 
+#[cfg(feature = "testkit")]
+pub mod testkit;
+
 use std::{num::NonZeroU32, sync::Arc};
 
 use sungma::{

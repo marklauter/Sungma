@@ -1,9 +1,5 @@
-//! Ports to external storage. Every call is async and fallible because
-//! that is the shape of the real stores; the in-memory versions in the
-//! `sungma-memory` crate simulate them.
-//!
-//! These are the read ports, shared by every service that reads. The write
-//! ports are in the `sungma-write` crate.
+//! The name ports, and the store failure every context reports. Every call
+//! is async and fallible because that is the shape of the real stores.
 //!
 //! `fn ... -> impl Future<Output = ...> + Send` is an `async fn` in a trait
 //! that also promises its future can move between threads. Implementations
@@ -12,8 +8,6 @@
 use std::{future::Future, sync::Arc};
 
 use thiserror::Error;
-
-use crate::{id::NamespaceId, revision::Revision};
 
 #[derive(Debug, Error)]
 #[error("store failure: {0}")]
@@ -116,19 +110,4 @@ impl<R: NameReader + Sync> Dictionary for ReadingDictionary<R> {
     async fn name(&self, pool: Pool, id: u32) -> Result<Option<String>, StoreError> {
         self.0.name(pool, id).await
     }
-}
-
-/// Namespace documents as stored, for a caller that shows or edits them,
-/// such as a UI. A store keeps each version as the printer's canonical
-/// document, so the text it gives is the one it stored. Check reads
-/// versions through its own reader instead.
-pub trait DocumentReader {
-    /// The document of the version whose span covers `revision`, and the
-    /// revision that version opened at; `None` when the namespace wasn't
-    /// created yet or was retired then.
-    fn document(
-        &self,
-        namespace: NamespaceId,
-        revision: Revision,
-    ) -> impl Future<Output = Result<Option<(Revision, String)>, StoreError>> + Send;
 }

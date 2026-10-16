@@ -32,15 +32,11 @@ use thiserror::Error;
 
 pub use sungma::name::{MAX_NAMESPACE_BYTES, MAX_QUOTE_BYTES, MAX_RELATION_BYTES};
 use sungma::{
-    id::{NamespaceId, RelationId},
     name::{NameError, NamespaceName, RelationName, quote},
     namespace::{MAX_REWRITE_DEPTH, Namespace, NamespaceError, Problem},
     non_empty::NonEmpty,
     rewrite::Rewrite,
-    store::Pool,
 };
-use sungma_memory::{MemoryDictionary, MemoryStore};
-use sungma_write::store::{InternError, NamespaceWriteError};
 
 pub const MAX_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_RELATIONS: usize = 500;
@@ -214,51 +210,6 @@ pub fn parse(text: &str) -> Result<NamespaceDocument, Vec<DocumentError>> {
 #[derive(Debug, Error)]
 #[error("{}", .0.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
 pub struct Refusal(pub Vec<DocumentError>);
-
-/// Why namespace documents weren't loaded.
-#[derive(Debug, Error)]
-pub enum LoadError {
-    #[error(transparent)]
-    Refused(#[from] Refusal),
-    #[error(transparent)]
-    Write(#[from] NamespaceWriteError),
-    #[error(transparent)]
-    Intern(#[from] InternError),
-}
-
-/// A rename that gives two relations one name refuses the namespace.
-impl From<NamespaceError> for LoadError {
-    fn from(kind: NamespaceError) -> Self {
-        Refusal(vec![error(None, None, ErrorKind::Namespace(kind))]).into()
-    }
-}
-
-/// Parses and checks every document, then interns their names in
-/// `dictionary` and declares each namespace, so a refused document stores
-/// nothing, not even a name.
-pub fn load_namespaces(
-    documents: &[&str],
-    dictionary: &MemoryDictionary,
-    namespaces: &MemoryStore,
-) -> Result<(), LoadError> {
-    let parsed = documents
-        .iter()
-        .map(|document| parse(document).map_err(Refusal))
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut interned = Vec::with_capacity(parsed.len());
-    for document in parsed {
-        let id = NamespaceId(dictionary.intern(Pool::Namespaces, document.namespace.as_str())?);
-        let relations = document.relations.try_map(|name| {
-            let id = dictionary.intern(Pool::Relations, name.as_str())?;
-            Ok::<_, LoadError>(RelationId(id))
-        })?;
-        interned.push((id, relations));
-    }
-    for (id, relations) in interned {
-        namespaces.declare(id, relations)?;
-    }
-    Ok(())
-}
 
 fn error(relation: Option<&str>, column: Option<usize>, kind: ErrorKind) -> DocumentError {
     DocumentError {

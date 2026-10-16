@@ -7,22 +7,24 @@ use sungma::{
     namespace::Namespace,
     resolve::{self, ResolveError, UnknownName},
     rewrite::Rewrite,
-    store::{Pool, ReadingDictionary},
+    store::Pool,
 };
-use sungma_memory::MemoryDictionary;
+use sungma_edge::memory::MemorySequence;
+use sungma_names::write::NameRowWriter;
+use sungma_node::testkit::World;
 use sungma_write::store::NameWriter;
 
 /// `file`, `folder` and `group`, and the relations `owner`, `parent`,
 /// `member` and `viewer`.
-fn dictionary() -> MemoryDictionary {
-    let dictionary = MemoryDictionary::default();
+async fn world() -> World {
+    let world = World::new();
     for namespace in ["file", "folder", "group"] {
-        dictionary.intern(Pool::Namespaces, namespace).unwrap();
+        world.intern(Pool::Namespaces, namespace).await;
     }
     for relation in ["owner", "parent", "member", "viewer"] {
-        dictionary.intern(Pool::Relations, relation).unwrap();
+        world.intern(Pool::Relations, relation).await;
     }
-    dictionary
+    world
 }
 
 fn fact(subjectset: &str, subject: SubjectName) -> FactName {
@@ -42,21 +44,22 @@ fn subjects() -> [SubjectName; 3] {
 
 #[tokio::test]
 async fn a_fact_resolves_to_ids_and_back_to_its_names() {
-    let dictionary = ReadingDictionary(dictionary());
+    let world = world().await;
+    let dictionary = world.names();
     for subject in subjects() {
         let name = fact("file:readme#viewer", subject);
         let Fact {
             subjectset,
             subject,
-        } = resolve::fact(&dictionary, &name).await.unwrap();
+        } = resolve::fact(dictionary, &name).await.unwrap();
         assert_eq!(
-            resolve::subjectset_name(&dictionary, &subjectset)
+            resolve::subjectset_name(dictionary, &subjectset)
                 .await
                 .unwrap(),
             name.subjectset
         );
         assert_eq!(
-            resolve::subject_name(&dictionary, &subject).await.unwrap(),
+            resolve::subject_name(dictionary, &subject).await.unwrap(),
             name.subject
         );
     }
@@ -64,7 +67,8 @@ async fn a_fact_resolves_to_ids_and_back_to_its_names() {
 
 #[tokio::test]
 async fn a_name_never_interned_is_unknown() {
-    let dictionary = ReadingDictionary(dictionary());
+    let world = world().await;
+    let dictionary = world.names();
     let cases = [
         (
             fact("user:a#owner", subjects()[0].clone()),
@@ -90,7 +94,7 @@ async fn a_name_never_interned_is_unknown() {
         ),
     ];
     for (name, unknown) in cases {
-        let resolved = resolve::fact(&dictionary, &name).await;
+        let resolved = resolve::fact(dictionary, &name).await;
         assert!(
             matches!(&resolved, Err(ResolveError::Unknown(found)) if *found == unknown),
             "{name}: {resolved:?}"
@@ -101,15 +105,16 @@ async fn a_name_never_interned_is_unknown() {
 
 #[tokio::test]
 async fn an_id_with_no_name_or_a_stored_non_name_fails_as_the_store() {
-    let dictionary = dictionary();
-    dictionary
+    let world = world().await;
+    let edge = world.node().edge();
+    NameRowWriter::new(edge, edge, MemorySequence::new())
         .insert_if_absent(Pool::Relations, "Not a name!", 1000)
         .await
         .unwrap();
-    let dictionary = ReadingDictionary(dictionary);
-    let missing = resolve::namespace_name(&dictionary, NamespaceId(999)).await;
+    let dictionary = world.names();
+    let missing = resolve::namespace_name(dictionary, NamespaceId(999)).await;
     assert!(missing.unwrap_err().0.contains("999"));
-    let malformed = resolve::relation_name(&dictionary, RelationId(1000)).await;
+    let malformed = resolve::relation_name(dictionary, RelationId(1000)).await;
     assert!(malformed.unwrap_err().0.contains("Not a name!"));
 }
 
@@ -122,7 +127,8 @@ async fn a_store_failure_is_not_an_unknown_name() {
 
 #[tokio::test]
 async fn a_namespace_gets_its_relation_names_back() {
-    let dictionary = ReadingDictionary(dictionary());
+    let world = world().await;
+    let dictionary = world.names();
     let named = |name: &str| name.parse::<RelationName>().unwrap();
     let namespace = Namespace::new(vec![
         (named("owner"), Rewrite::This),
@@ -143,13 +149,13 @@ async fn a_namespace_gets_its_relation_names_back() {
     for name in namespace.names() {
         ids.push((
             name.clone(),
-            resolve::relation(&dictionary, name).await.unwrap(),
+            resolve::relation(dictionary, name).await.unwrap(),
         ));
     }
     let interned = namespace
         .map(|name| ids.iter().find(|(n, _)| n == name).unwrap().1)
         .unwrap();
-    let back = resolve::namespace_names(&dictionary, &interned)
+    let back = resolve::namespace_names(dictionary, &interned)
         .await
         .unwrap();
     let relations = |namespace: &Namespace<RelationName>| {
@@ -159,7 +165,7 @@ async fn a_namespace_gets_its_relation_names_back() {
             .collect::<Vec<_>>()
     };
     assert_eq!(relations(&back), relations(&namespace));
-    let resolved = resolve::namespace(&dictionary, &"file".parse::<NamespaceName>().unwrap()).await;
+    let resolved = resolve::namespace(dictionary, &"file".parse::<NamespaceName>().unwrap()).await;
     assert!(resolved.is_ok());
 }
 

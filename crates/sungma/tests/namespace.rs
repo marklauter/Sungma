@@ -1,9 +1,8 @@
 //! Namespaces are checked whole when declared.
 
-mod common;
-
 use std::time::{Duration, Instant};
 
+use sungma::resolve;
 use sungma::{
     id::{NamespaceId, RelationId},
     namespace::{MAX_CYCLE_NAMES, MAX_REWRITE_DEPTH, Namespace, NamespaceError, Problem},
@@ -11,13 +10,12 @@ use sungma::{
     rewrite::Rewrite::{self, Computed, Exclusion, This, Union},
     store::Pool,
 };
-use sungma_lang::namespace::{ErrorKind, LoadError, load_namespaces, parse};
-use sungma_memory::{MemoryDictionary, MemoryStore};
+use sungma_lang::namespace::{ErrorKind, Refusal, parse};
+use sungma_node::testkit::World;
 
-fn load(json: &str) -> Result<(), LoadError> {
-    let dictionary = MemoryDictionary::default();
-    let namespaces = MemoryStore::default();
-    load_namespaces(&[json], &dictionary, &namespaces)
+/// Parses and checks the document.
+fn load(json: &str) -> Result<(), Refusal> {
+    parse(json).map(|_| ()).map_err(Refusal)
 }
 
 /// The one namespace error a document is refused with.
@@ -38,18 +36,22 @@ fn names(cycle: &[&str]) -> NamespaceError {
     }
 }
 
-#[test]
-fn a_refused_document_stores_no_namespace() {
-    let dictionary = MemoryDictionary::default();
-    let namespaces = MemoryStore::default();
+#[tokio::test]
+async fn a_refused_document_stores_no_namespace() {
+    let world = World::new();
     let documents = [
         r#"{ "file": { "owner": "this" } }"#,
         r#"{ "folder": { "viewer": "editor" } }"#,
     ];
-    let refused = load_namespaces(&documents, &dictionary, &namespaces);
-    assert!(matches!(refused, Err(LoadError::Refused(_))));
-    let file = NamespaceId(dictionary.intern(Pool::Namespaces, "file").unwrap());
-    assert!(namespaces.namespace(file).is_none());
+    let refused = world.load_namespaces(&documents).await;
+    assert!(
+        matches!(refused, Err(sungma_node::SeedError::Refused(_))),
+        "{refused:?}"
+    );
+    let file = resolve::namespace(world.names(), &"file".parse().unwrap()).await;
+    assert!(resolve::known(file).unwrap().is_none());
+    let file = NamespaceId(world.intern(Pool::Namespaces, "file").await);
+    assert!(world.latest(file).await.is_none());
 }
 
 #[test]
@@ -168,20 +170,22 @@ fn nested_in(
     (1..levels).fold(This, |rewrite, _| wrap(rewrite))
 }
 
-fn declare(rewrite: Rewrite<&str>) -> Result<(), NamespaceError> {
-    let dictionary = MemoryDictionary::default();
-    let namespaces = MemoryStore::default();
-    common::declare(&namespaces, &dictionary, "file", "deep", rewrite)
+/// Checks a namespace declaring `deep` as `rewrite`, with its first
+/// problem.
+async fn declare(rewrite: Rewrite<&'static str>) -> Result<(), NamespaceError> {
+    Namespace::new(vec![("deep", rewrite)])
+        .map(|_| ())
+        .map_err(|mut problems| problems.remove(0).error)
 }
 
-#[test]
-fn a_rewrite_tree_may_be_max_depth_deep() {
-    assert_eq!(declare(nested(MAX_REWRITE_DEPTH)), Ok(()));
+#[tokio::test]
+async fn a_rewrite_tree_may_be_max_depth_deep() {
+    assert_eq!(declare(nested(MAX_REWRITE_DEPTH)).await, Ok(()));
 }
 
-#[test]
-fn a_deeper_rewrite_tree_is_refused() {
-    let error = declare(nested(MAX_REWRITE_DEPTH + 1)).unwrap_err();
+#[tokio::test]
+async fn a_deeper_rewrite_tree_is_refused() {
+    let error = declare(nested(MAX_REWRITE_DEPTH + 1)).await.unwrap_err();
     assert_eq!(error, NamespaceError::TooDeep);
     assert_eq!(
         error.to_string(),
@@ -189,34 +193,37 @@ fn a_deeper_rewrite_tree_is_refused() {
     );
 }
 
-#[test]
-fn a_deeper_exclusion_base_is_refused() {
+#[tokio::test]
+async fn a_deeper_exclusion_base_is_refused() {
     let base = nested_in(MAX_REWRITE_DEPTH + 1, |rewrite| {
         Exclusion(Box::new(rewrite), Box::new(This))
     });
-    assert_eq!(declare(base), Err(NamespaceError::TooDeep));
+    assert_eq!(declare(base).await, Err(NamespaceError::TooDeep));
 }
 
-#[test]
-fn a_deeper_excluded_operand_is_refused() {
+#[tokio::test]
+async fn a_deeper_excluded_operand_is_refused() {
     let excluded = nested_in(MAX_REWRITE_DEPTH + 1, |rewrite| {
         Exclusion(Box::new(This), Box::new(rewrite))
     });
-    assert_eq!(declare(excluded), Err(NamespaceError::TooDeep));
+    assert_eq!(declare(excluded).await, Err(NamespaceError::TooDeep));
 }
 
-#[test]
-fn redeclaring_a_relation_checks_the_whole_namespace_by_id() {
-    let dictionary = MemoryDictionary::default();
-    let namespaces = MemoryStore::default();
-    let declare =
-        |relation, rewrite| common::declare(&namespaces, &dictionary, "file", relation, rewrite);
-    declare("owner", This).unwrap();
-    declare("editor", Computed("owner")).unwrap();
+#[tokio::test]
+async fn redeclaring_a_relation_checks_the_whole_namespace_by_id() {
+    let world = World::new();
+    world.declare("file", "owner", This).await.unwrap();
+    world
+        .declare("file", "editor", Computed("owner"))
+        .await
+        .unwrap();
     // Relations have their own pool, so owner is 0 and editor is 1. The
     // kept editor is checked before the redeclared owner, which now closes
     // a cycle through it.
-    let error = declare("owner", Computed("editor")).unwrap_err();
+    let error = world
+        .declare("file", "owner", Computed("editor"))
+        .await
+        .unwrap_err();
     assert_eq!(error, names(&["1", "0", "1"]));
 }
 

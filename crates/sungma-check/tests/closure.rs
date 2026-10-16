@@ -1,13 +1,12 @@
 //! Contains and Expand against the namespaces in [`common`].
 
-mod common;
+mod world;
 
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
     sync::Arc,
 };
 
-use common::{World, declare, head, identity, subjectset, world};
 use proptest::{prelude::*, sample::subsequence, test_runner::TestCaseError};
 use sungma::{
     graph::{Subject, Subjectset},
@@ -24,7 +23,7 @@ use sungma_check::{
     store::FactReader,
     store::NamespaceReader,
 };
-use sungma_lang::fact::load_facts;
+use world::{World, head, identity, subjectset, world};
 
 /// Whether an identity is in the closure of `namespace:id#relation` at `revision`.
 async fn check_at(
@@ -38,7 +37,7 @@ async fn check_at(
     };
     let subject = identity(who);
     agree(
-        &Closure::new(&world.store, &world.store, &set, revision),
+        &Closure::new(world.store(), world.store(), &set, revision),
         subject,
     )
     .await
@@ -67,7 +66,7 @@ async fn check(world: &World, set: &str, who: &str) -> Result<bool, ClosureError
 
 #[tokio::test]
 async fn owner_is_editor_and_viewer() {
-    let world = world();
+    let world = world().await;
     assert!(
         check(&world, "file:design.md#editor", "carol")
             .await
@@ -82,7 +81,7 @@ async fn owner_is_editor_and_viewer() {
 
 #[tokio::test]
 async fn group_member_views_through_parent_chain() {
-    let world = world();
+    let world = world().await;
     assert!(check(&world, "folder:root#viewer", "alice").await.unwrap());
     assert!(check(&world, "folder:specs#viewer", "alice").await.unwrap());
     assert!(
@@ -94,7 +93,7 @@ async fn group_member_views_through_parent_chain() {
 
 #[tokio::test]
 async fn fact_to_subjectset_follows_the_resource_of_a_stored_subjectset() {
-    let world = world();
+    let world = world().await;
     assert!(
         check(&world, "file:notes.md#viewer", "alice")
             .await
@@ -109,14 +108,14 @@ async fn fact_to_subjectset_follows_the_resource_of_a_stored_subjectset() {
 
 #[tokio::test]
 async fn banned_is_excluded() {
-    let world = world();
+    let world = world().await;
     assert!(check(&world, "folder:specs#viewer", "bob").await.unwrap());
     assert!(!check(&world, "file:design.md#viewer", "bob").await.unwrap());
 }
 
 #[tokio::test]
 async fn ban_on_a_folder_cuts_off_everything_below_it() {
-    let world = world();
+    let world = world().await;
     assert!(check(&world, "folder:root#viewer", "erin").await.unwrap());
     assert!(!check(&world, "folder:specs#viewer", "erin").await.unwrap());
     assert!(
@@ -128,7 +127,7 @@ async fn ban_on_a_folder_cuts_off_everything_below_it() {
 
 #[tokio::test]
 async fn auditor_must_also_be_viewer() {
-    let world = world();
+    let world = world().await;
     assert!(
         check(&world, "file:design.md#auditor", "alice")
             .await
@@ -143,7 +142,7 @@ async fn auditor_must_also_be_viewer() {
 
 #[tokio::test]
 async fn unknown_names_are_denied() {
-    let world = world();
+    let world = world().await;
     assert!(
         !check(&world, "file:design.md#viewer", "mallory")
             .await
@@ -160,8 +159,8 @@ async fn unknown_names_are_denied() {
 /// contain each other and nobody else. `cyc_a` and `cyc_b` contain each
 /// other, and `cyc_a` also reaches alice through `cyc_c`; `cyc_b` is
 /// interned first, so the cyclic nested set is read before `cyc_c`.
-fn ringed_world() -> World {
-    let world = world();
+async fn ringed_world() -> World {
+    let world = world().await;
     let facts = r#"[
         { "namespace": "group", "resource": "ring_a", "relation": "member", "subject": { "namespace": "group", "resource": "ring_b", "relation": "member" } },
         { "namespace": "group", "resource": "ring_b", "relation": "member", "subject": { "namespace": "group", "resource": "ring_a", "relation": "member" } },
@@ -174,48 +173,48 @@ fn ringed_world() -> World {
         { "namespace": "file", "resource": "ring.md", "relation": "viewer", "subject": { "namespace": "group", "resource": "ring_a", "relation": "member" } },
         { "namespace": "file", "resource": "ring.md", "relation": "owner", "subject": { "identity": "alice" } }
     ]"#;
-    load_facts(facts, &world.dictionary, &world.store).unwrap();
+    world.load_facts(facts).await.unwrap();
     world
 }
 
 #[tokio::test]
 async fn a_cycle_of_parents_denies_a_non_member() {
-    let world = world();
+    let world = world().await;
     let result = check(&world, "folder:loop_a#viewer", "alice").await;
     assert!(!result.unwrap());
 }
 
 #[tokio::test]
 async fn a_cycle_of_subjectsets_denies_a_non_member() {
-    let world = ringed_world();
+    let world = ringed_world().await;
     assert!(!check(&world, "group:ring_a#member", "alice").await.unwrap());
     assert!(!check(&world, "group:cyc_a#member", "bob").await.unwrap());
 }
 
 #[tokio::test]
 async fn a_cyclic_nested_set_does_not_hide_a_later_one() {
-    let world = ringed_world();
+    let world = ringed_world().await;
     assert!(check(&world, "group:cyc_a#member", "alice").await.unwrap());
     assert!(check(&world, "group:cyc_b#member", "alice").await.unwrap());
 }
 
 #[tokio::test]
 async fn a_cyclic_union_operand_does_not_hide_a_later_one() {
-    let world = ringed_world();
+    let world = ringed_world().await;
     // this cycles through ring_a; editor grants through owner.
     assert!(check(&world, "file:ring.md#viewer", "alice").await.unwrap());
 }
 
 #[tokio::test]
 async fn a_cycle_under_an_exclusion_excludes_nobody() {
-    let world = ringed_world();
+    let world = ringed_world().await;
     assert!(check(&world, "folder:open#viewer", "alice").await.unwrap());
 }
 
 /// Checks `group:g0#member` down a chain of `length` subjectsets, with
 /// `more` facts loaded after the chain.
 async fn chain(length: usize, more: &[&str]) -> Result<bool, ClosureError> {
-    let world = world();
+    let world = world().await;
     let mut facts: Vec<String> = (1..length)
         .map(|i| {
             format!(
@@ -225,8 +224,11 @@ async fn chain(length: usize, more: &[&str]) -> Result<bool, ClosureError> {
         })
         .collect();
     facts.extend(more.iter().map(ToString::to_string));
-    let facts = format!("[{}]", facts.join(","));
-    load_facts(&facts, &world.dictionary, &world.store).unwrap();
+    // A unit of work holds 100 rows and each new fact takes two.
+    for facts in facts.chunks(40) {
+        let facts = format!("[{}]", facts.join(","));
+        world.load_facts(&facts).await.unwrap();
+    }
     check(&world, "group:g0#member", "alice").await
 }
 
@@ -262,7 +264,7 @@ async fn passing_the_depth_limit_ends_the_check() {
 
 #[tokio::test]
 async fn late_bound_relation_missing_on_target_is_empty() {
-    let world = world();
+    let world = world().await;
     assert!(
         !check(&world, "file:stray.md#viewer", "alice")
             .await
@@ -272,12 +274,12 @@ async fn late_bound_relation_missing_on_target_is_empty() {
 
 #[tokio::test]
 async fn a_parent_of_an_undeclared_namespace_is_empty() {
-    let world = world();
+    let world = world().await;
     // `ghost` is a known name that no version declares, as for a retired
     // namespace.
-    world.dictionary.intern(Pool::Namespaces, "ghost").unwrap();
+    world.intern(Pool::Namespaces, "ghost").await;
     let fact = r#"[{ "namespace": "file", "resource": "haunted.md", "relation": "parent", "subject": { "namespace": "ghost", "resource": "attic" } }]"#;
-    load_facts(fact, &world.dictionary, &world.store).unwrap();
+    world.load_facts(fact).await.unwrap();
     assert!(
         !check(&world, "file:haunted.md#viewer", "alice")
             .await
@@ -382,7 +384,7 @@ impl NamespaceReader for Probe<'_> {
         if failed {
             return Err(StoreError("injected".to_owned()));
         }
-        let version = self.world.store.version(namespace, revision).await?;
+        let version = self.world.store().version(namespace, revision).await?;
         Ok(match (self.shuffle, version) {
             (Some(seed), Some(version)) => Some(reordered(&version, namespace, seed)),
             (_, version) => version,
@@ -413,7 +415,7 @@ fn reordered(version: &Version, namespace: NamespaceId, seed: u64) -> Arc<Versio
 
 impl FactReader for Probe<'_> {
     async fn head(&self) -> Result<Revision, StoreError> {
-        self.world.store.head().await
+        self.world.store().head().await
     }
 
     async fn written(
@@ -423,7 +425,7 @@ impl FactReader for Probe<'_> {
         revision: Revision,
     ) -> Result<Option<Revision>, StoreError> {
         self.fail(set, Read::Written)?;
-        self.world.store.written(set, subject, revision).await
+        self.world.store().written(set, subject, revision).await
     }
 
     async fn subjectsets(
@@ -432,7 +434,7 @@ impl FactReader for Probe<'_> {
         revision: Revision,
     ) -> Result<Vec<(Subjectset, Revision)>, StoreError> {
         self.fail(set, Read::Subjectsets)?;
-        let mut nested = self.world.store.subjectsets(set, revision).await?;
+        let mut nested = self.world.store().subjectsets(set, revision).await?;
         self.permute(&mut nested, set);
         Ok(nested)
     }
@@ -443,7 +445,7 @@ impl FactReader for Probe<'_> {
         revision: Revision,
     ) -> Result<Vec<(Subject, Revision)>, StoreError> {
         self.fail(set, Read::Subjects)?;
-        let mut subjects = self.world.store.subjects(set, revision).await?;
+        let mut subjects = self.world.store().subjects(set, revision).await?;
         self.permute(&mut subjects, set);
         Ok(subjects)
     }
@@ -482,7 +484,7 @@ async fn check_failing(
 
 #[tokio::test]
 async fn a_store_error_that_nothing_outweighs_fails_the_check() {
-    let world = world();
+    let world = world().await;
     let cases = [
         // Every viewer operand is false or failed.
         (
@@ -530,13 +532,13 @@ async fn a_store_error_that_nothing_outweighs_fails_the_check() {
 
 #[tokio::test]
 async fn an_operand_that_settles_the_check_outweighs_a_store_error() {
-    let world = world();
+    let world = world().await;
     let facts = r#"[
         { "namespace": "file", "resource": "twin.md", "relation": "parent", "subject": { "namespace": "folder", "resource": "specs" } },
         { "namespace": "file", "resource": "twin.md", "relation": "parent", "subject": { "namespace": "folder", "resource": "shared" } },
         { "namespace": "folder", "resource": "shared", "relation": "viewer", "subject": { "identity": "alice" } }
     ]"#;
-    load_facts(facts, &world.dictionary, &world.store).unwrap();
+    world.load_facts(facts).await.unwrap();
     let cases = [
         // A union's later operand holds: alice views through the parent.
         (
@@ -598,11 +600,11 @@ async fn an_operand_that_settles_the_check_outweighs_a_store_error() {
 
 #[tokio::test]
 async fn a_store_error_anywhere_in_the_tree_fails_expand() {
-    let world = world();
+    let world = world().await;
     // The docs namespaces exclude only computed subjectsets, which expand
     // leaves as references without a read.
     let unowned = Exclusion(Box::new(Computed("owner")), Box::new(This));
-    declare(&world.store, &world.dictionary, "file", "unowned", unowned).unwrap();
+    world.declare("file", "unowned", unowned).await.unwrap();
     let cases = [
         (
             "file:design.md#viewer",
@@ -643,9 +645,9 @@ async fn a_store_error_anywhere_in_the_tree_fails_expand() {
 
 #[tokio::test]
 async fn expand_of_an_undeclared_relation_is_none() {
-    let world = world();
+    let world = world().await;
     let viewer = subjectset(&world, "group:eng#viewer").await.unwrap();
-    let expansion = Closure::new(&world.store, &world.store, &viewer, head(&world).await)
+    let expansion = Closure::new(world.store(), world.store(), &viewer, head(&world).await)
         .expand()
         .await
         .unwrap();
@@ -654,9 +656,9 @@ async fn expand_of_an_undeclared_relation_is_none() {
 
 #[tokio::test]
 async fn expand_keeps_an_intersection() {
-    let world = world();
+    let world = world().await;
     let auditor = subjectset(&world, "file:design.md#auditor").await.unwrap();
-    let expansion = Closure::new(&world.store, &world.store, &auditor, head(&world).await)
+    let expansion = Closure::new(world.store(), world.store(), &auditor, head(&world).await)
         .expand()
         .await
         .unwrap();
@@ -672,10 +674,10 @@ async fn expand_keeps_an_intersection() {
 
 #[tokio::test]
 async fn facts_written_after_the_revision_are_not_visible() {
-    let world = world();
+    let world = world().await;
     let before = head(&world).await;
     let fact = r#"[{ "namespace": "file", "resource": "design.md", "relation": "viewer", "subject": { "identity": "zed" } }]"#;
-    load_facts(fact, &world.dictionary, &world.store).unwrap();
+    world.load_facts(fact).await.unwrap();
     assert!(
         !check_at(&world, "file:design.md#viewer", "zed", before)
             .await
@@ -686,10 +688,10 @@ async fn facts_written_after_the_revision_are_not_visible() {
 
 #[tokio::test]
 async fn expand_leaves_referenced_subjectsets_as_leaves() {
-    let world = world();
+    let world = world().await;
     let set = |text| subjectset(&world, text);
     let viewer = set("file:design.md#viewer").await.unwrap();
-    let expansion = Closure::new(&world.store, &world.store, &viewer, head(&world).await)
+    let expansion = Closure::new(world.store(), world.store(), &viewer, head(&world).await)
         .expand()
         .await
         .unwrap()
@@ -711,12 +713,17 @@ async fn expand_leaves_referenced_subjectsets_as_leaves() {
 
 #[tokio::test]
 async fn expand_lists_direct_subjects_including_subjectsets() {
-    let world = world();
+    let world = world().await;
     let root_viewer = subjectset(&world, "folder:root#viewer").await.unwrap();
-    let expansion = Closure::new(&world.store, &world.store, &root_viewer, head(&world).await)
-        .expand()
-        .await
-        .unwrap();
+    let expansion = Closure::new(
+        world.store(),
+        world.store(),
+        &root_viewer,
+        head(&world).await,
+    )
+    .expand()
+    .await
+    .unwrap();
     let Some(Expansion::Exclusion(base, _)) = expansion else {
         panic!("viewer is an exclusion");
     };
@@ -807,10 +814,10 @@ fn candidate_failures() -> Vec<(String, Read)> {
 }
 
 /// The docs world plus `facts`.
-fn random_world(facts: &[String]) -> World {
-    let world = world();
+async fn random_world(facts: &[String]) -> World {
+    let world = world().await;
     let facts = format!("[{}]", facts.join(","));
-    load_facts(&facts, &world.dictionary, &world.store).unwrap();
+    world.load_facts(&facts).await.unwrap();
     world
 }
 
@@ -827,7 +834,7 @@ async fn errors_follow_kleene_logic(
     failures: Vec<(String, Read)>,
     seed: u64,
 ) -> Result<(), TestCaseError> {
-    let world = random_world(&facts);
+    let world = random_world(&facts).await;
     let mut failed = Vec::new();
     for (set, read) in failures {
         failed.push((subjectset(&world, &set).await.unwrap(), read));

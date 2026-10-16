@@ -20,5 +20,7 @@ tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
 proptest.workspace = true
-sungma-memory.workspace = true
+sungma-edge.workspace = true
+sungma-names.workspace = true
+sungma-node = { workspace = true, features = ["testkit"] }
 tokio = { workspace = true, features = ["macros", "rt"] }

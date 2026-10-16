@@ -13,18 +13,43 @@ use sungma::store::{
     Pool::{self, Relations},
     ReadingDictionary, StoreError,
 };
-use sungma_memory::MemoryDictionary;
+use sungma_edge::{
+    memory::{MemorySequence, MemoryTable},
+    read::Consistency,
+};
+use sungma_names::{read::NameRows, write::NameRowWriter};
 use sungma_write::{
     intern::LeasingInterner,
     store::{InternError, Interner, NameWriter},
 };
+
+/// Names over the memory edge, which every node shares.
+#[derive(Default)]
+struct Store {
+    table: MemoryTable,
+    sequence: MemorySequence,
+}
+
+impl Store {
+    fn rows(&self) -> NameRows<&MemoryTable> {
+        NameRows::new(&self.table, Consistency::Strong)
+    }
+
+    fn writer(&self) -> NameRowWriter<&MemoryTable, &MemoryTable, &MemorySequence> {
+        NameRowWriter::new(&self.table, &self.table, &self.sequence)
+    }
+
+    async fn name(&self, pool: Pool, id: u32) -> Result<Option<String>, StoreError> {
+        self.rows().name(pool, id).await
+    }
+}
 
 /// One node's view of a shared store. A stale node never finds a name, as
 /// if another node's insert hadn't reached it; an exhausted node finds no
 /// ids left to lease.
 #[derive(Clone, Copy)]
 struct Node<'a> {
-    store: &'a MemoryDictionary,
+    store: &'a Store,
     stale: bool,
     exhausted: bool,
 }
@@ -38,7 +63,7 @@ fn interner(node: Node<'_>, size: u32) -> LeasingInterner<Node<'_>, Node<'_>> {
     LeasingInterner::new(node, node, block(size))
 }
 
-fn node(store: &MemoryDictionary, size: u32) -> LeasingInterner<Node<'_>, Node<'_>> {
+fn node(store: &Store, size: u32) -> LeasingInterner<Node<'_>, Node<'_>> {
     interner(
         Node {
             store,
@@ -54,30 +79,30 @@ impl NameReader for Node<'_> {
         if self.stale {
             return Ok(None);
         }
-        NameReader::id(self.store, pool, name).await
+        self.store.rows().id(pool, name).await
     }
 
     async fn name(&self, pool: Pool, id: u32) -> Result<Option<String>, StoreError> {
-        NameReader::name(self.store, pool, id).await
+        self.store.name(pool, id).await
     }
 }
 
 impl NameWriter for Node<'_> {
     async fn insert_if_absent(&self, pool: Pool, name: &str, id: u32) -> Result<u32, StoreError> {
-        self.store.insert_if_absent(pool, name, id).await
+        self.store.writer().insert_if_absent(pool, name, id).await
     }
 
     async fn lease(&self, pool: Pool, count: u32) -> Result<Range<u32>, StoreError> {
         if self.exhausted {
             return Ok(0..0);
         }
-        self.store.lease(pool, count).await
+        self.store.writer().lease(pool, count).await
     }
 }
 
 #[tokio::test]
 async fn a_name_is_minted_once() {
-    let store = MemoryDictionary::default();
+    let store = Store::default();
     let node = node(&store, 10);
     let alice = node.intern(Relations, "alice").await.unwrap();
     let bob = node.intern(Relations, "bob").await.unwrap();
@@ -94,7 +119,7 @@ async fn a_name_is_minted_once() {
 
 #[tokio::test]
 async fn a_reading_dictionary_finds_what_an_interner_minted() {
-    let store = MemoryDictionary::default();
+    let store = Store::default();
     let alice = node(&store, 10).intern(Relations, "alice").await.unwrap();
     let names = ReadingDictionary(Node {
         store: &store,
@@ -111,7 +136,7 @@ async fn a_reading_dictionary_finds_what_an_interner_minted() {
 
 #[tokio::test]
 async fn each_pool_mints_its_own_ids() {
-    let store = MemoryDictionary::default();
+    let store = Store::default();
     let node = node(&store, 10);
     let pools = [Pool::Namespaces, Pool::Relations];
     for pool in pools {
@@ -128,7 +153,7 @@ async fn each_pool_mints_its_own_ids() {
 
 #[tokio::test]
 async fn nodes_mint_from_their_own_blocks() {
-    let store = MemoryDictionary::default();
+    let store = Store::default();
     let (a, b) = (node(&store, 2), node(&store, 2));
     let mut ids = Vec::new();
     for (node, name) in [(&a, "w"), (&a, "x"), (&b, "y"), (&a, "z")] {
@@ -139,7 +164,7 @@ async fn nodes_mint_from_their_own_blocks() {
 
 #[tokio::test]
 async fn the_first_insert_of_a_name_wins() {
-    let store = MemoryDictionary::default();
+    let store = Store::default();
     let a = node(&store, 10);
     let b = interner(
         Node {
@@ -157,7 +182,7 @@ async fn the_first_insert_of_a_name_wins() {
 
 #[tokio::test]
 async fn interning_fails_once_the_ids_run_out() {
-    let store = MemoryDictionary::default();
+    let store = Store::default();
     let node = interner(
         Node {
             store: &store,
@@ -173,15 +198,6 @@ async fn interning_fails_once_the_ids_run_out() {
     );
 }
 
-#[tokio::test]
-async fn setup_ids_and_leased_ids_never_meet() {
-    let store = MemoryDictionary::default();
-    let node = node(&store, 10);
-    assert_eq!(store.intern(Relations, "a").unwrap(), 0);
-    assert_eq!(node.intern(Relations, "b").await.unwrap(), 1);
-    assert_eq!(store.intern(Relations, "c").unwrap(), 11);
-}
-
 /// `(node, pool, name)`: the node interns name `n{name}` in `POOLS[pool]`.
 type Intern = (usize, usize, usize);
 
@@ -192,7 +208,7 @@ async fn ids_are_unique_and_stable(
     nodes: Vec<(u32, bool)>,
     interns: Vec<Intern>,
 ) -> Result<(), TestCaseError> {
-    let store = MemoryDictionary::default();
+    let store = Store::default();
     let nodes: Vec<_> = nodes
         .into_iter()
         .map(|(size, stale)| {
@@ -231,16 +247,4 @@ proptest! {
         let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
         runtime.block_on(ids_are_unique_and_stable(nodes, interns))?;
     }
-}
-
-#[tokio::test]
-async fn setup_interning_stops_when_a_pool_runs_out() {
-    let store = MemoryDictionary::default();
-    assert_eq!(store.intern(Relations, "owner").unwrap(), 0);
-    store.lease(Relations, u32::MAX).await.unwrap();
-    assert!(matches!(
-        store.intern(Relations, "viewer"),
-        Err(InternError::Exhausted(Relations))
-    ));
-    assert_eq!(store.intern(Relations, "owner").unwrap(), 0);
 }
