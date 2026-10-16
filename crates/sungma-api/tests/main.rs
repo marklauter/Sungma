@@ -1,7 +1,11 @@
 //! The `sungma-api` binary's arguments and stores. Each run is given an
 //! address it can't bind, so none starts a server.
 
+mod common;
+
 use std::process::{Command, Output};
+
+use common::dynamodb_url;
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../sungma/tests/fixtures");
 
@@ -82,8 +86,7 @@ fn a_seed_that_is_refused_stops_the_server() {
 /// run finds the table and serves it without seeding it again.
 #[test]
 fn the_server_runs_on_dynamodb_when_given_a_url() {
-    let url =
-        std::env::var("SUNGMA_DYNAMODB_URL").unwrap_or_else(|_| "http://localhost:8000".to_owned());
+    let Some(url) = dynamodb_url() else { return };
     let table = format!("sungma-api-{}", std::process::id());
     let env = [
         ("SUNGMA_DYNAMODB_URL", url.as_str()),

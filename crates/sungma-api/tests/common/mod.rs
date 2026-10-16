@@ -24,13 +24,18 @@ use tower::ServiceExt;
 /// counts as unset, so CI can leave it out where DynamoDB Local can't run.
 pub async fn stores() -> Vec<(&'static str, Router)> {
     let mut stores = vec![("memory", router(Arc::new(AppState::memory())))];
-    if let Some(url) = std::env::var("SUNGMA_DYNAMODB_URL")
-        .ok()
-        .filter(|url| !url.is_empty())
-    {
+    if let Some(url) = dynamodb_url() {
         stores.push(("dynamodb", router(Arc::new(dynamodb(&url).await))));
     }
     stores
+}
+
+/// `SUNGMA_DYNAMODB_URL`, or none when it's unset or empty. The tests that
+/// need DynamoDB Local pass without running when there's none.
+pub fn dynamodb_url() -> Option<String> {
+    std::env::var("SUNGMA_DYNAMODB_URL")
+        .ok()
+        .filter(|url| !url.is_empty())
 }
 
 async fn dynamodb(url: &str) -> AppState<DynamoReader, DynamoWriter<sungma_clock::DevClock>> {

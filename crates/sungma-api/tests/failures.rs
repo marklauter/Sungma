@@ -23,7 +23,7 @@ use sungma_write::store::{
     NamespaceWriter,
 };
 
-use common::post;
+use common::{dynamodb_url, post};
 
 /// A store that is down.
 struct Down;
@@ -178,11 +178,9 @@ async fn a_seed_into_a_store_that_fails_is_refused() {
 }
 
 /// A writer whose clock can't give a revision it trusts.
-async fn faulted() -> Router {
-    let url =
-        std::env::var("SUNGMA_DYNAMODB_URL").unwrap_or_else(|_| "http://localhost:8000".to_owned());
+async fn faulted(url: &str) -> Router {
     let table = Table::new(
-        local(&url),
+        local(url),
         format!("sungma-api-clock-{}", std::process::id()),
     );
     table.create().await.unwrap();
@@ -198,7 +196,8 @@ async fn faulted() -> Router {
 
 #[tokio::test]
 async fn a_clock_that_fails_is_a_bad_gateway() {
-    let app = faulted().await;
+    let Some(url) = dynamodb_url() else { return };
+    let app = faulted(&url).await;
     let (status, reply) = post(
         &app,
         "/namespaces/write",
