@@ -59,6 +59,7 @@ This covers roadmap items 7 and 8, the Read and Write services, and the namespac
    4. 502: the store or the clock failed. Both are services Sungma calls: DynamoDB, and the time servers behind the clock.
    5. 500: a fault in Sungma itself. Few paths lead there.
 3. `/check` follows the same codes. A check whose store read fails gives 502 rather than 500.
+4. These codes are mapped by hand for now. Roadmap item 14 gives every domain error a kind and a stable code, so the mapping becomes one table.
 
 ## 6. Spec drift
 

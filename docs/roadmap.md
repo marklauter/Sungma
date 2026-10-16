@@ -15,16 +15,17 @@ Done means built, tested to the coverage floor and merged. It doesn't mean produ
 11. Namespace documents: the JSON form of a namespace, with its rewrite grammar, parser and printer (done).
 12. Versioned namespaces (done) and a namespace write service.
 13. HTTP and gRPC transports for each service.
-14. Authentication and authorization of Sungma's own callers.
-15. Distributed storage adapter.
-16. Multi-region deployment with snapshot reads from local replicas.
-17. Garbage collection of fact history past a retention window.
-18. Check result caching.
-19. Index for large and deeply nested groups.
-20. Snapshot dumps for offline processing.
-21. Metrics, tracing and latency objectives.
-22. Client SDKs.
-23. Opaque zookies.
+14. Error kinds: every domain error carries a kind, such as validation, not found, gone, conflict or unavailable, and a stable code, such as `fact.undeclared_relation`. Each transport maps kinds to its own status codes in one table.
+15. Authentication and authorization of Sungma's own callers.
+16. Distributed storage adapter.
+17. Multi-region deployment with snapshot reads from local replicas.
+18. Garbage collection of fact history past a retention window.
+19. Check result caching.
+20. Index for large and deeply nested groups.
+21. Snapshot dumps for offline processing.
+22. Metrics, tracing and latency objectives.
+23. Client SDKs.
+24. Opaque zookies.
 
 ## Deferred
 
