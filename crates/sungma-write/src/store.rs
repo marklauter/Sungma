@@ -18,7 +18,6 @@ use sungma::{
     namespace::Namespace,
     revision::Revision,
     store::StoreError,
-    version::HistoryError,
 };
 use sungma_clock::ClockFault;
 
@@ -96,9 +95,9 @@ pub enum NamespaceWriteError {
     /// caller reads the latest version and tries again.
     #[error("the namespace isn't at the version the write was based on")]
     Conflict { latest: Option<Revision> },
-    /// The namespace's history refuses the revision the store stamped.
-    #[error(transparent)]
-    History(#[from] HistoryError),
+    /// A retirement of a namespace with no latest version.
+    #[error("the namespace has no latest version to retire")]
+    NothingToRetire,
     /// The clock can't give a revision it trusts.
     #[error(transparent)]
     Clock(#[from] ClockFault),

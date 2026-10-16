@@ -12,7 +12,6 @@ use sungma::{
     namespace::{Namespace, NamespaceError},
     revision::Revision,
     store::StoreError,
-    version::HistoryError,
 };
 use sungma_clock::ClockFault;
 use sungma_names::{
@@ -161,7 +160,7 @@ where
                     .lookup(Pool::Namespaces, name.as_str())
                     .await
                     .map_err(InternError::from)?
-                    .ok_or(NamespaceWriteError::History(HistoryError::NothingToRetire))?;
+                    .ok_or(NamespaceWriteError::NothingToRetire)?;
                 (NamespaceId(id), NamespaceWrite::Retire { based_on })
             }
             NamespaceWrite::Create(namespace) => (

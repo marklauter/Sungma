@@ -16,7 +16,7 @@ use sungma::{
     revision::Revision,
     rewrite::Rewrite::{self, Computed, Exclusion, Intersection, This, Union},
     store::StoreError,
-    version::{History, Version},
+    version::{Epochs, Version},
 };
 use sungma_check::{
     closure::{Closure, ClosureError, Expansion, MAX_DEPTH},
@@ -407,11 +407,13 @@ fn reordered(version: &Version, namespace: NamespaceId, seed: u64) -> Arc<Versio
             (*relation, shuffled(rewrite, &mut seed))
         })
         .collect();
-    let mut history = History::default();
-    history
-        .write(Namespace::new(relations).unwrap(), Revision(0))
-        .unwrap();
-    Arc::clone(history.latest().unwrap())
+    let namespace: Namespace = Namespace::new(relations).unwrap();
+    let declared: Vec<_> = namespace
+        .relations()
+        .map(|(relation, _)| *relation)
+        .collect();
+    let epochs = Epochs::following(None, declared, Revision(0));
+    Arc::new(Version::stored(namespace, Revision(0), epochs).unwrap())
 }
 
 impl FactReader for Probe<'_> {

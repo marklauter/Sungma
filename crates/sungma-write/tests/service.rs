@@ -6,7 +6,6 @@ use sungma::{
     revision::Revision,
     rewrite::Rewrite,
     store::StoreError,
-    version::HistoryError,
 };
 use sungma_clock::ClockFault;
 use sungma_names::{store::Dictionary, store::Pool};
@@ -135,7 +134,7 @@ async fn retiring_a_namespace_never_interned_interns_nothing() {
         matches!(
             retired,
             Err(NamespaceWriteServiceError::Write(
-                NamespaceWriteError::History(HistoryError::NothingToRetire)
+                NamespaceWriteError::NothingToRetire
             ))
         ),
         "{retired:?}"

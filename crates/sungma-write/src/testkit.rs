@@ -14,7 +14,7 @@ use sungma::{
     namespace::Namespace,
     revision::Revision,
     rewrite::Rewrite::{self, FactTo, This},
-    version::{HistoryError, Version},
+    version::Version,
 };
 use sungma_check::{
     closure::{Closure, Expansion},
@@ -513,10 +513,7 @@ async fn rewrite<S: Stores>(stores: &S, relation: RelationId) -> Option<Arc<Rewr
 }
 
 fn refused_retirement(result: Result<Revision, NamespaceWriteError>) -> bool {
-    matches!(
-        result,
-        Err(NamespaceWriteError::History(HistoryError::NothingToRetire))
-    )
+    matches!(result, Err(NamespaceWriteError::NothingToRetire))
 }
 
 pub async fn creating_a_namespace_that_has_a_current_version_is_refused<S: Stores>(stores: S) {

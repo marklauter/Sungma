@@ -13,7 +13,7 @@ use sungma::{
     namespace::{Namespace, NamespaceError},
     revision::Revision,
     store::StoreError,
-    version::{Epochs, HistoryError},
+    version::Epochs,
 };
 use sungma_clock::Clock;
 use sungma_edge::{
@@ -111,7 +111,7 @@ where
                 namespace,
             } => (Some(*based_on), Some(namespace)),
             NamespaceWrite::Retire { .. } if version.is_none() => {
-                return Err(HistoryError::NothingToRetire.into());
+                return Err(NamespaceWriteError::NothingToRetire);
             }
             NamespaceWrite::Retire { based_on } => (Some(*based_on), None),
         };

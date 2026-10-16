@@ -27,7 +27,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
-use sungma::{name::NamespaceName, revision::Revision, version::HistoryError};
+use sungma::{name::NamespaceName, revision::Revision};
 use sungma_lang::namespace::{self, Refusal};
 use sungma_names::store::InternError;
 use sungma_read::namespaces::NamespaceReadService;
@@ -143,14 +143,9 @@ pub(crate) async fn write<E: Edge, S: Ids, C: Stamps>(
 fn status(error: &NamespaceWriteServiceError) -> StatusCode {
     use NamespaceWriteServiceError::{Intern, Write};
     match error {
-        Write(NamespaceWriteError::History(HistoryError::NothingToRetire)) => {
-            StatusCode::UNPROCESSABLE_ENTITY
-        }
+        Write(NamespaceWriteError::NothingToRetire) => StatusCode::UNPROCESSABLE_ENTITY,
         Write(NamespaceWriteError::Conflict { .. }) => StatusCode::CONFLICT,
-        Intern(InternError::Exhausted(_))
-        | Write(NamespaceWriteError::History(HistoryError::NotLater { .. })) => {
-            StatusCode::INTERNAL_SERVER_ERROR
-        }
+        Intern(InternError::Exhausted(_)) => StatusCode::INTERNAL_SERVER_ERROR,
         Intern(InternError::Store(_))
         | Write(NamespaceWriteError::Clock(_) | NamespaceWriteError::Store(_)) => {
             StatusCode::BAD_GATEWAY

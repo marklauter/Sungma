@@ -1,15 +1,14 @@
-//! A namespace's history gives each relation a version declares an epoch,
-//! which the relation keeps for as long as each next version declares it,
-//! and refuses an entry that doesn't come after the last.
+//! A namespace version gives each relation it declares an epoch, which the
+//! relation keeps for as long as each next version declares it.
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use sungma::{
     id::RelationId,
     namespace::Namespace,
     revision::Revision,
     rewrite::Rewrite::This,
-    version::{Entry, Epochs, History, HistoryError, StoredVersionError, Version},
+    version::{Epochs, StoredVersionError, Version},
 };
 
 const OWNER: RelationId = RelationId(0);
@@ -19,91 +18,40 @@ fn declaring(relations: &[RelationId]) -> Namespace {
     Namespace::new(relations.iter().map(|&relation| (relation, This)).collect()).unwrap()
 }
 
-fn written(history: &mut History, relations: &[RelationId], revision: u64) {
-    history
-        .write(declaring(relations), Revision(revision))
-        .unwrap();
-}
-
 #[test]
 fn a_first_version_starts_every_epoch() {
-    let mut history = History::default();
-    assert!(history.latest().is_none());
-    written(&mut history, &[OWNER, BANNED], 10);
-    let version = history.latest().unwrap();
-    assert_eq!(version.revision(), Revision(10));
-    assert_eq!(version.epoch(OWNER), Some(Revision(10)));
-    assert_eq!(version.epoch(BANNED), Some(Revision(10)));
-    assert!(version.namespace().rewrite(&OWNER).is_some());
+    let epochs = Epochs::following(None, [OWNER, BANNED], Revision(10));
+    assert_eq!(epochs.epoch(OWNER), Some(Revision(10)));
+    assert_eq!(epochs.epoch(BANNED), Some(Revision(10)));
+    assert!(epochs.declares(OWNER));
 }
 
 /// The sample in `docs/specs/one-timeline.md`, without its facts.
 #[test]
 fn a_relation_brought_back_gets_a_new_epoch() {
-    let mut history = History::default();
-    written(&mut history, &[OWNER, BANNED], 10);
-    written(&mut history, &[OWNER], 20);
-    let dropped = history.latest().unwrap();
+    let first = Epochs::following(None, [OWNER, BANNED], Revision(10));
+    let dropped = Epochs::following(Some(&first), [OWNER], Revision(20));
     assert_eq!(dropped.epoch(OWNER), Some(Revision(10)));
     assert_eq!(dropped.epoch(BANNED), None);
-    written(&mut history, &[OWNER, BANNED], 30);
-    let back = history.latest().unwrap();
+    let back = Epochs::following(Some(&dropped), [OWNER, BANNED], Revision(30));
     assert_eq!(back.epoch(OWNER), Some(Revision(10)));
     assert_eq!(back.epoch(BANNED), Some(Revision(30)));
-    history.retire(Revision(40)).unwrap();
-    assert!(history.latest().is_none());
-    written(&mut history, &[OWNER, BANNED], 50);
-    let again = history.latest().unwrap();
+    // A version after a retirement follows none.
+    let again = Epochs::following(None, [OWNER, BANNED], Revision(50));
     assert_eq!(again.epoch(OWNER), Some(Revision(50)));
     assert_eq!(again.epoch(BANNED), Some(Revision(50)));
-    let opens: Vec<_> = history.entries().iter().map(Entry::revision).collect();
-    assert_eq!(opens, [10, 20, 30, 40, 50].map(Revision));
-    assert!(matches!(history.entries()[3], Entry::Retired(_)));
 }
 
 #[test]
-fn an_entry_must_come_after_the_last() {
-    let mut history = History::default();
-    written(&mut history, &[OWNER], 10);
-    for revision in [Revision(10), Revision(9)] {
-        let refused = HistoryError::NotLater {
-            last: Revision(10),
-            revision,
-        };
-        assert_eq!(
-            history.write(declaring(&[OWNER]), revision),
-            Err(refused.clone())
-        );
-        assert_eq!(history.retire(revision), Err(refused));
-    }
-    assert_eq!(history.entries().len(), 1);
-    assert_eq!(
-        HistoryError::NotLater {
-            last: Revision(10),
-            revision: Revision(9),
-        }
-        .to_string(),
-        "revision Revision(9) doesn't come after Revision(10)"
-    );
-}
-
-#[test]
-fn only_a_current_version_can_be_retired() {
-    let mut history = History::default();
-    assert_eq!(
-        history.retire(Revision(1)),
-        Err(HistoryError::NothingToRetire)
-    );
-    written(&mut history, &[OWNER], 2);
-    history.retire(Revision(3)).unwrap();
-    assert_eq!(
-        history.retire(Revision(4)),
-        Err(HistoryError::NothingToRetire)
-    );
-    assert_eq!(
-        HistoryError::NothingToRetire.to_string(),
-        "the namespace has no latest version to retire"
-    );
+fn a_fact_counts_from_its_relation_s_epoch() {
+    let epochs = Epochs::following(None, [OWNER], Revision(10));
+    assert!(!epochs.counts(OWNER, Revision(9)));
+    assert!(epochs.counts(OWNER, Revision(10)));
+    assert!(epochs.counts(OWNER, Revision(11)));
+    assert!(!epochs.counts(BANNED, Revision(11)));
+    let mut all: Vec<_> = epochs.iter().collect();
+    all.sort();
+    assert_eq!(all, [(OWNER, Revision(10))]);
 }
 
 fn stored(
@@ -123,6 +71,10 @@ fn a_stored_version_keeps_its_epochs() {
     assert_eq!(version.revision(), Revision(30));
     assert_eq!(version.epoch(OWNER), Some(Revision(10)));
     assert_eq!(version.epoch(BANNED), Some(Revision(30)));
+    assert!(version.declares(OWNER));
+    assert!(version.counts(BANNED, Revision(30)));
+    assert!(!version.counts(BANNED, Revision(29)));
+    assert!(version.namespace().rewrite(&OWNER).is_some());
 }
 
 #[test]
@@ -139,30 +91,4 @@ fn a_stored_version_needs_an_epoch_for_exactly_each_relation() {
         stored(&[OWNER], &[(OWNER, 31)]).unwrap_err(),
         StoredVersionError::LaterEpoch(OWNER)
     );
-}
-
-/// A history resumed from a stored version carries its epochs on and
-/// refuses an entry that isn't later.
-#[test]
-fn a_resumed_history_goes_on_from_its_latest_entry() {
-    let latest = Arc::new(stored(&[OWNER], &[(OWNER, 10)]).unwrap());
-    let mut history = History::resume(Entry::Version(latest));
-    assert_eq!(
-        history.write(declaring(&[OWNER]), Revision(30)),
-        Err(HistoryError::NotLater {
-            last: Revision(30),
-            revision: Revision(30)
-        })
-    );
-    written(&mut history, &[OWNER, BANNED], 40);
-    let next = history.latest().unwrap();
-    assert_eq!(next.epoch(OWNER), Some(Revision(10)));
-    assert_eq!(next.epoch(BANNED), Some(Revision(40)));
-    let mut retired = History::resume(Entry::Retired(Revision(30)));
-    assert_eq!(
-        retired.retire(Revision(40)),
-        Err(HistoryError::NothingToRetire)
-    );
-    written(&mut retired, &[OWNER], 40);
-    assert_eq!(retired.latest().unwrap().epoch(OWNER), Some(Revision(40)));
 }
