@@ -72,3 +72,22 @@ async fn facts_the_namespaces_do_not_declare_are_refused() {
     assert!(file.is_ok());
     assert_eq!(world.head().await, Revision(1));
 }
+
+/// A seed holds as many facts as it likes, whatever one write holds.
+#[tokio::test]
+async fn a_large_seed_is_written_in_parts() {
+    let facts: Vec<String> = (0..250)
+        .map(|i| {
+            format!(
+                r#"{{ "namespace": "file", "resource": "f{i}", "relation": "owner", "subject": {{ "identity": "p{i}" }} }}"#
+            )
+        })
+        .collect();
+    let world = World::load(&[FILE], &format!("[{}]", facts.join(",")))
+        .await
+        .unwrap();
+    let set = resolve::subjectset(world.names(), &"file:f249#owner".parse().unwrap()).await;
+    let head = world.head().await;
+    let held = world.store().subjects(&set.unwrap(), head).await.unwrap();
+    assert_eq!(held.len(), 1);
+}

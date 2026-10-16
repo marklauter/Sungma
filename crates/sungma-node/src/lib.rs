@@ -40,6 +40,9 @@ use thiserror::Error;
 /// How many ids a lease takes at a time.
 const LEASE: NonZeroU32 = NonZeroU32::new(64).unwrap();
 
+/// How many facts a seed writes at a time.
+const SEED_FACTS: usize = 24;
+
 /// How many namespace versions Check keeps parsed.
 const VERSIONS: usize = 1024;
 
@@ -172,9 +175,10 @@ where
     C: Clock + Sync,
 {
     /// Creates each namespace in the documents, then adds the facts in the
-    /// fact document, through the write services, as a caller would. Every
-    /// document is parsed before anything is written. Meant for an empty
-    /// store: creating a namespace that has a version is refused.
+    /// fact document, through the write services, as a caller would, in as
+    /// many writes as the facts take. Every document is parsed before
+    /// anything is written. Meant for an empty store: creating a namespace
+    /// that has a version is refused.
     pub async fn seed(&self, namespaces: &[&str], facts: &str) -> Result<(), SeedError> {
         let documents = namespaces
             .iter()
@@ -190,9 +194,11 @@ where
                 )
                 .await?;
         }
-        if !facts.is_empty() {
+        // A new fact takes two rows and may name two namespaces, so this
+        // many fit one write whatever they are.
+        for facts in facts.chunks(SEED_FACTS) {
             FactWriteService::new(&self.interner, &self.writer)
-                .write(&facts, &[])
+                .write(facts, &[])
                 .await?;
         }
         Ok(())

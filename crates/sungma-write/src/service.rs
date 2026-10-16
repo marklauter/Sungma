@@ -34,6 +34,9 @@ pub enum FactWriteServiceError {
     /// its subjectset subject's relation.
     #[error("'{0}' names a relation the latest namespace version doesn't declare")]
     Undeclared(FactName),
+    /// More facts than one write holds; the caller splits them.
+    #[error("a write of {rows} rows is more than one write holds, {most}")]
+    TooLarge { rows: usize, most: usize },
     #[error(transparent)]
     Clock(ClockFault),
     #[error(transparent)]
@@ -98,6 +101,9 @@ where
                         "the store refused a fact it wasn't given to add: {fact:?}"
                     ))),
                 },
+                FactWriteError::TooLarge { rows, most } => {
+                    FactWriteServiceError::TooLarge { rows, most }
+                }
                 FactWriteError::Clock(fault) => FactWriteServiceError::Clock(fault),
                 FactWriteError::Store(error) => FactWriteServiceError::Store(error),
             })

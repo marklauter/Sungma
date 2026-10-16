@@ -223,7 +223,7 @@ async fn a_write_past_one_unit_of_work_is_refused<E: Edge>(edge: E) {
         assert!(
             refusal
                 .to_string()
-                .contains("more than one unit of work holds"),
+                .contains("more than one write holds"),
             "{refusal}"
         );
         assert_eq!(reader.head().await.unwrap(), head);
@@ -436,4 +436,31 @@ async fn an_insert_racing_a_drop_lands_before_it_or_not_at_all_on_memory() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_insert_racing_a_drop_lands_before_it_or_not_at_all_on_dynamodb() {
     an_insert_racing_a_drop_lands_before_it_or_not_at_all(MakeDynamo).await;
+}
+
+/// A name reader that lags: it never finds a name by key, as an eventual
+/// read can miss a name stored moments ago.
+#[derive(Clone)]
+struct Lagging<E>(NameRows<E>);
+
+impl<E: Edge> sungma_names::store::NameReader for Lagging<E> {
+    async fn id(&self, _: Pool, _: &str) -> Result<Option<u32>, sungma::store::StoreError> {
+        Ok(None)
+    }
+
+    async fn name(&self, pool: Pool, id: u32) -> Result<Option<String>, sungma::store::StoreError> {
+        self.0.name(pool, id).await
+    }
+}
+
+/// A version read whose eventual name read misses a name reads it again
+/// strongly, since names are stored before the versions that use them.
+#[tokio::test]
+async fn a_version_read_that_misses_a_name_reads_it_again() {
+    let edge = memory();
+    declared(&edge).await;
+    let lagging = Lagging(NameRows::new(edge.clone(), Consistency::Eventual));
+    let reader = RowReader::new(edge.clone(), lagging, parse as Parse, 16);
+    let version = reader.version(DOC, Revision(1)).await;
+    assert!(matches!(version, Ok(Some(_))), "{version:?}");
 }

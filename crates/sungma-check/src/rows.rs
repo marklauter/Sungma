@@ -22,6 +22,7 @@ use sungma::{
     version::Version,
 };
 use sungma_edge::read::{Consistency, ItemReader};
+use sungma_names::read::NameRows;
 use sungma_names::{store::NameReader, store::Pool};
 use sungma_schema::{
     facts::{self, Rows},
@@ -169,11 +170,14 @@ where
             .map_err(|error| StoreError(format!("a stored document is refused: {error}")))?;
         let mut ids = HashMap::new();
         for name in relations.names() {
-            let id = self
-                .names
-                .id(Pool::Relations, name.as_str())
-                .await?
-                .ok_or_else(|| StoreError(format!("relation '{name}' isn't interned")))?;
+            let mut id = self.names.id(Pool::Relations, name.as_str()).await?;
+            // Names are stored before the versions that use them, so a name
+            // an eventual read misses is read again strongly.
+            if id.is_none() {
+                let strong = NameRows::new(&self.items, Consistency::Strong);
+                id = strong.id(Pool::Relations, name.as_str()).await?;
+            }
+            let id = id.ok_or_else(|| StoreError(format!("relation '{name}' isn't interned")))?;
             ids.insert(name.clone(), RelationId(id));
         }
         let namespace = relations

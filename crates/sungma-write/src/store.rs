@@ -37,6 +37,10 @@ pub enum FactWriteError {
     /// the subject's relation. The fact would never count.
     #[error("the fact names a relation its namespace doesn't declare")]
     Undeclared(Fact),
+    /// The write takes more rows than one write holds, so the caller
+    /// splits it.
+    #[error("a write of {rows} rows is more than one write holds, {most}")]
+    TooLarge { rows: usize, most: usize },
     /// The clock can't give a revision it trusts.
     #[error(transparent)]
     Clock(#[from] ClockFault),

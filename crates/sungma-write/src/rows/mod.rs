@@ -174,11 +174,9 @@ fn gave_up() -> StoreError {
 
 /// Refuses a write of more than `most` rows, before the writer takes a
 /// reading.
-fn fits(steps: usize, most: usize) -> Result<(), StoreError> {
-    if steps <= most {
+fn fits(rows: usize, most: usize) -> Result<(), crate::store::FactWriteError> {
+    if rows <= most {
         return Ok(());
     }
-    Err(StoreError(format!(
-        "a write of {steps} rows is more than one unit of work holds, {most}"
-    )))
+    Err(crate::store::FactWriteError::TooLarge { rows, most })
 }

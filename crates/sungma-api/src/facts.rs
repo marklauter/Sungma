@@ -61,6 +61,7 @@ pub(crate) async fn write<E: Edge, S: Ids, C: Stamps>(
                 FactWriteServiceError::Unknown(_) | FactWriteServiceError::Undeclared(_) => {
                     StatusCode::UNPROCESSABLE_ENTITY
                 }
+                FactWriteServiceError::TooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
                 FactWriteServiceError::Clock(_) | FactWriteServiceError::Store(_) => {
                     StatusCode::BAD_GATEWAY
                 }

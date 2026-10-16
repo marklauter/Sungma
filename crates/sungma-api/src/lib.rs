@@ -31,7 +31,8 @@
 //!   a zookie ahead of the latest revision.
 //! - 404: a namespace read that finds no version.
 //! - 409: a namespace write whose `based_on` isn't the latest version.
-//! - 413: a body past the size limit.
+//! - 413: a body past the size limit, or a fact write past what one write
+//!   holds.
 //! - 415: a body that isn't sent as JSON.
 //! - 422: a refused write. A refused namespace document is 422 whatever
 //!   its problems, names included, so it lists them all in one reply.
