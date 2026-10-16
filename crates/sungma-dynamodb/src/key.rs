@@ -2,7 +2,7 @@
 //! need: an id is 4 bytes and a revision 8, both big-endian, and a resource
 //! id or identity is its bytes and a zero byte, which sorts below every
 //! printable character. Each key starts with a tag byte naming what kind of
-//! item it is. See `docs/notes/dynamodb-adapter-design.md`, section 2.
+//! item it is. See `docs/specs/dynamodb-adapter.md`.
 
 use std::fmt::Write;
 
