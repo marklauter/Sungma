@@ -6,7 +6,9 @@ use crate::{EdgeError, key::Key};
 
 pub trait Sequence {
     /// Advances the counter at `key` by `count` and returns the numbers it
-    /// passed over, which no other call returns. A counter starts at 0.
+    /// passed over, which no other call returns. A counter starts at 0 and
+    /// stops at `u64::MAX`: a call past it gets fewer numbers than it asked
+    /// for, and once there, none, so an empty range means none are left.
     fn next(
         &self,
         key: &Key,

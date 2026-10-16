@@ -1,7 +1,9 @@
 //! Keys: a partition and a sort key, each built from parts that encode so
 //! they sort in the order the parts do. A number is written big-endian at
-//! its full width, and text is its bytes and a zero byte, which sorts below
-//! every other byte, so a shorter text sorts before a longer one it starts.
+//! its full width. Text is its bytes, each zero byte written as `0 1`, and
+//! then `0 0`, which sorts below every byte a text goes on with, so a
+//! shorter text sorts before a longer one it starts and no text reads as
+//! two.
 
 use std::fmt;
 
@@ -28,12 +30,15 @@ impl Part for u64 {
     }
 }
 
-/// Text holds no zero byte; a zero byte inside text would end it early
-/// when the key is read back.
 impl Part for str {
     fn encode(&self, key: &mut Vec<u8>) {
-        key.extend_from_slice(self.as_bytes());
-        key.push(0);
+        for &byte in self.as_bytes() {
+            key.push(byte);
+            if byte == 0 {
+                key.push(1);
+            }
+        }
+        key.extend_from_slice(&[0, 0]);
     }
 }
 
@@ -115,11 +120,18 @@ impl<'a> Parts<'a> {
         self.take().map(u64::from_be_bytes)
     }
 
-    pub fn text(&mut self) -> Option<&'a str> {
-        let end = self.0.iter().position(|&byte| byte == 0)?;
-        let text = std::str::from_utf8(&self.0[..end]).ok()?;
-        self.0 = &self.0[end + 1..];
-        Some(text)
+    pub fn text(&mut self) -> Option<String> {
+        let mut bytes = Vec::new();
+        loop {
+            match self.byte()? {
+                0 => match self.byte()? {
+                    0 => return String::from_utf8(bytes).ok(),
+                    1 => bytes.push(0),
+                    _ => return None,
+                },
+                byte => bytes.push(byte),
+            }
+        }
     }
 
     /// `Some(value)` only when every byte was read.
