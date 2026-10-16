@@ -6,7 +6,7 @@
 //! that also promises its future can move between threads. Implementations
 //! still write a plain `async fn`.
 
-use std::{future::Future, ops::Range, sync::Arc};
+use std::{future::Future, ops::Range};
 
 use sungma::store::StoreError;
 use thiserror::Error;
@@ -42,24 +42,6 @@ pub trait NameReader {
 }
 
 impl<R: NameReader + Sync + ?Sized> NameReader for &R {
-    fn id(
-        &self,
-        pool: Pool,
-        name: &str,
-    ) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send {
-        R::id(self, pool, name)
-    }
-
-    fn name(
-        &self,
-        pool: Pool,
-        id: u32,
-    ) -> impl Future<Output = Result<Option<String>, StoreError>> + Send {
-        R::name(self, pool, id)
-    }
-}
-
-impl<R: NameReader + Send + Sync + ?Sized> NameReader for Arc<R> {
     fn id(
         &self,
         pool: Pool,
@@ -157,25 +139,6 @@ pub trait NameWriter {
 }
 
 impl<W: NameWriter + Sync + ?Sized> NameWriter for &W {
-    fn insert_if_absent(
-        &self,
-        pool: Pool,
-        name: &str,
-        id: u32,
-    ) -> impl Future<Output = Result<u32, StoreError>> + Send {
-        W::insert_if_absent(self, pool, name, id)
-    }
-
-    fn lease(
-        &self,
-        pool: Pool,
-        count: u32,
-    ) -> impl Future<Output = Result<Range<u32>, StoreError>> + Send {
-        W::lease(self, pool, count)
-    }
-}
-
-impl<W: NameWriter + Send + Sync + ?Sized> NameWriter for Arc<W> {
     fn insert_if_absent(
         &self,
         pool: Pool,
