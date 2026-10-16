@@ -1,7 +1,7 @@
 //! Keys encode so they sort as their parts do, and read back unambiguously.
 
 use proptest::prelude::*;
-use sungma_edge::key::{Parts, encode};
+use sungma_table::key::{Parts, encode};
 
 #[test]
 fn text_holding_a_zero_byte_is_not_two_texts() {

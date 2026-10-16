@@ -1,13 +1,13 @@
-//! The DynamoDB edge passes every edge test, on DynamoDB Local.
+//! The DynamoDB table passes every table test, on DynamoDB Local.
 
 mod common;
 
-use sungma_dynamodb::edge::DynamoEdge;
-use sungma_edge::edge_tests;
+use sungma_dynamodb::items::DynamoTable;
+use sungma_table::table_tests;
 
-edge_tests!(
-    DynamoEdge::new(common::table().await),
-    DynamoEdge::new(common::table().await)
+table_tests!(
+    DynamoTable::new(common::table().await),
+    DynamoTable::new(common::table().await)
 );
 
 #[tokio::test]

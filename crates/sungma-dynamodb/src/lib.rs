@@ -1,10 +1,10 @@
-//! The store edge on one DynamoDB table: items under binary hash and range
+//! One DynamoDB table as a key-value table: items under binary hash and range
 //! keys, units of work as transactions, and sequences as atomic adds. It
 //! knows nothing of what the items mean; each context lays out its own.
 //! Development runs it against DynamoDB Local. `docs/specs/dynamodb-adapter.md`
 //! specifies it.
 
-pub mod edge;
+pub mod items;
 mod table;
 
 use aws_sdk_dynamodb::{

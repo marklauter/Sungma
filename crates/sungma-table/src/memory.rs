@@ -1,4 +1,4 @@
-//! The edge in memory: items in a map sorted by partition and then sort
+//! The table in memory: items in a map sorted by partition and then sort
 //! key, behind a lock. Every read is strong, and work commits one unit at
 //! a time, so it never meets contention. [`MemorySequence`] keeps a
 //! counter per key.
@@ -11,7 +11,7 @@ use std::{
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
-    EdgeError,
+    TableError,
     item::Item,
     key::Key,
     read::{Consistency, ItemReader, Query},
@@ -35,7 +35,7 @@ impl MemoryTable {
 }
 
 impl ItemReader for MemoryTable {
-    async fn get(&self, key: &Key, _: Consistency) -> Result<Option<Item>, EdgeError> {
+    async fn get(&self, key: &Key, _: Consistency) -> Result<Option<Item>, TableError> {
         Ok(self.items.read().get(key).cloned())
     }
 
@@ -43,7 +43,7 @@ impl ItemReader for MemoryTable {
         &self,
         query: &Query,
         _: Consistency,
-    ) -> Result<Vec<(Vec<u8>, Item)>, EdgeError> {
+    ) -> Result<Vec<(Vec<u8>, Item)>, TableError> {
         let items = self.items.read();
         let first = Key {
             partition: query.partition.clone(),
@@ -119,7 +119,7 @@ impl MemorySequence {
 }
 
 impl Sequence for MemorySequence {
-    async fn next(&self, key: &Key, count: u64) -> Result<Range<u64>, EdgeError> {
+    async fn next(&self, key: &Key, count: u64) -> Result<Range<u64>, TableError> {
         let mut counters = self.counters.lock();
         let next = counters.entry(key.clone()).or_default();
         let start = *next;

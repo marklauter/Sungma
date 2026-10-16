@@ -1,5 +1,5 @@
 [package]
-name = "sungma-edge"
+name = "sungma-table"
 version.workspace = true
 edition.workspace = true
 
@@ -11,6 +11,6 @@ parking_lot.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-sungma-edge = { path = ".", features = ["testkit"] }
+sungma-table = { path = ".", features = ["testkit"] }
 proptest.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

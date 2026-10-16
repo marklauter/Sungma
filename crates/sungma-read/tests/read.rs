@@ -1,4 +1,4 @@
-//! The API's reads over rows the write context wrote, on the memory edge.
+//! The API's reads over rows the write context wrote, on the memory table.
 
 use std::num::NonZeroU32;
 
@@ -10,15 +10,15 @@ use sungma::{
     rewrite::Rewrite,
 };
 use sungma_clock::DevClock;
-use sungma_edge::{
-    memory::{MemorySequence, MemoryTable},
-    read::Consistency,
-};
 use sungma_lang::namespace;
 use sungma_names::intern::LeasingInterner;
 use sungma_names::{read::NameRows, write::NameRowWriter};
 use sungma_names::{resolve, store::ReadingDictionary};
 use sungma_read::{ReadError, facts::FactReadService, namespaces::NamespaceReadService};
+use sungma_table::{
+    memory::{MemorySequence, MemoryTable},
+    read::Consistency,
+};
 use sungma_write::{
     rows::RowWriter,
     service::NamespaceWriteService,

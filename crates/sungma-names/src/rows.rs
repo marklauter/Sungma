@@ -3,7 +3,7 @@
 use sungma::store::StoreError;
 
 use crate::store::Pool;
-use sungma_edge::{EdgeError, key::Key};
+use sungma_table::{TableError, key::Key};
 
 use sungma_schema::tags::NAMES;
 
@@ -39,6 +39,6 @@ pub fn counter(at: Pool) -> Key {
     Key::new(pool(at), COUNTER)
 }
 
-pub fn failed(error: EdgeError) -> StoreError {
+pub fn failed(error: TableError) -> StoreError {
     StoreError(error.0)
 }

@@ -5,7 +5,7 @@ use std::future::Future;
 use thiserror::Error;
 
 use crate::{
-    EdgeError,
+    TableError,
     item::{Item, PARTITION_KEY, SORT_KEY, Value},
     key::Key,
 };
@@ -160,7 +160,7 @@ pub enum CommitError {
     #[error("{0}")]
     Unwritable(String),
     #[error(transparent)]
-    Failed(#[from] EdgeError),
+    Failed(#[from] TableError),
 }
 
 pub trait ItemWriter {

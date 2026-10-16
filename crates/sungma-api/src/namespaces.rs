@@ -36,7 +36,9 @@ use sungma_write::{
     store::{NamespaceWrite, NamespaceWriteError},
 };
 
-use crate::{AppState, Edge, Ids, Refused, Stamps, Written, Zookie, accept, failure, read_failure};
+use crate::{
+    AppState, Ids, Items, Refused, Stamps, Written, Zookie, accept, failure, read_failure,
+};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -77,7 +79,7 @@ struct Conflict {
     latest: Option<Zookie>,
 }
 
-pub(crate) async fn write<E: Edge, S: Ids, C: Stamps>(
+pub(crate) async fn write<E: Items, S: Ids, C: Stamps>(
     State(state): State<Arc<AppState<E, S, C>>>,
     headers: HeaderMap,
     body: Result<Json<WriteBody>, JsonRejection>,
@@ -170,7 +172,7 @@ struct ReadReply {
     zookie: Zookie,
 }
 
-pub(crate) async fn read<E: Edge, S: Ids, C: Stamps>(
+pub(crate) async fn read<E: Items, S: Ids, C: Stamps>(
     State(state): State<Arc<AppState<E, S, C>>>,
     headers: HeaderMap,
     body: Result<Json<ReadBody>, JsonRejection>,
@@ -181,7 +183,7 @@ pub(crate) async fn read<E: Edge, S: Ids, C: Stamps>(
         Err(refused) => return refused.reply(&request_id),
     };
     let node = &state.node;
-    let service = NamespaceReadService::new(node.names(), node.edge());
+    let service = NamespaceReadService::new(node.names(), node.table());
     let read = match service
         .read(&body.namespace, body.zookie.map(Revision::from))
         .await

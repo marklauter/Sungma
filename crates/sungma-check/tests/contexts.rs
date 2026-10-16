@@ -1,7 +1,7 @@
-//! What the write context and Check's reader do over one edge beyond the
+//! What the write context and Check's reader do over one table beyond the
 //! shared store tests: writers with clocks of their own, the unit of work's
 //! limit, names a version needs, races between writers, and rows Sungma
-//! didn't write. Each test runs on the memory edge and on DynamoDB Local.
+//! didn't write. Each test runs on the memory table and on DynamoDB Local.
 
 mod common;
 
@@ -20,8 +20,11 @@ use sungma_check::{
     store::{FactReader, NamespaceReader},
 };
 use sungma_clock::DevClock;
-use sungma_dynamodb::edge::DynamoEdge;
-use sungma_edge::{
+use sungma_dynamodb::items::DynamoTable;
+use sungma_names::store::NameWriter;
+use sungma_names::store::Pool;
+use sungma_names::{read::NameRows, write::NameRowWriter};
+use sungma_table::{
     item::{Item, Value},
     key::{Key, encode},
     memory::{MemorySequence, MemoryTable},
@@ -29,9 +32,6 @@ use sungma_edge::{
     sequence::Sequence,
     write::{ItemWriter, Step, Work},
 };
-use sungma_names::store::NameWriter;
-use sungma_names::store::Pool;
-use sungma_names::{read::NameRows, write::NameRowWriter};
 use sungma_write::{
     rows::RowWriter,
     store::{
@@ -53,12 +53,12 @@ fn parse(document: &str) -> Result<(NamespaceName, Namespace<RelationName>), Str
         .map_err(|errors| format!("{errors:?}"))
 }
 
-/// An edge and its sequence, shared by every writer and reader a test makes.
-trait Edge: ItemReader + ItemWriter + Sequence + Clone + Send + Sync + 'static {}
+/// A table and its sequence, shared by every writer and reader a test makes.
+trait Table: ItemReader + ItemWriter + Sequence + Clone + Send + Sync + 'static {}
 
-impl<T: ItemReader + ItemWriter + Sequence + Clone + Send + Sync + 'static> Edge for T {}
+impl<T: ItemReader + ItemWriter + Sequence + Clone + Send + Sync + 'static> Table for T {}
 
-/// The memory table and sequence as one edge.
+/// The memory table and sequence as one table.
 #[derive(Clone)]
 struct Memory(Arc<MemoryTable>, Arc<MemorySequence>);
 
@@ -67,15 +67,15 @@ impl ItemReader for Memory {
         &self,
         key: &Key,
         consistency: Consistency,
-    ) -> Result<Option<Item>, sungma_edge::EdgeError> {
+    ) -> Result<Option<Item>, sungma_table::TableError> {
         self.0.get(key, consistency).await
     }
 
     async fn query(
         &self,
-        query: &sungma_edge::read::Query,
+        query: &sungma_table::read::Query,
         consistency: Consistency,
-    ) -> Result<Vec<(Vec<u8>, Item)>, sungma_edge::EdgeError> {
+    ) -> Result<Vec<(Vec<u8>, Item)>, sungma_table::TableError> {
         self.0.query(query, consistency).await
     }
 }
@@ -85,7 +85,7 @@ impl ItemWriter for Memory {
         self.0.max_steps()
     }
 
-    async fn commit(&self, work: Work) -> Result<(), sungma_edge::write::CommitError> {
+    async fn commit(&self, work: Work) -> Result<(), sungma_table::write::CommitError> {
         self.0.commit(work).await
     }
 }
@@ -95,7 +95,7 @@ impl Sequence for Memory {
         &self,
         key: &Key,
         count: u64,
-    ) -> Result<std::ops::Range<u64>, sungma_edge::EdgeError> {
+    ) -> Result<std::ops::Range<u64>, sungma_table::TableError> {
         self.1.next(key, count).await
     }
 }
@@ -107,23 +107,23 @@ fn memory() -> Memory {
     )
 }
 
-async fn dynamo() -> DynamoEdge {
-    DynamoEdge::new(common::table().await)
+async fn dynamo() -> DynamoTable {
+    DynamoTable::new(common::table().await)
 }
 
 /// A writer with a clock of its own, as a node of its own has.
-fn writer<E: Edge>(edge: &E, clock: DevClock) -> RowWriter<E, E, DevClock, NameRows<E>, Print> {
-    let names = NameRows::new(edge.clone(), Consistency::Strong);
-    RowWriter::new(edge.clone(), edge.clone(), clock, names, print as Print)
+fn writer<E: Table>(table: &E, clock: DevClock) -> RowWriter<E, E, DevClock, NameRows<E>, Print> {
+    let names = NameRows::new(table.clone(), Consistency::Strong);
+    RowWriter::new(table.clone(), table.clone(), clock, names, print as Print)
 }
 
-fn reader<E: Edge>(edge: &E) -> RowReader<E, NameRows<E>, Parse> {
-    let names = NameRows::new(edge.clone(), Consistency::Eventual);
-    RowReader::new(edge.clone(), names, parse as Parse, 16)
+fn reader<E: Table>(table: &E) -> RowReader<E, NameRows<E>, Parse> {
+    let names = NameRows::new(table.clone(), Consistency::Eventual);
+    RowReader::new(table.clone(), names, parse as Parse, 16)
 }
 
-fn names<E: Edge>(edge: &E) -> NameRowWriter<E, E, E> {
-    NameRowWriter::new(edge.clone(), edge.clone(), edge.clone())
+fn names<E: Table>(table: &E) -> NameRowWriter<E, E, E> {
+    NameRowWriter::new(table.clone(), table.clone(), table.clone())
 }
 
 const DOC: NamespaceId = NamespaceId(0);
@@ -135,8 +135,8 @@ fn declaring(relation: RelationId) -> Namespace {
 }
 
 /// Interns `doc`, `owner` and `other`, and creates `doc` declaring `owner`.
-async fn declared<E: Edge>(edge: &E) -> Revision {
-    let names = names(edge);
+async fn declared<E: Table>(table: &E) -> Revision {
+    let names = names(table);
     for (pool, name, id) in [
         (Pool::Namespaces, "doc", DOC.0),
         (Pool::Relations, "owner", OWNER.0),
@@ -144,7 +144,7 @@ async fn declared<E: Edge>(edge: &E) -> Revision {
     ] {
         names.insert_if_absent(pool, name, id).await.unwrap();
     }
-    writer(edge, DevClock::default())
+    writer(table, DevClock::default())
         .write_namespace(DOC, NamespaceWrite::Create(declaring(OWNER)))
         .await
         .unwrap()
@@ -165,22 +165,22 @@ fn owner(id: &str, who: &str) -> Fact {
 
 /// A writer whose clock is behind the head is refused, moves its clock
 /// past the head, and lands its write after every earlier one.
-async fn a_writer_behind_the_head_catches_up<E: Edge>(edge: E) {
-    declared(&edge).await;
-    let ahead = writer(&edge, DevClock::default());
+async fn a_writer_behind_the_head_catches_up<E: Table>(table: E) {
+    declared(&table).await;
+    let ahead = writer(&table, DevClock::default());
     // Further behind than sixteen tries a revision apart would reach.
     for _ in 0..20 {
         ahead.write(&[]).await.unwrap();
     }
-    let behind = writer(&edge, DevClock::default());
+    let behind = writer(&table, DevClock::default());
     let landed = behind.write(&[Insert(owner("a", "alice"))]).await.unwrap();
     assert_eq!(landed, Revision(22));
-    let reader = reader(&edge);
+    let reader = reader(&table);
     assert_eq!(reader.head().await.unwrap(), Revision(22));
     let set = owner("a", "alice").subjectset;
     assert_eq!(reader.subjects(&set, Revision(21)).await.unwrap(), []);
     assert_eq!(reader.subjects(&set, Revision(22)).await.unwrap().len(), 1);
-    let version = writer(&edge, DevClock::default())
+    let version = writer(&table, DevClock::default())
         .write_namespace(
             DOC,
             NamespaceWrite::NewVersion {
@@ -191,8 +191,8 @@ async fn a_writer_behind_the_head_catches_up<E: Edge>(edge: E) {
         .await
         .unwrap();
     assert_eq!(version, Revision(23));
-    let names = NameRows::new(edge.clone(), Consistency::Strong);
-    let opened = RowWriter::dev(edge.clone(), edge, names, print as Print)
+    let names = NameRows::new(table.clone(), Consistency::Strong);
+    let opened = RowWriter::dev(table.clone(), table, names, print as Print)
         .await
         .unwrap();
     assert_eq!(opened.write(&[]).await.unwrap(), Revision(24));
@@ -200,10 +200,10 @@ async fn a_writer_behind_the_head_catches_up<E: Edge>(edge: E) {
 
 /// A unit of work holds 100 rows; a larger write is refused before it's
 /// committed, takes no revision, and stores nothing.
-async fn a_write_past_one_unit_of_work_is_refused<E: Edge>(edge: E) {
-    declared(&edge).await;
-    let writer = writer(&edge, DevClock::default());
-    let reader = reader(&edge);
+async fn a_write_past_one_unit_of_work_is_refused<E: Table>(table: E) {
+    declared(&table).await;
+    let writer = writer(&table, DevClock::default());
+    let reader = reader(&table);
     let grants = |count: usize| -> Vec<_> {
         (0..count)
             .map(|i| Insert(owner("a", &format!("p{i}"))))
@@ -232,8 +232,8 @@ async fn a_write_past_one_unit_of_work_is_refused<E: Edge>(edge: E) {
 
 /// A namespace write prints its document, so it needs a name for the
 /// namespace and each relation.
-async fn a_namespace_without_names_is_refused<E: Edge>(edge: E) {
-    let writer = writer(&edge, DevClock::default());
+async fn a_namespace_without_names_is_refused<E: Table>(table: E) {
+    let writer = writer(&table, DevClock::default());
     let refused = writer
         .write_namespace(DOC, NamespaceWrite::Create(declaring(OWNER)))
         .await
@@ -242,7 +242,7 @@ async fn a_namespace_without_names_is_refused<E: Edge>(edge: E) {
         refused.to_string(),
         "store failure: Namespaces id 0 has no name"
     );
-    let names = names(&edge);
+    let names = names(&table);
     names
         .insert_if_absent(Pool::Namespaces, "doc", 0)
         .await
@@ -259,13 +259,13 @@ async fn a_namespace_without_names_is_refused<E: Edge>(edge: E) {
 
 /// Writers each with a clock of its own, all based on one version, race
 /// for it: the unit of work's conditions let exactly one through.
-async fn of_writers_on_one_version_exactly_one_succeeds<E: Edge>(make: impl AsyncMake<E>) {
+async fn of_writers_on_one_version_exactly_one_succeeds<E: Table>(make: impl AsyncMake<E>) {
     for _ in 0..5 {
-        let edge = make.make().await;
-        let first = declared(&edge).await;
+        let table = make.make().await;
+        let first = declared(&table).await;
         let racers: Vec<_> = (0..4)
             .map(|_| {
-                let node = writer(&edge, DevClock::default());
+                let node = writer(&table, DevClock::default());
                 tokio::spawn(async move {
                     let write = NamespaceWrite::NewVersion {
                         based_on: first,
@@ -286,13 +286,13 @@ async fn of_writers_on_one_version_exactly_one_succeeds<E: Edge>(make: impl Asyn
 /// A fact write is judged by the latest versions when it lands: an insert
 /// under a relation another writer drops at the same time lands before the
 /// drop, or is refused.
-async fn an_insert_racing_a_drop_lands_before_it_or_not_at_all<E: Edge>(make: impl AsyncMake<E>) {
+async fn an_insert_racing_a_drop_lands_before_it_or_not_at_all<E: Table>(make: impl AsyncMake<E>) {
     for _ in 0..10 {
-        let edge = make.make().await;
-        let first = declared(&edge).await;
+        let table = make.make().await;
+        let first = declared(&table).await;
         // Far ahead, so the head never refuses the insert.
-        let facts = writer(&edge, DevClock::starting_after(Revision(1000)));
-        let namespaces = writer(&edge, DevClock::default());
+        let facts = writer(&table, DevClock::starting_after(Revision(1000)));
+        let namespaces = writer(&table, DevClock::default());
         let grants: Vec<_> = (0..40)
             .map(|i| Insert(owner("a", &format!("p{i}"))))
             .collect();
@@ -305,7 +305,7 @@ async fn an_insert_racing_a_drop_lands_before_it_or_not_at_all<E: Edge>(make: im
             namespaces.write_namespace(DOC, write).await.unwrap()
         });
         let (inserted, dropped) = (insert.await.unwrap(), drop.await.unwrap());
-        let reader = reader(&edge);
+        let reader = reader(&table);
         let latest = reader.version(DOC, Revision(2000)).await.unwrap().unwrap();
         assert!(latest.declares(OTHER));
         match inserted {
@@ -325,8 +325,8 @@ async fn an_insert_racing_a_drop_lands_before_it_or_not_at_all<E: Edge>(make: im
 }
 
 /// Rows Sungma didn't write are refused when read.
-async fn a_row_sungma_did_not_write_is_refused<E: Edge>(edge: E) {
-    declared(&edge).await;
+async fn a_row_sungma_did_not_write_is_refused<E: Table>(table: E) {
+    declared(&table).await;
     let insert = |key: Key, item: Item| Work(vec![Step::Insert { key, item }]);
     let set = owner("a", "alice").subjectset;
     let partition = sungma_schema::facts::partition(&set);
@@ -339,7 +339,7 @@ async fn a_row_sungma_did_not_write_is_refused<E: Edge>(edge: E) {
             Item::new().with("written", Value::Number(6)),
         ),
     ];
-    let reader = reader(&edge);
+    let reader = reader(&table);
     for (sort, item) in rows {
         let other = owner("b", "x").subjectset;
         let key = Key {
@@ -350,23 +350,24 @@ async fn a_row_sungma_did_not_write_is_refused<E: Edge>(edge: E) {
             },
             sort,
         };
-        edge.commit(insert(key, item)).await.unwrap();
+        table.commit(insert(key, item)).await.unwrap();
     }
     assert!(reader.subjects(&set, Revision(10)).await.is_err());
     let other = owner("b", "x").subjectset;
     assert!(reader.subjects(&other, Revision(10)).await.is_err());
     // A latest row without a revision.
     let ghost = NamespaceId(9);
-    edge.commit(insert(
-        sungma_schema::namespaces::latest_key(ghost),
-        Item::new().with("document", Value::Text("{}".to_owned())),
-    ))
-    .await
-    .unwrap();
+    table
+        .commit(insert(
+            sungma_schema::namespaces::latest_key(ghost),
+            Item::new().with("document", Value::Text("{}".to_owned())),
+        ))
+        .await
+        .unwrap();
     assert!(reader.version(ghost, Revision(10)).await.is_err());
 }
 
-/// Makes a fresh edge, for tests that make several.
+/// Makes a fresh table, for tests that make several.
 trait AsyncMake<E>: Send + Sync {
     fn make(&self) -> impl std::future::Future<Output = E> + Send;
 }
@@ -381,8 +382,8 @@ impl AsyncMake<Memory> for MakeMemory {
 
 struct MakeDynamo;
 
-impl AsyncMake<DynamoEdge> for MakeDynamo {
-    async fn make(&self) -> DynamoEdge {
+impl AsyncMake<DynamoTable> for MakeDynamo {
+    async fn make(&self) -> DynamoTable {
         dynamo().await
     }
 }
@@ -441,7 +442,7 @@ async fn an_insert_racing_a_drop_lands_before_it_or_not_at_all_on_dynamodb() {
 #[derive(Clone)]
 struct Lagging<E>(NameRows<E>);
 
-impl<E: Edge> sungma_names::store::NameReader for Lagging<E> {
+impl<E: Table> sungma_names::store::NameReader for Lagging<E> {
     async fn id(&self, _: Pool, _: &str) -> Result<Option<u32>, sungma::store::StoreError> {
         Ok(None)
     }
@@ -455,10 +456,10 @@ impl<E: Edge> sungma_names::store::NameReader for Lagging<E> {
 /// strongly, since names are stored before the versions that use them.
 #[tokio::test]
 async fn a_version_read_that_misses_a_name_reads_it_again() {
-    let edge = memory();
-    declared(&edge).await;
-    let lagging = Lagging(NameRows::new(edge.clone(), Consistency::Eventual));
-    let reader = RowReader::new(edge.clone(), lagging, parse as Parse, 16);
+    let table = memory();
+    declared(&table).await;
+    let lagging = Lagging(NameRows::new(table.clone(), Consistency::Eventual));
+    let reader = RowReader::new(table.clone(), lagging, parse as Parse, 16);
     let version = reader.version(DOC, Revision(1)).await;
     assert!(matches!(version, Ok(Some(_))), "{version:?}");
 }
@@ -467,9 +468,9 @@ async fn a_version_read_that_misses_a_name_reads_it_again() {
 /// trying again: the write reports the row rather than a lost race.
 #[tokio::test]
 async fn a_span_its_pointer_disagrees_with_is_reported() {
-    let edge = memory();
-    declared(&edge).await;
-    let writer = writer(&edge, DevClock::default());
+    let table = memory();
+    declared(&table).await;
+    let writer = writer(&table, DevClock::default());
     let fact = owner("a", "alice");
     let written = writer.write(&[Insert(fact.clone())]).await.unwrap();
     // Retire the span behind the pointer's back.
@@ -480,7 +481,7 @@ async fn a_span_its_pointer_disagrees_with_is_reported() {
         remove: vec![],
         expect: vec![],
     };
-    edge.commit(Work(vec![retire])).await.unwrap();
+    table.commit(Work(vec![retire])).await.unwrap();
     let refused = writer.write(&[Retire(fact)]).await.unwrap_err();
     let message = refused.to_string();
     assert!(!message.contains("races"), "{message}");

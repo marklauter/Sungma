@@ -5,4 +5,4 @@ edition.workspace = true
 
 [dependencies]
 sungma.workspace = true
-sungma-edge.workspace = true
+sungma-table.workspace = true

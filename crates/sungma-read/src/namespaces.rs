@@ -1,9 +1,9 @@
 //! Reading a namespace's version as its stored document.
 
 use sungma::{name::NamespaceName, revision::Revision, store::StoreError};
-use sungma_edge::read::ItemReader;
 use sungma_names::{resolve, store::Dictionary};
 use sungma_schema::namespaces::{self, Entry};
+use sungma_table::read::ItemReader;
 
 use crate::{READ, ReadError, revision};
 

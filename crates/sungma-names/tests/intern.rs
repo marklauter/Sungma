@@ -9,10 +9,6 @@ use std::{
 
 use proptest::{collection::vec, prelude::*, test_runner::TestCaseError};
 use sungma::store::StoreError;
-use sungma_edge::{
-    memory::{MemorySequence, MemoryTable},
-    read::Consistency,
-};
 use sungma_names::{
     intern::LeasingInterner,
     read::NameRows,
@@ -23,8 +19,12 @@ use sungma_names::{
     },
     write::NameRowWriter,
 };
+use sungma_table::{
+    memory::{MemorySequence, MemoryTable},
+    read::Consistency,
+};
 
-/// Names over the memory edge, which every node shares.
+/// Names over the memory table, which every node shares.
 #[derive(Default)]
 struct Store {
     table: MemoryTable,

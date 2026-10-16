@@ -1,4 +1,4 @@
-//! Check's reads over the store edge: facts from their rows, and namespace
+//! Check's reads over the table: facts from their rows, and namespace
 //! versions built from their rows and kept in a buffer. A stored version
 //! never changes, so a buffered one is never stale: a read finds which
 //! entry covers its revision, takes the version from the buffer, and reads
@@ -21,7 +21,6 @@ use sungma::{
     store::StoreError,
     version::Version,
 };
-use sungma_edge::read::{Consistency, ItemReader};
 use sungma_names::read::NameRows;
 use sungma_names::{store::NameReader, store::Pool};
 use sungma_schema::{
@@ -29,6 +28,7 @@ use sungma_schema::{
     head,
     namespaces::{self, Entry},
 };
+use sungma_table::read::{Consistency, ItemReader};
 
 /// Reads a stored namespace document back as a namespace with names.
 /// Injected, so Check needn't know the document language.

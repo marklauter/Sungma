@@ -2,7 +2,7 @@
 
 use std::{future::Future, ops::Range};
 
-use crate::{EdgeError, key::Key};
+use crate::{TableError, key::Key};
 
 pub trait Sequence {
     /// Advances the counter at `key` by `count` and returns the numbers it
@@ -13,7 +13,7 @@ pub trait Sequence {
         &self,
         key: &Key,
         count: u64,
-    ) -> impl Future<Output = Result<Range<u64>, EdgeError>> + Send;
+    ) -> impl Future<Output = Result<Range<u64>, TableError>> + Send;
 }
 
 impl<S: Sequence + Sync + ?Sized> Sequence for &S {
@@ -21,7 +21,7 @@ impl<S: Sequence + Sync + ?Sized> Sequence for &S {
         &self,
         key: &Key,
         count: u64,
-    ) -> impl Future<Output = Result<Range<u64>, EdgeError>> + Send {
+    ) -> impl Future<Output = Result<Range<u64>, TableError>> + Send {
         S::next(self, key, count)
     }
 }
@@ -31,7 +31,7 @@ impl<S: Sequence + Send + Sync + ?Sized> Sequence for std::sync::Arc<S> {
         &self,
         key: &Key,
         count: u64,
-    ) -> impl Future<Output = Result<Range<u64>, EdgeError>> + Send {
+    ) -> impl Future<Output = Result<Range<u64>, TableError>> + Send {
         S::next(self, key, count)
     }
 }

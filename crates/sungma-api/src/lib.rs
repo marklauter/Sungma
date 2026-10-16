@@ -69,21 +69,21 @@ use sungma::{
 };
 use sungma_check::{CheckRequest, CheckService, Failure, MemoryAuditLog, RequestContext, Verdict};
 use sungma_clock::{Clock, DevClock};
-use sungma_edge::{
+use sungma_node::Node;
+use sungma_read::ReadError;
+use sungma_table::{
     memory::{MemorySequence, MemoryTable},
     read::ItemReader,
     sequence::Sequence,
     write::ItemWriter,
 };
-use sungma_node::Node;
-use sungma_read::ReadError;
 
 pub use sungma_node::SeedError;
 
-/// The store edge every route reads and writes through.
-pub trait Edge: ItemReader + ItemWriter + Clone + Send + Sync + 'static {}
+/// The table every route reads and writes through.
+pub trait Items: ItemReader + ItemWriter + Clone + Send + Sync + 'static {}
 
-impl<T: ItemReader + ItemWriter + Clone + Send + Sync + 'static> Edge for T {}
+impl<T: ItemReader + ItemWriter + Clone + Send + Sync + 'static> Items for T {}
 
 /// Where interned ids are leased from.
 pub trait Ids: Sequence + Send + Sync + 'static {}
@@ -104,13 +104,13 @@ pub struct AppState<E = Arc<MemoryTable>, S = Arc<MemorySequence>, C = DevClock>
 }
 
 impl AppState {
-    /// A state on an empty memory edge.
+    /// A state on an empty memory table.
     pub fn memory() -> Self {
         Self::new(Node::memory())
     }
 }
 
-impl<E: Edge, S: Ids, C: Stamps> AppState<E, S, C> {
+impl<E: Items, S: Ids, C: Stamps> AppState<E, S, C> {
     pub fn new(node: Node<E, S, C>) -> Self {
         Self {
             node,
@@ -142,7 +142,7 @@ impl<E: Edge, S: Ids, C: Stamps> AppState<E, S, C> {
     }
 }
 
-pub fn router<E: Edge, S: Ids, C: Stamps>(state: Arc<AppState<E, S, C>>) -> Router {
+pub fn router<E: Items, S: Ids, C: Stamps>(state: Arc<AppState<E, S, C>>) -> Router {
     Router::new()
         .route("/check", post(check::<E, S, C>))
         .route("/facts/write", post(facts::write::<E, S, C>))
@@ -210,7 +210,7 @@ struct ErrorReply {
     error: String,
 }
 
-async fn check<E: Edge, S: Ids, C: Stamps>(
+async fn check<E: Items, S: Ids, C: Stamps>(
     State(state): State<Arc<AppState<E, S, C>>>,
     headers: HeaderMap,
     body: Result<Json<CheckBody>, JsonRejection>,

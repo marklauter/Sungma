@@ -9,10 +9,6 @@ use sungma::{
     id::NamespaceId, namespace::Namespace, revision::Revision, store::StoreError, version::Epochs,
 };
 use sungma_clock::Clock;
-use sungma_edge::{
-    read::{Consistency, ItemReader},
-    write::{ItemWriter, Work},
-};
 use sungma_names::{
     resolve,
     store::{NameReader, ReadingDictionary},
@@ -20,6 +16,10 @@ use sungma_names::{
 use sungma_schema::{
     head,
     namespaces::{self, Entry},
+};
+use sungma_table::{
+    read::{Consistency, ItemReader},
+    write::{ItemWriter, Work},
 };
 
 use super::{Failure, Printer, RowWriter, Tried, gave_up};

@@ -1,5 +1,5 @@
-//! The tests every edge passes, so a test of the memory table holds for
-//! DynamoDB too. Each takes a fresh, empty edge.
+//! The tests every table passes, so a test of the memory table holds for
+//! DynamoDB too. Each takes a fresh, empty table.
 
 use crate::{
     item::{Item, Value},
@@ -9,7 +9,7 @@ use crate::{
     write::{CommitError, Expect, ItemWriter, Step, Work},
 };
 
-/// Every read, strong and eventual: an edge that reads strongly when it's
+/// Every read, strong and eventual: an table that reads strongly when it's
 /// asked for eventual reads still passes.
 const READS: [Consistency; 2] = [Consistency::Strong, Consistency::Eventual];
 
@@ -21,42 +21,42 @@ fn key(partition: &str, sort: u64) -> Key {
     Key::new(partition, sort)
 }
 
-async fn commit<E: ItemWriter>(edge: &E, steps: Vec<Step>) -> Result<(), CommitError> {
-    edge.commit(Work(steps)).await
+async fn commit<E: ItemWriter>(table: &E, steps: Vec<Step>) -> Result<(), CommitError> {
+    table.commit(Work(steps)).await
 }
 
-async fn insert<E: ItemWriter>(edge: &E, key: Key, item: Item) {
-    commit(edge, vec![Step::Insert { key, item }])
+async fn insert<E: ItemWriter>(table: &E, key: Key, item: Item) {
+    commit(table, vec![Step::Insert { key, item }])
         .await
         .unwrap();
 }
 
 /// An inserted item reads back; a key never written reads as none.
-pub async fn an_item_reads_back<E: ItemReader + ItemWriter>(edge: E) {
+pub async fn an_item_reads_back<E: ItemReader + ItemWriter>(table: E) {
     let stored = Item::new()
         .with("n", Value::Number(7))
         .with("t", Value::Text("seven".to_owned()))
         .with("f", Value::Flag(true))
         .with("m", Value::Map([("1".to_owned(), Value::Number(1))].into()));
-    insert(&edge, key("p", 1), stored.clone()).await;
+    insert(&table, key("p", 1), stored.clone()).await;
     for read in READS {
         assert_eq!(
-            edge.get(&key("p", 1), read).await.unwrap(),
+            table.get(&key("p", 1), read).await.unwrap(),
             Some(stored.clone())
         );
-        assert_eq!(edge.get(&key("p", 2), read).await.unwrap(), None);
-        assert_eq!(edge.get(&key("q", 1), read).await.unwrap(), None);
+        assert_eq!(table.get(&key("p", 2), read).await.unwrap(), None);
+        assert_eq!(table.get(&key("q", 1), read).await.unwrap(), None);
     }
 }
 
 /// A query takes its partition's items in sort key order, within its
 /// range, either way, up to its limit.
-pub async fn a_query_takes_a_run_of_one_partition<E: ItemReader + ItemWriter>(edge: E) {
+pub async fn a_query_takes_a_run_of_one_partition<E: ItemReader + ItemWriter>(table: E) {
     for sort in [3, 1, 2, 10] {
-        insert(&edge, key("p", sort), item(sort)).await;
+        insert(&table, key("p", sort), item(sort)).await;
     }
-    insert(&edge, key("pp", 0), item(0)).await;
-    insert(&edge, key("o", 0), item(0)).await;
+    insert(&table, key("pp", 0), item(0)).await;
+    insert(&table, key("o", 0), item(0)).await;
     let numbers = |run: Vec<(Vec<u8>, Item)>| {
         run.into_iter()
             .map(|(sort, item)| {
@@ -100,11 +100,11 @@ pub async fn a_query_takes_a_run_of_one_partition<E: ItemReader + ItemWriter>(ed
             limit,
         };
         for read in READS {
-            let run = edge.query(&query, read).await.unwrap();
+            let run = table.query(&query, read).await.unwrap();
             assert_eq!(numbers(run), expected, "{range:?} {descending} {limit:?}");
         }
     }
-    let empty = edge
+    let empty = table
         .query(&Query::partition(encode("none")), Consistency::Strong)
         .await
         .unwrap();
@@ -113,12 +113,12 @@ pub async fn a_query_takes_a_run_of_one_partition<E: ItemReader + ItemWriter>(ed
 
 /// Each kind of step holds or refuses as it says, and a refused unit of
 /// work names every step that failed and writes nothing.
-pub async fn work_commits_whole_or_not_at_all<E: ItemReader + ItemWriter>(edge: E) {
-    insert(&edge, key("p", 1), item(1)).await;
-    insert(&edge, key("p", 4), item(4)).await;
+pub async fn work_commits_whole_or_not_at_all<E: ItemReader + ItemWriter>(table: E) {
+    insert(&table, key("p", 1), item(1)).await;
+    insert(&table, key("p", 4), item(4)).await;
     let n = |n| Expect::Equals("n".to_owned(), Value::Number(n));
     let refused = commit(
-        &edge,
+        &table,
         vec![
             Step::Insert {
                 key: key("p", 2),
@@ -144,11 +144,11 @@ pub async fn work_commits_whole_or_not_at_all<E: ItemReader + ItemWriter>(edge: 
     .await;
     assert_eq!(refused, Err(CommitError::Refused(vec![1, 2, 3])));
     assert_eq!(
-        edge.get(&key("p", 2), Consistency::Strong).await.unwrap(),
+        table.get(&key("p", 2), Consistency::Strong).await.unwrap(),
         None
     );
     assert_eq!(
-        edge.get(&key("p", 1), Consistency::Strong).await.unwrap(),
+        table.get(&key("p", 1), Consistency::Strong).await.unwrap(),
         Some(item(1))
     );
 
@@ -156,7 +156,7 @@ pub async fn work_commits_whole_or_not_at_all<E: ItemReader + ItemWriter>(edge: 
         .with("n", Value::Number(5))
         .with("t", Value::Text("x".to_owned()));
     commit(
-        &edge,
+        &table,
         vec![
             Step::Insert {
                 key: key("p", 2),
@@ -173,7 +173,7 @@ pub async fn work_commits_whole_or_not_at_all<E: ItemReader + ItemWriter>(edge: 
     )
     .await
     .unwrap();
-    let updated = edge
+    let updated = table
         .get(&key("p", 1), Consistency::Strong)
         .await
         .unwrap()
@@ -184,7 +184,7 @@ pub async fn work_commits_whole_or_not_at_all<E: ItemReader + ItemWriter>(edge: 
     // An update keeps the attributes it doesn't set.
     let flag = Item::new().with("f", Value::Flag(true));
     commit(
-        &edge,
+        &table,
         vec![Step::Update {
             key: key("p", 1),
             set: flag,
@@ -194,7 +194,7 @@ pub async fn work_commits_whole_or_not_at_all<E: ItemReader + ItemWriter>(edge: 
     )
     .await
     .unwrap();
-    let updated = edge
+    let updated = table
         .get(&key("p", 1), Consistency::Strong)
         .await
         .unwrap()
@@ -206,7 +206,7 @@ pub async fn work_commits_whole_or_not_at_all<E: ItemReader + ItemWriter>(edge: 
     // nothing only checks.
     for remove in [vec!["t".to_owned(), "f".to_owned()], vec![]] {
         commit(
-            &edge,
+            &table,
             vec![Step::Update {
                 key: key("p", 1),
                 set: Item::new(),
@@ -217,7 +217,7 @@ pub async fn work_commits_whole_or_not_at_all<E: ItemReader + ItemWriter>(edge: 
         .await
         .unwrap();
     }
-    let updated = edge
+    let updated = table
         .get(&key("p", 1), Consistency::Strong)
         .await
         .unwrap()
@@ -225,7 +225,7 @@ pub async fn work_commits_whole_or_not_at_all<E: ItemReader + ItemWriter>(edge: 
     assert_eq!(updated, item(5));
 
     let checked = commit(
-        &edge,
+        &table,
         vec![
             Step::Check {
                 key: key("p", 1),
@@ -243,8 +243,8 @@ pub async fn work_commits_whole_or_not_at_all<E: ItemReader + ItemWriter>(edge: 
 
 /// Work past the most steps, or with two steps on one key, is refused
 /// before anything is written.
-pub async fn unwritable_work_is_refused<E: ItemReader + ItemWriter>(edge: E) {
-    let most = edge.max_steps() as u64;
+pub async fn unwritable_work_is_refused<E: ItemReader + ItemWriter>(table: E) {
+    let most = table.max_steps() as u64;
     let steps = |count: u64| {
         (0..count)
             .map(|n| Step::Insert {
@@ -253,19 +253,19 @@ pub async fn unwritable_work_is_refused<E: ItemReader + ItemWriter>(edge: E) {
             })
             .collect::<Vec<_>>()
     };
-    let refused = commit(&edge, steps(most + 1)).await;
+    let refused = commit(&table, steps(most + 1)).await;
     assert!(
         matches!(refused, Err(CommitError::Unwritable(_))),
         "{refused:?}"
     );
     assert_eq!(
-        edge.get(&key("p", 0), Consistency::Strong).await.unwrap(),
+        table.get(&key("p", 0), Consistency::Strong).await.unwrap(),
         None
     );
-    commit(&edge, steps(most)).await.unwrap();
+    commit(&table, steps(most)).await.unwrap();
 
     let twice = commit(
-        &edge,
+        &table,
         vec![
             Step::Insert {
                 key: key("q", 0),
@@ -280,14 +280,14 @@ pub async fn unwritable_work_is_refused<E: ItemReader + ItemWriter>(edge: E) {
         "{twice:?}"
     );
     assert_eq!(
-        edge.get(&key("q", 0), Consistency::Strong).await.unwrap(),
+        table.get(&key("q", 0), Consistency::Strong).await.unwrap(),
         None
     );
 }
 
-/// The key attributes are the edge's own: an item that names one is
+/// The key attributes are the table's own: an item that names one is
 /// refused before anything is written.
-pub async fn an_item_naming_a_key_attribute_is_refused<E: ItemReader + ItemWriter>(edge: E) {
+pub async fn an_item_naming_a_key_attribute_is_refused<E: ItemReader + ItemWriter>(table: E) {
     for name in ["pk", "sk"] {
         let named = Item::new().with(name, Value::Number(1));
         let steps = [
@@ -313,7 +313,7 @@ pub async fn an_item_naming_a_key_attribute_is_refused<E: ItemReader + ItemWrite
             },
         ];
         for step in steps {
-            let refused = commit(&edge, vec![step.clone()]).await;
+            let refused = commit(&table, vec![step.clone()]).await;
             assert!(
                 matches!(refused, Err(CommitError::Unwritable(_))),
                 "{step:?}: {refused:?}"
@@ -321,27 +321,27 @@ pub async fn an_item_naming_a_key_attribute_is_refused<E: ItemReader + ItemWrite
         }
     }
     assert_eq!(
-        edge.get(&key("p", 1), Consistency::Strong).await.unwrap(),
+        table.get(&key("p", 1), Consistency::Strong).await.unwrap(),
         None
     );
 }
 
 /// A sequence hands out each number once, from 0, per counter.
-pub async fn a_sequence_hands_out_each_number_once<E: Sequence>(edge: E) {
+pub async fn a_sequence_hands_out_each_number_once<E: Sequence>(table: E) {
     let a = key("seq", 0);
     let b = key("seq", 1);
-    assert_eq!(edge.next(&a, 3).await.unwrap(), 0..3);
-    assert_eq!(edge.next(&a, 2).await.unwrap(), 3..5);
-    assert_eq!(edge.next(&b, 1).await.unwrap(), 0..1);
-    assert_eq!(edge.next(&a, 0).await.unwrap(), 5..5);
-    assert_eq!(edge.next(&a, u64::MAX).await.unwrap(), 5..u64::MAX);
-    assert_eq!(edge.next(&a, 1).await.unwrap(), u64::MAX..u64::MAX);
+    assert_eq!(table.next(&a, 3).await.unwrap(), 0..3);
+    assert_eq!(table.next(&a, 2).await.unwrap(), 3..5);
+    assert_eq!(table.next(&b, 1).await.unwrap(), 0..1);
+    assert_eq!(table.next(&a, 0).await.unwrap(), 5..5);
+    assert_eq!(table.next(&a, u64::MAX).await.unwrap(), 5..u64::MAX);
+    assert_eq!(table.next(&a, 1).await.unwrap(), u64::MAX..u64::MAX);
 }
 
-/// Runs every test, each on an edge `fresh` makes, and the sequence test
+/// Runs every test, each on an table `fresh` makes, and the sequence test
 /// on a sequence `sequence` makes.
 #[macro_export]
-macro_rules! edge_tests {
+macro_rules! table_tests {
     ($fresh:expr, $sequence:expr) => {
         #[tokio::test]
         async fn an_item_reads_back() {

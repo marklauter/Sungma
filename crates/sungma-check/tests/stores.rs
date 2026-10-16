@@ -1,10 +1,10 @@
-//! The write and Check contexts over the memory edge run the tests every
+//! The write and Check contexts over the memory table run the tests every
 //! store runs.
 
 mod common;
 
 use common::Contexts;
-use sungma_edge::memory::{MemorySequence, MemoryTable};
+use sungma_table::memory::{MemorySequence, MemoryTable};
 
 async fn memory() -> Contexts<&'static MemoryTable, &'static MemorySequence> {
     let table = Box::leak(Box::new(MemoryTable::new()));

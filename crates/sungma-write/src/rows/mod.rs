@@ -1,4 +1,4 @@
-//! Writes over the store edge, into the rows `sungma-schema` lays out.
+//! Writes over the table, into the rows `sungma-schema` lays out.
 //! Every write is one unit of work that moves the head, on condition it
 //! still holds what the writer read, and checks every row the write
 //! depends on, so a write that raced another is refused whole and tried
@@ -15,11 +15,11 @@ use sungma::{
     store::StoreError,
 };
 use sungma_clock::{Clock, ClockFault, DevClock, Reading};
-use sungma_edge::{
+use sungma_schema::head;
+use sungma_table::{
     read::{Consistency, ItemReader},
     write::{CommitError, ItemWriter, Work},
 };
-use sungma_schema::head;
 use tokio::sync::Mutex;
 
 /// How many times a write that keeps losing races is tried.

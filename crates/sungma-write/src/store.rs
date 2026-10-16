@@ -2,7 +2,7 @@
 //! [`NamespaceWriter`] keeps the versions of each namespace; both stamp
 //! their writes from one revision clock, the `Clock` port in
 //! `sungma-clock`, so facts and namespace versions share one timeline.
-//! [`crate::rows::RowWriter`] serves both over the store edge.
+//! [`crate::rows::RowWriter`] serves both over the table.
 //!
 //! `fn ... -> impl Future<Output = ...> + Send` is an `async fn` in a trait
 //! that also promises its future can move between threads. Implementations

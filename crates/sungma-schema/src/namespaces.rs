@@ -12,7 +12,7 @@ use sungma::{
     store::StoreError,
     version::Epochs,
 };
-use sungma_edge::{
+use sungma_table::{
     item::{Item, Value},
     key::{Key, encode},
     read::{Consistency, ItemReader, Query, Range},

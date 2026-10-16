@@ -1,4 +1,4 @@
-//! The store edge on one DynamoDB table: items under binary hash and range
+//! One DynamoDB table as a key-value table: items under binary hash and range
 //! keys, a unit of work as one transaction, and sequences as atomic adds.
 //! It knows nothing of what the items mean.
 
@@ -10,8 +10,8 @@ use aws_sdk_dynamodb::{
     primitives::Blob,
     types::{AttributeValue, ConditionCheck, Put, ReturnValue, TransactWriteItem, Update},
 };
-use sungma_edge::{
-    EdgeError,
+use sungma_table::{
+    TableError,
     item::{Item, Value},
     key::Key,
     read::{Consistency, ItemReader, Query, Range},
@@ -27,8 +27,8 @@ pub const MAX_STEPS: usize = 100;
 /// The attribute a sequence's counter keeps its next number in.
 const NEXT: &str = "next";
 
-fn failed(error: impl std::error::Error) -> EdgeError {
-    EdgeError(DisplayErrorContext(error).to_string())
+fn failed(error: impl std::error::Error) -> TableError {
+    TableError(DisplayErrorContext(error).to_string())
 }
 
 fn blob(bytes: &[u8]) -> AttributeValue {
@@ -55,30 +55,30 @@ fn to_attribute(value: &Value) -> AttributeValue {
     }
 }
 
-fn from_attribute(name: &str, attribute: &AttributeValue) -> Result<Value, EdgeError> {
+fn from_attribute(name: &str, attribute: &AttributeValue) -> Result<Value, TableError> {
     Ok(match attribute {
         AttributeValue::N(number) => Value::Number(
             number
                 .parse()
-                .map_err(|_| EdgeError(format!("attribute '{name}' isn't a whole number")))?,
+                .map_err(|_| TableError(format!("attribute '{name}' isn't a whole number")))?,
         ),
         AttributeValue::S(text) => Value::Text(text.clone()),
         AttributeValue::Bool(flag) => Value::Flag(*flag),
         AttributeValue::M(map) => Value::Map(
             map.iter()
                 .map(|(name, value)| Ok((name.clone(), from_attribute(name, value)?)))
-                .collect::<Result<_, EdgeError>>()?,
+                .collect::<Result<_, TableError>>()?,
         ),
         _ => {
-            return Err(EdgeError(format!(
-                "attribute '{name}' is of a kind the edge doesn't keep"
+            return Err(TableError(format!(
+                "attribute '{name}' is of a kind the table doesn't keep"
             )));
         }
     })
 }
 
 /// An item's attributes, without its keys.
-fn from_item(item: &HashMap<String, AttributeValue>) -> Result<Item, EdgeError> {
+fn from_item(item: &HashMap<String, AttributeValue>) -> Result<Item, TableError> {
     let mut read = Item::new();
     for (name, attribute) in item {
         if name != PK && name != SK {
@@ -89,10 +89,10 @@ fn from_item(item: &HashMap<String, AttributeValue>) -> Result<Item, EdgeError> 
     Ok(read)
 }
 
-fn sort_key(item: &HashMap<String, AttributeValue>) -> Result<Vec<u8>, EdgeError> {
+fn sort_key(item: &HashMap<String, AttributeValue>) -> Result<Vec<u8>, TableError> {
     match item.get(SK) {
         Some(AttributeValue::B(bytes)) => Ok(bytes.as_ref().to_vec()),
-        _ => Err(EdgeError("an item without a binary sort key".to_owned())),
+        _ => Err(TableError("an item without a binary sort key".to_owned())),
     }
 }
 
@@ -146,18 +146,18 @@ impl Expression {
     }
 }
 
-/// The edge on `table`.
+/// The key-value table on the DynamoDB table `table`.
 #[derive(Clone, Debug)]
-pub struct DynamoEdge {
+pub struct DynamoTable {
     table: Table,
 }
 
-impl DynamoEdge {
+impl DynamoTable {
     pub fn new(table: Table) -> Self {
         Self { table }
     }
 
-    fn transact_item(&self, step: Step) -> Result<TransactWriteItem, EdgeError> {
+    fn transact_item(&self, step: Step) -> Result<TransactWriteItem, TableError> {
         let mut expression = Expression::default();
         let exists = |expression: &mut Expression| {
             let pk = expression.name(PK);
@@ -235,7 +235,7 @@ impl DynamoEdge {
         Ok(item)
     }
 
-    fn check(&self, at: &Key, expression: &Expression) -> Result<TransactWriteItem, EdgeError> {
+    fn check(&self, at: &Key, expression: &Expression) -> Result<TransactWriteItem, TableError> {
         let check = ConditionCheck::builder()
             .table_name(self.table.name())
             .set_key(Some(key(at)))
@@ -248,8 +248,8 @@ impl DynamoEdge {
     }
 }
 
-impl ItemReader for DynamoEdge {
-    async fn get(&self, at: &Key, consistency: Consistency) -> Result<Option<Item>, EdgeError> {
+impl ItemReader for DynamoTable {
+    async fn get(&self, at: &Key, consistency: Consistency) -> Result<Option<Item>, TableError> {
         let output = self
             .table
             .client()
@@ -267,7 +267,7 @@ impl ItemReader for DynamoEdge {
         &self,
         query: &Query,
         consistency: Consistency,
-    ) -> Result<Vec<(Vec<u8>, Item)>, EdgeError> {
+    ) -> Result<Vec<(Vec<u8>, Item)>, TableError> {
         let mut values = HashMap::from([(":pk".to_owned(), blob(&query.partition))]);
         let condition = match &query.range {
             Range::All => "#pk = :pk".to_owned(),
@@ -316,7 +316,7 @@ impl ItemReader for DynamoEdge {
     }
 }
 
-impl ItemWriter for DynamoEdge {
+impl ItemWriter for DynamoTable {
     fn max_steps(&self) -> usize {
         MAX_STEPS
     }
@@ -360,12 +360,12 @@ impl ItemWriter for DynamoEdge {
         if codes.contains(&Some("TransactionConflict")) {
             return Err(CommitError::Contended);
         }
-        Err(EdgeError(format!("the transaction was cancelled: {codes:?}")).into())
+        Err(TableError(format!("the transaction was cancelled: {codes:?}")).into())
     }
 }
 
-impl Sequence for DynamoEdge {
-    async fn next(&self, at: &Key, count: u64) -> Result<Numbers<u64>, EdgeError> {
+impl Sequence for DynamoTable {
+    async fn next(&self, at: &Key, count: u64) -> Result<Numbers<u64>, TableError> {
         let output = self
             .table
             .client()
@@ -382,8 +382,8 @@ impl Sequence for DynamoEdge {
         let end: u128 = match output.attributes().and_then(|item| item.get(NEXT)) {
             Some(AttributeValue::N(number)) => number
                 .parse()
-                .map_err(|_| EdgeError(format!("a counter holds {number}")))?,
-            _ => return Err(EdgeError("a counter's add returned no number".to_owned())),
+                .map_err(|_| TableError(format!("a counter holds {number}")))?,
+            _ => return Err(TableError("a counter's add returned no number".to_owned())),
         };
         // A counter keeps counting past what a u64 holds; those numbers
         // are past the end.

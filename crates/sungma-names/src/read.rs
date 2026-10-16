@@ -3,7 +3,7 @@
 use sungma::store::StoreError;
 
 use crate::store::{NameReader, Pool};
-use sungma_edge::read::{Consistency, ItemReader};
+use sungma_table::read::{Consistency, ItemReader};
 
 use crate::rows::{self, ID_ATTRIBUTE, NAME_ATTRIBUTE, failed};
 

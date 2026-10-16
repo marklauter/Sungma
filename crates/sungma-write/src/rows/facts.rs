@@ -12,13 +12,13 @@ use sungma::{
     revision::Revision,
 };
 use sungma_clock::Clock;
-use sungma_edge::{
-    read::{Consistency, ItemReader},
-    write::{ItemWriter, Work},
-};
 use sungma_schema::{
     facts, head,
     namespaces::{self, Entry},
+};
+use sungma_table::{
+    read::{Consistency, ItemReader},
+    write::{ItemWriter, Work},
 };
 
 use super::{Failure, RowWriter, Tried, fits, gave_up};

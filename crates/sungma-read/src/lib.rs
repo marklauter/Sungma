@@ -8,8 +8,8 @@ pub mod facts;
 pub mod namespaces;
 
 use sungma::{revision::Revision, store::StoreError};
-use sungma_edge::read::{Consistency, ItemReader};
 use sungma_schema::head;
+use sungma_table::read::{Consistency, ItemReader};
 use thiserror::Error;
 
 /// Every read is eventual: a read is a snapshot, stale once it's taken.

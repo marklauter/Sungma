@@ -37,9 +37,9 @@ use sungma_lang::fact::{self, WriteRequest};
 use sungma_read::facts::FactReadService;
 use sungma_write::service::{FactWriteService, FactWriteServiceError};
 
-use crate::{AppState, Edge, Ids, Stamps, Written, Zookie, accept, failure, named, read_failure};
+use crate::{AppState, Ids, Items, Stamps, Written, Zookie, accept, failure, named, read_failure};
 
-pub(crate) async fn write<E: Edge, S: Ids, C: Stamps>(
+pub(crate) async fn write<E: Items, S: Ids, C: Stamps>(
     State(state): State<Arc<AppState<E, S, C>>>,
     headers: HeaderMap,
     body: Result<Json<WriteRequest>, JsonRejection>,
@@ -96,7 +96,7 @@ struct ReadReply {
     zookie: Zookie,
 }
 
-pub(crate) async fn read<E: Edge, S: Ids, C: Stamps>(
+pub(crate) async fn read<E: Items, S: Ids, C: Stamps>(
     State(state): State<Arc<AppState<E, S, C>>>,
     headers: HeaderMap,
     body: Result<Json<ReadBody>, JsonRejection>,
@@ -111,7 +111,7 @@ pub(crate) async fn read<E: Edge, S: Ids, C: Stamps>(
         body.relation,
     );
     let node = &state.node;
-    let service = FactReadService::new(node.names(), node.edge());
+    let service = FactReadService::new(node.names(), node.table());
     match service
         .read(&set, body.subject.as_ref(), body.zookie.map(Revision::from))
         .await

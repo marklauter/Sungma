@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-# A node on the memory edge for tests: see `testkit`.
+# A node on the memory table for tests: see `testkit`.
 testkit = []
 
 [dependencies]
@@ -12,7 +12,7 @@ serde_json.workspace = true
 sungma.workspace = true
 sungma-check.workspace = true
 sungma-clock.workspace = true
-sungma-edge.workspace = true
+sungma-table.workspace = true
 sungma-lang.workspace = true
 sungma-names.workspace = true
 sungma-schema.workspace = true

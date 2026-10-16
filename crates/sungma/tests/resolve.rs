@@ -7,7 +7,6 @@ use sungma::{
     namespace::Namespace,
     rewrite::Rewrite,
 };
-use sungma_edge::memory::MemorySequence;
 use sungma_names::store::NameWriter;
 use sungma_names::write::NameRowWriter;
 use sungma_names::{
@@ -15,6 +14,7 @@ use sungma_names::{
     store::Pool,
 };
 use sungma_node::testkit::World;
+use sungma_table::memory::MemorySequence;
 
 /// `file`, `folder` and `group`, and the relations `owner`, `parent`,
 /// `member` and `viewer`.
@@ -108,8 +108,8 @@ async fn a_name_never_interned_is_unknown() {
 #[tokio::test]
 async fn an_id_with_no_name_or_a_stored_non_name_fails_as_the_store() {
     let world = world().await;
-    let edge = world.node().edge();
-    NameRowWriter::new(edge, edge, MemorySequence::new())
+    let table = world.node().table();
+    NameRowWriter::new(table, table, MemorySequence::new())
         .insert_if_absent(Pool::Relations, "Not a name!", 1000)
         .await
         .unwrap();

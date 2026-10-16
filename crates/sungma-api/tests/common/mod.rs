@@ -16,7 +16,7 @@ use axum::{
 use http_body_util::BodyExt;
 use serde_json::Value;
 use sungma_api::{AppState, router};
-use sungma_dynamodb::{Table, edge::DynamoEdge, local};
+use sungma_dynamodb::{Table, items::DynamoTable, local};
 use sungma_node::Node;
 use tower::ServiceExt;
 
@@ -39,7 +39,7 @@ pub fn dynamodb_url() -> Option<String> {
         .filter(|url| !url.is_empty())
 }
 
-async fn dynamodb(url: &str) -> AppState<DynamoEdge, DynamoEdge> {
+async fn dynamodb(url: &str) -> AppState<DynamoTable, DynamoTable> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let name = format!(
         "sungma-api-{}-{}",
@@ -50,8 +50,8 @@ async fn dynamodb(url: &str) -> AppState<DynamoEdge, DynamoEdge> {
     table.create().await.unwrap_or_else(|error| {
         panic!("DynamoDB Local at {url} refused a table; run scripts/dynamodb.sh: {error}")
     });
-    let edge = DynamoEdge::new(table);
-    AppState::new(Node::dev(edge.clone(), edge).await.unwrap())
+    let table = DynamoTable::new(table);
+    AppState::new(Node::dev(table.clone(), table).await.unwrap())
 }
 
 /// Posts `body` as JSON to `path`, and gives the status and the JSON reply.

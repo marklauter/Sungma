@@ -2,9 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use crate::EdgeError;
+use crate::TableError;
 
-/// The attributes a store keeps an item's key in. They're the edge's
+/// The attributes a store keeps an item's key in. They're the table's
 /// own: no item may name one.
 pub const PARTITION_KEY: &str = "pk";
 pub const SORT_KEY: &str = "sk";
@@ -39,7 +39,7 @@ impl Item {
 
     /// The number `name` holds, `None` when the item hasn't it, refused
     /// when it holds something else.
-    pub fn number(&self, name: &str) -> Result<Option<u64>, EdgeError> {
+    pub fn number(&self, name: &str) -> Result<Option<u64>, TableError> {
         match self.get(name) {
             None => Ok(None),
             Some(Value::Number(number)) => Ok(Some(*number)),
@@ -47,7 +47,7 @@ impl Item {
         }
     }
 
-    pub fn text(&self, name: &str) -> Result<Option<&str>, EdgeError> {
+    pub fn text(&self, name: &str) -> Result<Option<&str>, TableError> {
         match self.get(name) {
             None => Ok(None),
             Some(Value::Text(text)) => Ok(Some(text)),
@@ -56,7 +56,7 @@ impl Item {
     }
 
     /// A flag the item hasn't is false.
-    pub fn flag(&self, name: &str) -> Result<bool, EdgeError> {
+    pub fn flag(&self, name: &str) -> Result<bool, TableError> {
         match self.get(name) {
             None => Ok(false),
             Some(Value::Flag(flag)) => Ok(*flag),
@@ -64,7 +64,7 @@ impl Item {
         }
     }
 
-    pub fn map(&self, name: &str) -> Result<Option<&BTreeMap<String, Value>>, EdgeError> {
+    pub fn map(&self, name: &str) -> Result<Option<&BTreeMap<String, Value>>, TableError> {
         match self.get(name) {
             None => Ok(None),
             Some(Value::Map(map)) => Ok(Some(map)),
@@ -73,23 +73,23 @@ impl Item {
     }
 
     /// Like [`Item::number`], refused when the item hasn't it.
-    pub fn required_number(&self, name: &str) -> Result<u64, EdgeError> {
+    pub fn required_number(&self, name: &str) -> Result<u64, TableError> {
         self.number(name)?.ok_or_else(|| missing(name))
     }
 
-    pub fn required_text(&self, name: &str) -> Result<&str, EdgeError> {
+    pub fn required_text(&self, name: &str) -> Result<&str, TableError> {
         self.text(name)?.ok_or_else(|| missing(name))
     }
 
-    pub fn required_map(&self, name: &str) -> Result<&BTreeMap<String, Value>, EdgeError> {
+    pub fn required_map(&self, name: &str) -> Result<&BTreeMap<String, Value>, TableError> {
         self.map(name)?.ok_or_else(|| missing(name))
     }
 }
 
-fn not(name: &str, kind: &str) -> EdgeError {
-    EdgeError(format!("attribute '{name}' isn't {kind}"))
+fn not(name: &str, kind: &str) -> TableError {
+    TableError(format!("attribute '{name}' isn't {kind}"))
 }
 
-fn missing(name: &str) -> EdgeError {
-    EdgeError(format!("attribute '{name}' is missing"))
+fn missing(name: &str) -> TableError {
+    TableError(format!("attribute '{name}' is missing"))
 }

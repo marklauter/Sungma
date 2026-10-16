@@ -11,8 +11,9 @@ use sungma::revision::Revision;
 use sungma_api::{AppState, router};
 use sungma_check::closure::MAX_DEPTH;
 use sungma_clock::{ClockFault, DevClock, ManualClock, Reading};
-use sungma_edge::{
-    EdgeError,
+use sungma_node::Node;
+use sungma_table::{
+    TableError,
     item::Item,
     key::Key,
     memory::{MemorySequence, MemoryTable},
@@ -20,7 +21,6 @@ use sungma_edge::{
     sequence::Sequence,
     write::{CommitError, ItemWriter, Work},
 };
-use sungma_node::Node;
 
 use common::post;
 
@@ -28,16 +28,16 @@ use common::post;
 #[derive(Clone, Copy)]
 struct Down;
 
-fn down() -> EdgeError {
-    EdgeError("the store is down".to_owned())
+fn down() -> TableError {
+    TableError("the store is down".to_owned())
 }
 
 impl ItemReader for Down {
-    async fn get(&self, _: &Key, _: Consistency) -> Result<Option<Item>, EdgeError> {
+    async fn get(&self, _: &Key, _: Consistency) -> Result<Option<Item>, TableError> {
         Err(down())
     }
 
-    async fn query(&self, _: &Query, _: Consistency) -> Result<Vec<(Vec<u8>, Item)>, EdgeError> {
+    async fn query(&self, _: &Query, _: Consistency) -> Result<Vec<(Vec<u8>, Item)>, TableError> {
         Err(down())
     }
 }
@@ -53,7 +53,7 @@ impl ItemWriter for Down {
 }
 
 impl Sequence for Down {
-    async fn next(&self, _: &Key, _: u64) -> Result<Range<u64>, EdgeError> {
+    async fn next(&self, _: &Key, _: u64) -> Result<Range<u64>, TableError> {
         Err(down())
     }
 }
@@ -124,8 +124,8 @@ fn faulted() -> Router {
         settled: Revision(1),
     });
     clock.fault(ClockFault::Drifted);
-    let edge = Arc::new(MemoryTable::new());
-    let node = Node::new(edge, Arc::new(MemorySequence::new()), clock);
+    let table = Arc::new(MemoryTable::new());
+    let node = Node::new(table, Arc::new(MemorySequence::new()), clock);
     router(Arc::new(AppState::new(node)))
 }
 

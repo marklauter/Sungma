@@ -1844,10 +1844,10 @@ name = "sungma"
 version = "0.1.0"
 dependencies = [
  "proptest",
- "sungma-edge",
  "sungma-lang",
  "sungma-names",
  "sungma-node",
+ "sungma-table",
  "sungma-write",
  "thiserror",
  "tokio",
@@ -1865,11 +1865,11 @@ dependencies = [
  "sungma-check",
  "sungma-clock",
  "sungma-dynamodb",
- "sungma-edge",
  "sungma-lang",
  "sungma-names",
  "sungma-node",
  "sungma-read",
+ "sungma-table",
  "sungma-write",
  "thiserror",
  "tokio",
@@ -1885,11 +1885,11 @@ dependencies = [
  "sungma",
  "sungma-clock",
  "sungma-dynamodb",
- "sungma-edge",
  "sungma-lang",
  "sungma-names",
  "sungma-node",
  "sungma-schema",
+ "sungma-table",
  "sungma-write",
  "thiserror",
  "tokio",
@@ -1919,18 +1919,7 @@ name = "sungma-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aws-sdk-dynamodb",
- "sungma-edge",
- "tokio",
-]
-
-[[package]]
-name = "sungma-edge"
-version = "0.1.0"
-dependencies = [
- "parking_lot",
- "proptest",
- "sungma-edge",
- "thiserror",
+ "sungma-table",
  "tokio",
 ]
 
@@ -1956,7 +1945,8 @@ dependencies = [
  "parking_lot",
  "proptest",
  "sungma",
- "sungma-edge",
+ "sungma-schema",
+ "sungma-table",
  "thiserror",
  "tokio",
 ]
@@ -1969,11 +1959,11 @@ dependencies = [
  "sungma",
  "sungma-check",
  "sungma-clock",
- "sungma-edge",
  "sungma-lang",
  "sungma-names",
  "sungma-node",
  "sungma-schema",
+ "sungma-table",
  "sungma-write",
  "thiserror",
  "tokio",
@@ -1985,10 +1975,10 @@ version = "0.1.0"
 dependencies = [
  "sungma",
  "sungma-clock",
- "sungma-edge",
  "sungma-lang",
  "sungma-names",
  "sungma-schema",
+ "sungma-table",
  "sungma-write",
  "thiserror",
  "tokio",
@@ -1999,7 +1989,18 @@ name = "sungma-schema"
 version = "0.1.0"
 dependencies = [
  "sungma",
- "sungma-edge",
+ "sungma-table",
+]
+
+[[package]]
+name = "sungma-table"
+version = "0.1.0"
+dependencies = [
+ "parking_lot",
+ "proptest",
+ "sungma-table",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -2011,10 +2012,10 @@ dependencies = [
  "sungma",
  "sungma-check",
  "sungma-clock",
- "sungma-edge",
  "sungma-names",
  "sungma-node",
  "sungma-schema",
+ "sungma-table",
  "thiserror",
  "tokio",
 ]

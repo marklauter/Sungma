@@ -5,12 +5,12 @@ use sungma::{
     revision::Revision,
     store::StoreError,
 };
-use sungma_edge::read::ItemReader;
 use sungma_names::{resolve, store::Dictionary};
 use sungma_schema::{
     facts::{self, Rows},
     namespaces,
 };
+use sungma_table::read::ItemReader;
 
 use crate::{READ, ReadError, revision};
 

@@ -1,8 +1,8 @@
-//! One node's contexts wired over one store edge: names and the interner,
-//! the writer, Check's reader, and the API's reads, sharing the edge's
+//! One node's contexts wired over one table: names and the interner,
+//! the writer, Check's reader, and the API's reads, sharing the table's
 //! table. The node prints and parses namespace documents with
 //! `sungma-lang` and injects both, so no context needs the document
-//! language. [`Node::memory`] runs it on the memory edge, for tests and
+//! language. [`Node::memory`] runs it on the memory table, for tests and
 //! development.
 
 #[cfg(feature = "testkit")]
@@ -18,16 +18,16 @@ use sungma::{
 };
 use sungma_check::rows::RowReader;
 use sungma_clock::{Clock, DevClock};
-use sungma_edge::{
+use sungma_lang::{fact, namespace};
+use sungma_names::intern::LeasingInterner;
+use sungma_names::store::ReadingDictionary;
+use sungma_names::{read::NameRows, write::NameRowWriter};
+use sungma_table::{
     memory::{MemorySequence, MemoryTable},
     read::{Consistency, ItemReader},
     sequence::Sequence,
     write::ItemWriter,
 };
-use sungma_lang::{fact, namespace};
-use sungma_names::intern::LeasingInterner;
-use sungma_names::store::ReadingDictionary;
-use sungma_names::{read::NameRows, write::NameRowWriter};
 use sungma_write::{
     rows::RowWriter,
     service::{
@@ -78,10 +78,10 @@ pub type Interner<E, S> = LeasingInterner<NameRows<E>, NameRowWriter<E, E, S>>;
 pub type Writer<E, C> = RowWriter<E, E, C, NameRows<E>, Print>;
 pub type CheckReader<E> = RowReader<E, NameRows<E>, Parse>;
 
-/// The contexts over the edge `E`, minting ids from the sequence `S`, and
+/// The contexts over the table `E`, minting ids from the sequence `S`, and
 /// stamping writes from the clock `C`.
 pub struct Node<E, S, C = DevClock> {
-    edge: E,
+    table: E,
     names: Names<E>,
     interner: Interner<E, S>,
     writer: Writer<E, C>,
@@ -89,11 +89,11 @@ pub struct Node<E, S, C = DevClock> {
 }
 
 impl Node<Arc<MemoryTable>, Arc<MemorySequence>> {
-    /// A node on an empty memory edge.
+    /// A node on an empty memory table.
     pub fn memory() -> Self {
-        let edge = Arc::new(MemoryTable::new());
+        let table = Arc::new(MemoryTable::new());
         Self::new(
-            Arc::clone(&edge),
+            Arc::clone(&table),
             Arc::new(MemorySequence::new()),
             DevClock::default(),
         )
@@ -106,10 +106,10 @@ where
 {
     /// A node whose [`DevClock`] starts after the head it finds, so a
     /// restarted node doesn't reuse a revision already committed.
-    pub async fn dev(edge: E, sequence: S) -> Result<Self, StoreError> {
-        let head = sungma_schema::head::read(&edge, Consistency::Strong).await?;
+    pub async fn dev(table: E, sequence: S) -> Result<Self, StoreError> {
+        let head = sungma_schema::head::read(&table, Consistency::Strong).await?;
         let clock = DevClock::starting_after(head.unwrap_or(Revision(0)));
-        Ok(Self::new(edge, sequence, clock))
+        Ok(Self::new(table, sequence, clock))
     }
 }
 
@@ -117,35 +117,35 @@ impl<E, S, C> Node<E, S, C>
 where
     E: ItemReader + ItemWriter + Clone,
 {
-    pub fn new(edge: E, sequence: S, clock: C) -> Self {
-        let names = |consistency| NameRows::new(edge.clone(), consistency);
+    pub fn new(table: E, sequence: S, clock: C) -> Self {
+        let names = |consistency| NameRows::new(table.clone(), consistency);
         Self {
             names: ReadingDictionary(names(Consistency::Eventual)),
             interner: LeasingInterner::new(
                 names(Consistency::Strong),
-                NameRowWriter::new(edge.clone(), edge.clone(), sequence),
+                NameRowWriter::new(table.clone(), table.clone(), sequence),
                 LEASE,
             ),
             writer: RowWriter::new(
-                edge.clone(),
-                edge.clone(),
+                table.clone(),
+                table.clone(),
                 clock,
                 names(Consistency::Strong),
                 print as Print,
             ),
             check: RowReader::new(
-                edge.clone(),
+                table.clone(),
                 names(Consistency::Eventual),
                 parse as Parse,
                 VERSIONS,
             ),
-            edge,
+            table,
         }
     }
 
-    /// The edge, for the API's reads.
-    pub fn edge(&self) -> &E {
-        &self.edge
+    /// The table, for the API's reads.
+    pub fn table(&self) -> &E {
+        &self.table
     }
 
     /// Names read eventually, for a read that resolves names.

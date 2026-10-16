@@ -8,14 +8,14 @@ use aws_sdk_dynamodb::{
     error::DisplayErrorContext,
     types::{AttributeDefinition, BillingMode, KeySchemaElement, KeyType, ScalarAttributeType},
 };
-use sungma_edge::EdgeError;
+use sungma_table::TableError;
 
-/// The hash key and range key attribute names, the edge's key attributes.
-pub const PK: &str = sungma_edge::item::PARTITION_KEY;
-pub const SK: &str = sungma_edge::item::SORT_KEY;
+/// The hash key and range key attribute names, the table's key attributes.
+pub const PK: &str = sungma_table::item::PARTITION_KEY;
+pub const SK: &str = sungma_table::item::SORT_KEY;
 
-fn failed(error: impl std::error::Error) -> EdgeError {
-    EdgeError(DisplayErrorContext(error).to_string())
+fn failed(error: impl std::error::Error) -> TableError {
+    TableError(DisplayErrorContext(error).to_string())
 }
 
 /// A table and the client that reaches it. Cloning shares the client.
@@ -34,7 +34,7 @@ impl Table {
     }
 
     /// Creates the table: binary hash and range keys, billed per request.
-    pub async fn create(&self) -> Result<(), EdgeError> {
+    pub async fn create(&self) -> Result<(), TableError> {
         let attribute = |name: &str| {
             AttributeDefinition::builder()
                 .attribute_name(name)
@@ -64,7 +64,7 @@ impl Table {
     }
 
     /// Whether the table exists.
-    pub async fn exists(&self) -> Result<bool, EdgeError> {
+    pub async fn exists(&self) -> Result<bool, TableError> {
         match self
             .client
             .describe_table()

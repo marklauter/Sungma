@@ -13,11 +13,11 @@ cap_lints = true
 # from one baseline run.
 minimum_test_timeout = 180
 
-# The tests every store and edge runs, and the test node: test code, not
+# The tests every table runs, and the test node: test code, not
 # code under test.
 exclude_globs = [
     "crates/sungma-write/src/testkit.rs",
-    "crates/sungma-edge/src/testkit.rs",
+    "crates/sungma-table/src/testkit.rs",
     "crates/sungma-node/src/testkit.rs",
 ]
 

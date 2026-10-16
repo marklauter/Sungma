@@ -1,4 +1,4 @@
-//! The write and Check contexts over one edge, as the shared store tests
+//! The write and Check contexts over one table, as the shared store tests
 //! take them, and a table of its own for each DynamoDB test.
 
 // Each test file compiles this module separately and uses only part of it.
@@ -13,13 +13,13 @@ use sungma::{
 use sungma_check::rows::RowReader;
 use sungma_clock::DevClock;
 use sungma_dynamodb::{Table, local};
-use sungma_edge::{
+use sungma_lang::namespace;
+use sungma_names::{read::NameRows, write::NameRowWriter};
+use sungma_table::{
     read::{Consistency, ItemReader},
     sequence::Sequence,
     write::ItemWriter,
 };
-use sungma_lang::namespace;
-use sungma_names::{read::NameRows, write::NameRowWriter};
 use sungma_write::{rows::RowWriter, testkit::Stores};
 
 pub type Print = fn(&NamespaceName, &Namespace<RelationName>) -> Result<String, String>;
@@ -35,7 +35,7 @@ fn parse(document: &str) -> Result<(NamespaceName, Namespace<RelationName>), Str
         .map_err(|errors| namespace::Refusal(errors).to_string())
 }
 
-/// The contexts over one edge `E` and sequence `S`.
+/// The contexts over one table `E` and sequence `S`.
 pub struct Contexts<E, S> {
     reader: RowReader<E, NameRows<E>, Parse>,
     writer: RowWriter<E, E, DevClock, NameRows<E>, Print>,
@@ -43,19 +43,19 @@ pub struct Contexts<E, S> {
 }
 
 impl<E: ItemReader + ItemWriter + Clone + Sync, S> Contexts<E, S> {
-    pub async fn new(edge: E, sequence: S) -> Self {
-        let names = |consistency| NameRows::new(edge.clone(), consistency);
+    pub async fn new(table: E, sequence: S) -> Self {
+        let names = |consistency| NameRows::new(table.clone(), consistency);
         Self {
-            reader: RowReader::new(edge.clone(), names(Consistency::Eventual), parse, 64),
+            reader: RowReader::new(table.clone(), names(Consistency::Eventual), parse, 64),
             writer: RowWriter::dev(
-                edge.clone(),
-                edge.clone(),
+                table.clone(),
+                table.clone(),
                 names(Consistency::Strong),
                 print as Print,
             )
             .await
             .unwrap(),
-            names: NameRowWriter::new(edge.clone(), edge, sequence),
+            names: NameRowWriter::new(table.clone(), table, sequence),
         }
     }
 }

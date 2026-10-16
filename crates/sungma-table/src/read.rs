@@ -2,7 +2,7 @@
 
 use std::future::Future;
 
-use crate::{EdgeError, item::Item, key::Key};
+use crate::{TableError, item::Item, key::Key};
 
 /// Whether a read must see every write acknowledged before it. A write
 /// reads strongly to check what it depends on; other reads take a
@@ -61,7 +61,7 @@ pub trait ItemReader {
         &self,
         key: &Key,
         consistency: Consistency,
-    ) -> impl Future<Output = Result<Option<Item>, EdgeError>> + Send;
+    ) -> impl Future<Output = Result<Option<Item>, TableError>> + Send;
 
     /// The items the query takes, each with its sort key, in the query's
     /// order.
@@ -69,7 +69,7 @@ pub trait ItemReader {
         &self,
         query: &Query,
         consistency: Consistency,
-    ) -> impl Future<Output = Result<Vec<(Vec<u8>, Item)>, EdgeError>> + Send;
+    ) -> impl Future<Output = Result<Vec<(Vec<u8>, Item)>, TableError>> + Send;
 }
 
 impl<R: ItemReader + Sync + ?Sized> ItemReader for &R {
@@ -77,7 +77,7 @@ impl<R: ItemReader + Sync + ?Sized> ItemReader for &R {
         &self,
         key: &Key,
         consistency: Consistency,
-    ) -> impl Future<Output = Result<Option<Item>, EdgeError>> + Send {
+    ) -> impl Future<Output = Result<Option<Item>, TableError>> + Send {
         R::get(self, key, consistency)
     }
 
@@ -85,7 +85,7 @@ impl<R: ItemReader + Sync + ?Sized> ItemReader for &R {
         &self,
         query: &Query,
         consistency: Consistency,
-    ) -> impl Future<Output = Result<Vec<(Vec<u8>, Item)>, EdgeError>> + Send {
+    ) -> impl Future<Output = Result<Vec<(Vec<u8>, Item)>, TableError>> + Send {
         R::query(self, query, consistency)
     }
 }
@@ -95,7 +95,7 @@ impl<R: ItemReader + Send + Sync + ?Sized> ItemReader for std::sync::Arc<R> {
         &self,
         key: &Key,
         consistency: Consistency,
-    ) -> impl Future<Output = Result<Option<Item>, EdgeError>> + Send {
+    ) -> impl Future<Output = Result<Option<Item>, TableError>> + Send {
         R::get(self, key, consistency)
     }
 
@@ -103,7 +103,7 @@ impl<R: ItemReader + Send + Sync + ?Sized> ItemReader for std::sync::Arc<R> {
         &self,
         query: &Query,
         consistency: Consistency,
-    ) -> impl Future<Output = Result<Vec<(Vec<u8>, Item)>, EdgeError>> + Send {
+    ) -> impl Future<Output = Result<Vec<(Vec<u8>, Item)>, TableError>> + Send {
         R::query(self, query, consistency)
     }
 }

@@ -8,7 +8,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-sungma-edge.workspace = true
+sungma-table.workspace = true
 sungma-lang.workspace = true
 sungma-names.workspace = true
 sungma-node = { workspace = true, features = ["testkit"] }

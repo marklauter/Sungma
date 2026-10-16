@@ -1,4 +1,4 @@
-//! A node on the memory edge, with the helpers tests reach for: seeding
+//! A node on the memory table, with the helpers tests reach for: seeding
 //! documents, declaring a relation from a rewrite written with names, and
 //! looking names up.
 
@@ -12,10 +12,10 @@ use sungma::{
     version::Version,
 };
 use sungma_check::store::{FactReader, NamespaceReader};
-use sungma_edge::memory::{MemorySequence, MemoryTable};
 use sungma_lang::fact;
 use sungma_names::store::Interner;
 use sungma_names::store::Pool;
+use sungma_table::memory::{MemorySequence, MemoryTable};
 use sungma_write::{
     service::FactWriteService,
     store::{NamespaceWrite, NamespaceWriter},
@@ -23,11 +23,11 @@ use sungma_write::{
 
 use crate::{CheckReader, Names, Node, SeedError};
 
-type Edge = Arc<MemoryTable>;
+type Memory = Arc<MemoryTable>;
 
-/// A node on an empty memory edge.
+/// A node on an empty memory table.
 pub struct World {
-    node: Node<Edge, Arc<MemorySequence>>,
+    node: Node<Memory, Arc<MemorySequence>>,
 }
 
 impl Default for World {
@@ -50,16 +50,16 @@ impl World {
         Ok(world)
     }
 
-    pub fn node(&self) -> &Node<Edge, Arc<MemorySequence>> {
+    pub fn node(&self) -> &Node<Memory, Arc<MemorySequence>> {
         &self.node
     }
 
     /// Check's reads: facts and namespace versions.
-    pub fn store(&self) -> &CheckReader<Edge> {
+    pub fn store(&self) -> &CheckReader<Memory> {
         self.node.check()
     }
 
-    pub fn names(&self) -> &Names<Edge> {
+    pub fn names(&self) -> &Names<Memory> {
         self.node.names()
     }
 

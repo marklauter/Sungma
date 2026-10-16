@@ -15,7 +15,7 @@ use sungma::{
     revision::Revision,
     store::StoreError,
 };
-use sungma_edge::{
+use sungma_table::{
     item::{Item, Value},
     key::{Key, Part, Parts, encode},
     read::{Consistency, ItemReader, Query, Range},

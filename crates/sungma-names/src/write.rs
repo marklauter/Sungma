@@ -3,7 +3,7 @@
 use std::ops::Range;
 
 use sungma::store::StoreError;
-use sungma_edge::{
+use sungma_table::{
     item::{Item, Value},
     read::{Consistency, ItemReader},
     sequence::Sequence,

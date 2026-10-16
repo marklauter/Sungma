@@ -6,8 +6,8 @@ use sungma::{
     name::{Identity, ResourceId},
     revision::Revision,
 };
-use sungma_edge::item::{Item, Value};
 use sungma_schema::facts::{Row, covering, pointer, row, span};
+use sungma_table::item::{Item, Value};
 
 fn set(namespace: u32, id: &str, relation: u32) -> Subjectset {
     Subjectset {

@@ -12,7 +12,7 @@ pub mod head;
 pub mod namespaces;
 
 use sungma::store::StoreError;
-use sungma_edge::EdgeError;
+use sungma_table::TableError;
 
 /// Every partition's first byte, one per kind of row, so no two kinds
 /// share a partition. Every context's rows take their tag from here.
@@ -26,6 +26,6 @@ pub mod tags {
     pub const ALL: [u8; 4] = [FACT, NAMESPACE, NAMES, HEAD];
 }
 
-pub fn failed(error: EdgeError) -> StoreError {
+pub fn failed(error: TableError) -> StoreError {
     StoreError(error.0)
 }

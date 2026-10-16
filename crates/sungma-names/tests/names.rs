@@ -1,12 +1,18 @@
-//! Names over the memory edge.
+//! Names over the memory table.
 
 use std::{
     num::NonZeroU32,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use sungma_edge::{
-    EdgeError,
+use sungma_names::store::{
+    NameReader,
+    Pool::{Namespaces, Relations},
+};
+use sungma_names::{intern::LeasingInterner, store::Interner, store::NameWriter};
+use sungma_names::{read::NameRows, write::NameRowWriter};
+use sungma_table::{
+    TableError,
     item::{Item, Value},
     key::Key,
     memory::{MemorySequence, MemoryTable},
@@ -14,12 +20,6 @@ use sungma_edge::{
     sequence::Sequence,
     write::{CommitError, ItemWriter, Step, Work},
 };
-use sungma_names::store::{
-    NameReader,
-    Pool::{Namespaces, Relations},
-};
-use sungma_names::{intern::LeasingInterner, store::Interner, store::NameWriter};
-use sungma_names::{read::NameRows, write::NameRowWriter};
 
 fn reader(table: &MemoryTable) -> NameRows<&MemoryTable> {
     NameRows::new(table, Consistency::Eventual)
@@ -188,7 +188,7 @@ async fn an_insert_that_cannot_commit_fails() {
     let answers = [
         vec![CommitError::Contended; 16],
         vec![CommitError::Unwritable("too big".to_owned())],
-        vec![CommitError::Failed(EdgeError("down".to_owned()))],
+        vec![CommitError::Failed(TableError("down".to_owned()))],
     ];
     for answers in answers {
         let scripted = Scripted {
