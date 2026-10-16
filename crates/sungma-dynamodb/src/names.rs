@@ -1,5 +1,6 @@
 //! Interned names: an item per name holding its id, an item per id holding
-//! its name, and a counter per pool. See section 5 of the design note.
+//! its name, and a counter per pool. See "Names" in
+//! `docs/specs/dynamodb-adapter.md`.
 
 use std::ops::Range;
 

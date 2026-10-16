@@ -26,5 +26,5 @@ Only Check exists today, as `sungma-api` with one HTTP route, `POST /check`. The
 
 - [Sample](sample.md): files, folders and groups, with a trace of one check.
 - [Glossary](glossary): the domain terms.
-- [Specs](specs): namespace documents, fact documents, namespace writes, the revision clock and one timeline.
+- [Specs](specs): namespace documents, fact documents, namespace writes, the revision clock, one timeline and the DynamoDB adapter.
 - [Notes](notes): open work and the current thinking on it.

@@ -1,7 +1,8 @@
 //! The write ports. Each write is one transaction that also moves the head
 //! forward, on condition the head is below the write's revision, and
 //! checks every item the write read, so a write that raced another is
-//! refused whole and tried again. See section 6 of the design note.
+//! refused whole and tried again. See "Writes" in
+//! `docs/specs/dynamodb-adapter.md`.
 
 use std::{
     collections::{HashMap, hash_map},

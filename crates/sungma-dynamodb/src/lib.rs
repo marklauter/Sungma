@@ -1,6 +1,6 @@
 //! The storage ports on one DynamoDB table: facts, namespace versions,
 //! names and the head, on one timeline. Development runs it against
-//! DynamoDB Local. `docs/notes/dynamodb-adapter-design.md` has the design.
+//! DynamoDB Local. `docs/specs/dynamodb-adapter.md` specifies it.
 //!
 //! A [`DynamoReader`] serves the read ports and a [`DynamoWriter`] the
 //! write ports, so code that only reads is given only a reader. Both share

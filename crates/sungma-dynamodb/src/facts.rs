@@ -1,6 +1,6 @@
 //! Facts: an item per span, keyed by subjectset and then by subject and the
 //! revision that wrote the span, and a pointer per fact to its open span.
-//! See section 3 of the design note.
+//! See "Facts" in `docs/specs/dynamodb-adapter.md`.
 
 use sungma::{
     graph::{Subject, Subjectset},

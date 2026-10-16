@@ -1,7 +1,7 @@
 //! Namespace versions: an item per entry, keyed by the revision it opens
 //! at, and a latest item that copies the newest entry. A version is stored
 //! as its printed document, minified, with its epochs beside it. See
-//! section 4 of the design note.
+//! "Namespace versions" in `docs/specs/dynamodb-adapter.md`.
 
 use std::{collections::HashMap, sync::Arc};
 

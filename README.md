@@ -37,7 +37,7 @@ A proof of concept. The evaluator, decisions with grounds and replay, namespace 
 - [Architecture](docs/architecture.md): Sungma, its neighbors and its services.
 - [Sample](docs/sample.md): files, folders and groups, with a trace of one check.
 - [Glossary](docs/glossary): the domain terms.
-- [Specs](docs/specs): namespace documents, fact documents, the revision clock and one timeline.
+- [Specs](docs/specs): namespace documents, fact documents, namespace writes, the revision clock, one timeline and the DynamoDB adapter.
 - [Notes](docs/notes): open work and the current thinking on it.
 - [C4 diagrams](docs/c4): the services and their containers, in Excalidraw.
 
