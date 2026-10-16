@@ -1915,6 +1915,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sungma-edge"
+version = "0.1.0"
+dependencies = [
+ "parking_lot",
+ "proptest",
+ "sungma-edge",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "sungma-lang"
 version = "0.1.0"
 dependencies = [

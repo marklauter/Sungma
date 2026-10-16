@@ -24,6 +24,7 @@ serde_json = "1.0.151"
 sungma = { version = "0.1.0", path = "crates/sungma" }
 sungma-check = { version = "0.1.0", path = "crates/sungma-check" }
 sungma-clock = { version = "0.1.0", path = "crates/sungma-clock" }
+sungma-edge = { version = "0.1.0", path = "crates/sungma-edge" }
 sungma-dynamodb = { version = "0.1.0", path = "crates/sungma-dynamodb" }
 sungma-lang = { version = "0.1.0", path = "crates/sungma-lang" }
 sungma-memory = { version = "0.1.0", path = "crates/sungma-memory" }
