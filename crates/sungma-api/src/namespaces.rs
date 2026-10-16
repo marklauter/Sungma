@@ -142,12 +142,12 @@ pub(crate) async fn write<R: Reader, W: Writer>(
 fn status(error: &NamespaceWriteServiceError) -> StatusCode {
     use NamespaceWriteServiceError::{Intern, Write};
     match error {
-        Intern(InternError::Exhausted(_))
-        | Write(NamespaceWriteError::History(HistoryError::NothingToRetire)) => {
+        Write(NamespaceWriteError::History(HistoryError::NothingToRetire)) => {
             StatusCode::UNPROCESSABLE_ENTITY
         }
         Write(NamespaceWriteError::Conflict { .. }) => StatusCode::CONFLICT,
-        Write(NamespaceWriteError::History(HistoryError::NotLater { .. })) => {
+        Intern(InternError::Exhausted(_))
+        | Write(NamespaceWriteError::History(HistoryError::NotLater { .. })) => {
             StatusCode::INTERNAL_SERVER_ERROR
         }
         Intern(InternError::Store(_))

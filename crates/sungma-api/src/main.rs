@@ -6,7 +6,8 @@
 //! it's missing. Otherwise it runs in memory.
 //!
 //! The files are optional seed data: a fact document and at least one
-//! namespace document, written through the API's own write services.
+//! namespace document, written through the API's own write services into
+//! a new store. A table that already exists isn't seeded again.
 
 use std::{env, error::Error, fs, sync::Arc};
 
@@ -38,9 +39,17 @@ async fn main() -> Result<(), Failed> {
         Ok(url) => {
             let name = env::var("SUNGMA_DYNAMODB_TABLE").unwrap_or_else(|_| "sungma".to_owned());
             let table = Table::new(local(&url), name);
-            if !table.exists().await? {
+            // A table that exists was seeded when it was made, so it's
+            // served as it is.
+            let seed = if table.exists().await? {
+                if seed.is_some() {
+                    println!("table {} exists, so it isn't seeded", table.name());
+                }
+                None
+            } else {
                 table.create().await?;
-            }
+                seed
+            };
             let reader = Arc::new(DynamoReader::new(table.clone()));
             let writer = Arc::new(DynamoWriter::dev(table).await?);
             serve(AppState::new(reader, writer), seed).await

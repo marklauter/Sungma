@@ -74,18 +74,22 @@ where
         for name in retire {
             writes.push(FactWrite::Retire(self.fact(name).await?));
         }
-        let mut added = HashMap::with_capacity(add.len());
         for name in add {
-            let fact = self.fact(name).await?;
-            added.insert(fact.clone(), name);
-            writes.push(FactWrite::Insert(fact));
+            writes.push(FactWrite::Insert(self.fact(name).await?));
         }
+        // The additions follow the retirements, in the caller's order.
+        let added = |fact: &Fact| {
+            let at = writes[retire.len()..]
+                .iter()
+                .position(|write| matches!(write, FactWrite::Insert(f) if f == fact))?;
+            add.get(at)
+        };
         self.facts
             .write(&writes)
             .await
             .map_err(|error| match error {
-                FactWriteError::Undeclared(fact) => match added.get(&fact) {
-                    Some(name) => FactWriteServiceError::Undeclared((*name).clone()),
+                FactWriteError::Undeclared(fact) => match added(&fact) {
+                    Some(name) => FactWriteServiceError::Undeclared(name.clone()),
                     None => FactWriteServiceError::Store(StoreError(format!(
                         "the store refused a fact it wasn't given to add: {fact:?}"
                     ))),

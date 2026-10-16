@@ -31,10 +31,13 @@
 //!   a zookie ahead of the latest revision.
 //! - 404: a namespace read that finds no version.
 //! - 409: a namespace write whose `based_on` isn't the latest version.
+//! - 413: a body past the size limit.
 //! - 415: a body that isn't sent as JSON.
-//! - 422: a refused write.
+//! - 422: a refused write. A refused namespace document is 422 whatever
+//!   its problems, names included, so it lists them all in one reply.
 //! - 502: the store or the clock failed.
-//! - 500: a fault in Sungma itself.
+//! - 500: a fault in Sungma itself, or one of its limits, such as running
+//!   out of ids.
 //!
 //! A check body that isn't well formed is rejected before it is decided,
 //! so it isn't audited.
@@ -55,10 +58,7 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::{
-        State,
-        rejection::{JsonRejection, MissingJsonContentType},
-    },
+    extract::{State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
@@ -312,15 +312,17 @@ impl Refused {
     }
 }
 
-/// The body, or why it's refused. A body not sent as JSON is 415; any
-/// other body that isn't well formed is 400.
+/// The body, or why it's refused. JSON that isn't well formed, or isn't
+/// the body the route takes, is 400; any other rejection keeps axum's
+/// status, such as 415 for a body not sent as JSON and 413 for one past
+/// the size limit.
 fn accept<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, Refused> {
     body.map(|Json(body)| body).map_err(|rejection| {
         let status = match rejection {
-            JsonRejection::MissingJsonContentType(MissingJsonContentType { .. }) => {
-                StatusCode::UNSUPPORTED_MEDIA_TYPE
+            JsonRejection::JsonDataError(_) | JsonRejection::JsonSyntaxError(_) => {
+                StatusCode::BAD_REQUEST
             }
-            _ => StatusCode::BAD_REQUEST,
+            _ => rejection.status(),
         };
         Refused(status, rejection.body_text())
     })

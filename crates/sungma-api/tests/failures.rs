@@ -227,3 +227,30 @@ async fn a_check_past_the_depth_limit_is_a_fault() {
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{reply}");
 }
+
+/// A body past the size limit is too large, not malformed.
+#[tokio::test]
+async fn a_body_past_the_limit_is_too_large() {
+    let app = router(Arc::new(AppState::memory()));
+    let big = format!(
+        r#"{{ "add": [], "pad": "{}" }}"#,
+        "x".repeat(3 * 1024 * 1024)
+    );
+    let (status, _) = common::post_raw(&app, "/facts/write", &big, Some("application/json")).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+/// Running out of ids is Sungma's own limit, not the caller's mistake.
+#[tokio::test]
+async fn a_pool_with_no_ids_left_is_a_fault() {
+    let memory = Arc::new(sungma_api::memory::Memory::default());
+    memory.names.lease(Pool::Relations, u32::MAX).await.unwrap();
+    let app = router(Arc::new(AppState::new(Arc::clone(&memory), memory)));
+    let (status, reply) = post(
+        &app,
+        "/namespaces/write",
+        json!({ "create": { "file": { "owner": "this" } } }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{reply}");
+}

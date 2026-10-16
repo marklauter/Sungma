@@ -79,7 +79,7 @@ fn a_seed_that_is_refused_stops_the_server() {
 }
 
 /// Runs on DynamoDB Local, creating the table, and seeds it; a second
-/// run finds the table and its namespaces, so its seed is refused.
+/// run finds the table and serves it without seeding it again.
 #[test]
 fn the_server_runs_on_dynamodb_when_given_a_url() {
     let url =
@@ -94,6 +94,7 @@ fn the_server_runs_on_dynamodb_when_given_a_url() {
     assert!(stderr(&seeded).contains(UNBOUND), "{}", stderr(&seeded));
     let again = run(&seed(&facts), &env);
     let stderr = stderr(&again);
-    assert!(!stderr.contains(UNBOUND), "{stderr}");
-    assert!(stderr.contains("Conflict"), "{stderr}");
+    assert!(stderr.contains(UNBOUND), "{stderr}");
+    let stdout = String::from_utf8_lossy(&again.stdout);
+    assert!(stdout.contains("isn't seeded"), "{stdout}");
 }
