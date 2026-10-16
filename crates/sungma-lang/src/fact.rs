@@ -200,8 +200,8 @@ pub fn parse(json: &str) -> Result<Vec<FactName>, serde_json::Error> {
 }
 
 /// A write request, `{ "add": [..], "retire": [..] }`, each list a fact
-/// document. Both keys are optional, and a request with neither is
-/// refused.
+/// document. Both keys are optional, but add and retire can't both be
+/// empty: a request with no facts is refused.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize)]
 #[serde(try_from = "WriteDto")]
 pub struct WriteRequest {
@@ -220,15 +220,16 @@ impl TryFrom<WriteDto> for WriteRequest {
     type Error = &'static str;
 
     fn try_from(dto: WriteDto) -> Result<Self, Self::Error> {
-        if dto.add.is_none() && dto.retire.is_none() {
-            return Err("a write request holds add, retire or both");
-        }
         let facts =
             |dtos: Option<Vec<FactDto>>| dtos.into_iter().flatten().map(|dto| dto.0).collect();
-        Ok(Self {
+        let request = Self {
             add: facts(dto.add),
             retire: facts(dto.retire),
-        })
+        };
+        if request.add.is_empty() && request.retire.is_empty() {
+            return Err("a write request adds or retires at least one fact");
+        }
+        Ok(request)
     }
 }
 

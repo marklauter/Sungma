@@ -312,12 +312,19 @@ async fn a_body_that_is_not_well_formed_is_refused() {
 }
 
 #[tokio::test]
-async fn an_empty_add_writes_a_revision() {
+async fn a_write_of_no_facts_is_refused_and_writes_no_revision() {
     for (store, app) in stores().await {
         let declared = declare(&app).await;
-        let (status, reply) = write(&app, json!({ "add": [] })).await;
-        assert_eq!(status, StatusCode::OK, "{store}: {reply}");
-        assert!(reply["zookie"]["revision"].as_u64() > declared["revision"].as_u64());
+        for body in [
+            json!({ "add": [] }),
+            json!({ "retire": [] }),
+            json!({ "add": [], "retire": [] }),
+        ] {
+            let (status, reply) = write(&app, body.clone()).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{store}: {body}: {reply}");
+        }
+        let (_, reply) = read(&app, owners()).await;
+        assert_eq!(reply["zookie"], declared, "{store}");
     }
 }
 

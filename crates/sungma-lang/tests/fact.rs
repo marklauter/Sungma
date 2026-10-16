@@ -748,7 +748,7 @@ fn a_write_request_holds_add_retire_or_both() {
         (json!({ "add": [alice] }), 1, 0),
         (json!({ "retire": [alice] }), 0, 1),
         (json!({ "add": [alice], "retire": [alice, alice] }), 1, 2),
-        (json!({ "add": [] }), 0, 0),
+        (json!({ "add": [alice], "retire": [] }), 1, 0),
     ] {
         let request = fact::parse_write(&body.to_string()).unwrap();
         assert_eq!(
@@ -760,6 +760,8 @@ fn a_write_request_holds_add_retire_or_both() {
     for body in [
         json!({}),
         json!({ "add": null }),
+        json!({ "add": [] }),
+        json!({ "add": [], "retire": [] }),
         json!({ "add": [], "remove": [] }),
         json!({ "add": [{ "namespace": "file" }] }),
         json!([]),
