@@ -17,9 +17,9 @@ This covers roadmap items 7 and 8, the Read and Write services, and the namespac
 
 ## 1. Routes
 
-1. Every route is a `POST` taking and giving JSON, like `/check`, and every reply carries `request_id`.
-2. `POST /write` writes facts. The body is the write request in [Fact documents](../specs/fact-documents.md#writes): `add` and `retire`, each a fact document. The reply gives the write's zookie.
-3. `POST /read` reads facts at one snapshot. The body names a subjectset with the keys a fact uses, `namespace`, `resource` and `relation`, and an optional `zookie`. With a `subject` too, it's a point read of that one fact. The reply gives the facts it found as a fact document, and the zookie it read at.
+1. Every route is a `POST` taking and giving JSON, like `/check`, and every reply carries `request_id`. Fact and namespace routes are prefixed by what they act on; `/check` acts on no one kind, so it keeps its path.
+2. `POST /facts/write` writes facts. The body is the write request in [Fact documents](../specs/fact-documents.md#writes): `add` and `retire`, each a fact document. The reply gives the write's zookie.
+3. `POST /facts/read` reads facts at one snapshot. The body names a subjectset with the keys a fact uses, `namespace`, `resource` and `relation`, and an optional `zookie`. With a `subject` too, it's a point read of that one fact. The reply gives the facts it found as a fact document, and the zookie it read at.
 4. `POST /namespaces/write` writes a namespace. The body is one of:
    1. `{ "create": <document> }`;
    2. `{ "new_version": <document>, "based_on": <zookie> }`;
