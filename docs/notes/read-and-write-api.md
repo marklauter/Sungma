@@ -38,8 +38,8 @@ This covers roadmap items 7 and 8, the Read and Write services, and the namespac
 ## 3. Services
 
 1. Like `CheckService`, each route's work lives in a service the API calls, generic over the ports it needs:
-   1. `WriteService` and `NamespaceWriteService` in `sungma-write`, over an `Interner` or a `Dictionary` and the writers.
-   2. `ReadService` in `sungma-check`, over a `Dictionary` and the readers. `sungma-check` is the read side; a rename can wait.
+   1. `FactWriteService` and `NamespaceWriteService` in `sungma-write`, over an `Interner` or a `Dictionary` and the writers.
+   2. `FactReadService` and `NamespaceReadService` in `sungma-check`, over a `Dictionary` and the readers. `sungma-check` is the read side; a rename can wait.
 2. Writes aren't audited in this step. The audit log takes check decisions, and the Audit service will follow Watch's events.
 
 ## 4. The store
@@ -56,14 +56,16 @@ This covers roadmap items 7 and 8, the Read and Write services, and the namespac
    1. 400: a body that isn't well formed, or a name that breaks the grammar.
    2. 422: a refused write, such as an unknown name, a relation no latest version declares, or a namespace document that fails its checks. A refused namespace document lists every problem, as the parser gives them.
    3. 409: a namespace write whose `based_on` isn't the latest version.
-   4. 500: the store or the clock failed.
+   4. 502: the store or the clock failed. Both are services Sungma calls: DynamoDB, and the time servers behind the clock.
+   5. 500: a fault in Sungma itself. Few paths lead there.
+3. `/check` follows the same codes. A check whose store read fails gives 502 rather than 500.
 
 ## 6. Spec drift
 
-[Namespace writes](../specs/namespace-writes.md#storage) says a version is stored parsed and interned, not as document text. The DynamoDB adapter stores the printed document. The spec is corrected in this work.
+[Namespace writes](../specs/namespace-writes.md#storage) said a version is stored parsed and interned, while the DynamoDB adapter stores the printed document. The spec now allows both forms: what it guards against is storing the caller's text.
 
 ## 7. Not in this step
 
 1. Reading by resource, every relation of one resource. The table keys facts by subjectset, so this needs an index.
 2. Paging. A read gives every fact under the subjectset at once.
-3. Authentication of callers, gRPC, audit of writes and opaque zookies.
+3. gRPC, audit of writes and opaque zookies. Callers aren't authenticated, and nothing here needs it.
