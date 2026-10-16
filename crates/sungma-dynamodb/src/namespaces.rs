@@ -56,20 +56,6 @@ impl From<NamespaceError> for Failed {
     }
 }
 
-/// Every relation a namespace names, in its declarations and its rewrites.
-fn relations<R: Clone + Eq + std::hash::Hash + std::fmt::Display>(
-    namespace: &Namespace<R>,
-) -> Result<Vec<R>, StoreError> {
-    let mut seen = Vec::new();
-    namespace
-        .map(|relation| {
-            seen.push(relation.clone());
-            relation.clone()
-        })
-        .map_err(|error| StoreError(error.to_string()))?;
-    Ok(seen)
-}
-
 impl Table {
     /// The namespace's latest item, `None` when it was never written.
     pub(crate) async fn latest(
@@ -135,7 +121,7 @@ impl Table {
             ))
         })?;
         let mut ids = HashMap::new();
-        for name in relations(&document.relations)? {
+        for name in document.relations.names() {
             let mut id = self
                 .id_of(Pool::Relations, name.as_str(), consistent)
                 .await?;
@@ -143,7 +129,7 @@ impl Table {
                 id = self.id_of(Pool::Relations, name.as_str(), true).await?;
             }
             let id = id.ok_or_else(|| StoreError(format!("relation '{name}' isn't interned")))?;
-            ids.insert(name, RelationId(id));
+            ids.insert(name.clone(), RelationId(id));
         }
         let namespace = document
             .relations
@@ -210,12 +196,12 @@ impl Table {
             .await?
             .ok_or_else(|| unnamed(format!("namespace {}", id.0)))?;
         let mut names = HashMap::new();
-        for relation in relations(namespace)? {
+        for relation in namespace.names() {
             let name = self
                 .name_of(Pool::Relations, relation.0, true)
                 .await?
                 .ok_or_else(|| unnamed(format!("relation {}", relation.0)))?;
-            names.insert(relation, RelationName::new_unchecked(name));
+            names.insert(*relation, RelationName::new_unchecked(name));
         }
         let named = namespace
             .try_map(|relation| {

@@ -8,6 +8,7 @@ use std::{
 
 use proptest::prelude::*;
 use serde_json::{Value, json};
+use sungma::resolve;
 use sungma::{
     graph::Subject,
     id::{NamespaceId, RelationId},
@@ -19,7 +20,6 @@ use sungma::{
     rewrite::Rewrite::This,
     store::{FactReader, Pool, ReadingDictionary},
 };
-use sungma_check::resolve;
 use sungma_lang::fact;
 use sungma_memory::{MemoryDictionary, MemoryStore};
 
@@ -55,11 +55,13 @@ async fn a_subject_is_read_by_its_keys() {
     let declared = declare_all(json, &dictionary, &facts);
     fact::load_facts(json, &dictionary, &facts).unwrap();
     assert_eq!(facts.head().await.unwrap().0, declared + 1);
-    let folder = resolve::resource(
-        &ReadingDictionary(&dictionary),
-        &"folder:root".parse().unwrap(),
-    )
-    .await;
+    let folder = resolve::known(
+        resolve::resource(
+            &ReadingDictionary(&dictionary),
+            &"folder:root".parse().unwrap(),
+        )
+        .await,
+    );
     assert!(folder.unwrap().is_some());
 }
 
@@ -263,7 +265,9 @@ async fn a_refused_document_declares_no_facts() {
     ]"#;
     assert!(fact::load_facts(json, &dictionary, &facts).is_err());
     assert_eq!(facts.head().await.unwrap().0, 0);
-    let file = resolve::resource(&ReadingDictionary(&dictionary), &"file:a".parse().unwrap()).await;
+    let file = resolve::known(
+        resolve::resource(&ReadingDictionary(&dictionary), &"file:a".parse().unwrap()).await,
+    );
     assert_eq!(file.unwrap(), None);
 }
 
@@ -377,9 +381,8 @@ async fn holds(
     subject: &Who,
 ) -> bool {
     let set = set_name(namespace, resource, relation);
-    let Some(set) = resolve::subjectset(&ReadingDictionary(dictionary), &set)
-        .await
-        .unwrap()
+    let Some(set) =
+        resolve::known(resolve::subjectset(&ReadingDictionary(dictionary), &set).await).unwrap()
     else {
         return false;
     };
@@ -387,16 +390,17 @@ async fn holds(
         Who::Identity(identity) => Some(Subject::Identity(identity.parse().unwrap())),
         Who::Resource(namespace, resource) => {
             let name = ResourceName::new(namespace.parse().unwrap(), resource.parse().unwrap());
-            resolve::resource(&ReadingDictionary(dictionary), &name)
-                .await
+            resolve::known(resolve::resource(&ReadingDictionary(dictionary), &name).await)
                 .unwrap()
                 .map(Subject::ResourceMember)
         }
-        Who::Subjectset(namespace, resource, relation) => resolve::subjectset(
-            &ReadingDictionary(dictionary),
-            &set_name(namespace, resource, relation),
+        Who::Subjectset(namespace, resource, relation) => resolve::known(
+            resolve::subjectset(
+                &ReadingDictionary(dictionary),
+                &set_name(namespace, resource, relation),
+            )
+            .await,
         )
-        .await
         .unwrap()
         .map(Subject::Subjectset),
     };

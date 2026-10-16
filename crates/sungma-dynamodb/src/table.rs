@@ -188,6 +188,27 @@ impl Table {
         Ok(())
     }
 
+    /// Whether the table exists.
+    pub async fn exists(&self) -> Result<bool, StoreError> {
+        match self
+            .client
+            .describe_table()
+            .table_name(&*self.name)
+            .send()
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(error)
+                if error
+                    .as_service_error()
+                    .is_some_and(|e| e.is_resource_not_found_exception()) =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(failed(error)),
+        }
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }

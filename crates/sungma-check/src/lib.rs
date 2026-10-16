@@ -1,5 +1,6 @@
-//! The Check API: resolve a request's names, decide it at a revision, and
-//! append an audit record.
+//! The read side: Check, which resolves a request's names, decides it at a
+//! revision and appends an audit record, and the fact and namespace reads
+//! in [`read`].
 //!
 //! The [`Decision`] is what replay needs. The [`AuditRecord`] wraps it with
 //! what only the edge knows: who asked, when, the names they sent, and the
@@ -15,22 +16,17 @@ use parking_lot::Mutex;
 use thiserror::Error;
 
 use sungma::{
-    closure::Closure,
+    closure::{Closure, ClosureError},
     decision::Decision,
-    graph::Subject,
-    name::{Identity, SubjectsetName},
+    name::{SubjectName, SubjectsetName},
+    resolve::{self, ResolveError},
     revision::Revision,
     store::{Dictionary, FactReader, NamespaceReader, StoreError},
 };
 
-pub mod resolve;
+pub mod read;
 
-/// A subject named as a caller sends it.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum SubjectName {
-    Identity(Identity),
-    Subjectset(SubjectsetName),
-}
+use read::ReadError;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CheckRequest {
@@ -56,7 +52,45 @@ pub enum Verdict {
     /// fact mentions it and the request is denied without evaluation.
     Unknown,
     /// The request could not be decided.
-    Failed(String),
+    Failed(Failure),
+}
+
+/// Why a request could not be decided.
+#[derive(Clone, PartialEq, Eq, Debug, Error)]
+pub enum Failure {
+    /// The zookie names a revision past the latest.
+    #[error("zookie {zookie:?} is ahead of the latest revision {head:?}")]
+    Ahead { zookie: Revision, head: Revision },
+    /// A store failed, as its message says.
+    #[error("{0}")]
+    Store(String),
+    /// Evaluation went past one of Sungma's limits.
+    #[error("{0}")]
+    Evaluation(String),
+}
+
+impl From<StoreError> for Failure {
+    fn from(error: StoreError) -> Self {
+        Self::Store(error.to_string())
+    }
+}
+
+impl From<ReadError> for Failure {
+    fn from(error: ReadError) -> Self {
+        match error {
+            ReadError::Ahead { zookie, head } => Self::Ahead { zookie, head },
+            ReadError::Store(error) => error.into(),
+        }
+    }
+}
+
+impl From<ClosureError> for Failure {
+    fn from(error: ClosureError) -> Self {
+        match error {
+            ClosureError::Store(error) => error.into(),
+            error => Self::Evaluation(error.to_string()),
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -150,42 +184,20 @@ where
     }
 
     /// `Ok(None)` when a namespace or relation name was never interned.
-    async fn try_decide(&self, request: &CheckRequest) -> Result<Option<Decision>, String> {
-        let Some(set) = resolve::subjectset(self.dictionary, &request.set)
-            .await
-            .map_err(|e| e.to_string())?
-        else {
+    async fn try_decide(&self, request: &CheckRequest) -> Result<Option<Decision>, Failure> {
+        let names = async {
+            let set = resolve::subjectset(self.dictionary, &request.set).await?;
+            let subject = resolve::subject(self.dictionary, &request.subject).await?;
+            Ok::<_, ResolveError>((set, subject))
+        };
+        let Some((set, subject)) = resolve::known(names.await)? else {
             return Ok(None);
         };
-        let Some(subject) = self.subject(&request.subject).await? else {
-            return Ok(None);
-        };
-        let revision = self.revision(request.zookie).await?;
-        Closure::new(self.namespaces, self.facts, &set, revision)
-            .decide(subject)
-            .await
-            .map(Some)
-            .map_err(|e| e.to_string())
-    }
-
-    async fn subject(&self, name: &SubjectName) -> Result<Option<Subject>, String> {
-        let subject = match name {
-            SubjectName::Identity(identity) => Ok(Some(Subject::Identity(identity.clone()))),
-            SubjectName::Subjectset(set) => resolve::subjectset(self.dictionary, set)
-                .await
-                .map(|set| set.map(Subject::Subjectset)),
-        };
-        subject.map_err(|e| e.to_string())
-    }
-
-    /// The latest revision, which must be at least as fresh as the zookie.
-    async fn revision(&self, zookie: Option<Revision>) -> Result<Revision, String> {
-        let head = self.facts.head().await.map_err(|e| e.to_string())?;
-        match zookie {
-            Some(zookie) if zookie > head => Err(format!(
-                "zookie {zookie:?} is ahead of the latest revision {head:?}"
-            )),
-            _ => Ok(head),
-        }
+        let revision = read::revision(self.facts, request.zookie).await?;
+        Ok(Some(
+            Closure::new(self.namespaces, self.facts, &set, revision)
+                .decide(subject)
+                .await?,
+        ))
     }
 }

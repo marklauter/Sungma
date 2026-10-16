@@ -1,6 +1,12 @@
-//! The Check web API: JSON over HTTP, on axum.
+//! Sungma's web API: JSON over HTTP, on axum. Every route is a `POST`
+//! taking and giving JSON, and every reply carries `request_id`.
 //!
-//! `POST /check` judges one fact, named in the fixture's string form:
+//! - `POST /check` judges one fact.
+//! - `POST /facts/write` and `POST /facts/read` write and read facts.
+//! - `POST /namespaces/write` and `POST /namespaces/read` write and read
+//!   namespace versions.
+//!
+//! `POST /check` names the fact in the string form:
 //!
 //! ```json
 //! { "set": "file:design.md#viewer", "identity": "alice", "zookie": { "revision": 12 } }
@@ -16,14 +22,29 @@
 //! ```
 //!
 //! The `x-request-id` and `x-caller` headers fill the audit record's
-//! context. Neither is authenticated yet.
+//! context. Neither is authenticated.
 //!
-//! Every error reply is JSON, `{"request_id": .., "error": ..}`. A body that
-//! isn't a well-formed check, including one with unknown fields or with
-//! both or neither subject, is rejected before it is decided, so it isn't
-//! audited.
+//! Every error reply is JSON, `{"request_id": .., "error": ..}`, with one of
+//! these statuses:
+//!
+//! - 400: a body that isn't well formed, a name that breaks the grammar, or
+//!   a zookie ahead of the latest revision.
+//! - 404: a namespace read that finds no version.
+//! - 409: a namespace write whose `based_on` isn't the latest version.
+//! - 415: a body that isn't sent as JSON.
+//! - 422: a refused write.
+//! - 502: the store or the clock failed.
+//! - 500: a fault in Sungma itself.
+//!
+//! A check body that isn't well formed is rejected before it is decided,
+//! so it isn't audited.
+
+mod facts;
+pub mod memory;
+mod namespaces;
 
 use std::{
+    num::NonZeroU32,
     str::FromStr,
     sync::{
         Arc,
@@ -34,50 +55,120 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::{State, rejection::JsonRejection},
+    extract::{
+        State,
+        rejection::{JsonRejection, MissingJsonContentType},
+    },
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
 };
-use serde::{Deserialize, Serialize};
-use sungma::{name::NameError, revision::Revision, store::ReadingDictionary};
+use serde::{Deserialize, Deserializer, Serialize, de};
+use sungma::{
+    name::{NameError, SubjectName},
+    revision::Revision,
+    store::{FactReader, NameReader, NamespaceReader, ReadingDictionary},
+};
 use sungma_check::{
-    CheckRequest, CheckService, MemoryAuditLog, RequestContext, SubjectName, Verdict,
+    CheckRequest, CheckService, Failure, MemoryAuditLog, RequestContext, Verdict, read::ReadError,
 };
-use sungma_lang::{
-    fact::{self, FactError},
-    namespace,
+use sungma_lang::{fact, namespace};
+use sungma_write::{
+    intern::LeasingInterner,
+    service::{
+        FactWriteService, FactWriteServiceError, NamespaceWriteService, NamespaceWriteServiceError,
+    },
+    store::{FactWriter, NameWriter, NamespaceWrite, NamespaceWriter},
 };
-use sungma_memory::{MemoryDictionary, MemoryStore};
 use thiserror::Error;
 
-/// Why the state didn't load.
+use memory::Memory;
+
+/// What every route reads through.
+pub trait Reader: NameReader + FactReader + NamespaceReader + Send + Sync + 'static {}
+
+impl<T: NameReader + FactReader + NamespaceReader + Send + Sync + 'static> Reader for T {}
+
+/// What every route writes through.
+pub trait Writer: NameWriter + FactWriter + NamespaceWriter + Send + Sync + 'static {}
+
+impl<T: NameWriter + FactWriter + NamespaceWriter + Send + Sync + 'static> Writer for T {}
+
+/// How many ids a lease takes at a time.
+const LEASE: NonZeroU32 = NonZeroU32::new(64).unwrap();
+
+/// Why the seed data didn't load.
 #[derive(Debug, Error)]
 pub enum LoadError {
     #[error(transparent)]
-    Namespace(#[from] namespace::LoadError),
+    Refused(#[from] namespace::Refusal),
     #[error(transparent)]
-    Fact(#[from] FactError),
+    Namespace(#[from] NamespaceWriteServiceError),
+    #[error(transparent)]
+    Facts(#[from] serde_json::Error),
+    #[error(transparent)]
+    Fact(#[from] FactWriteServiceError),
 }
 
-/// What every request reads, shared across them.
-#[derive(Debug, Default)]
-pub struct AppState {
-    pub dictionary: MemoryDictionary,
-    pub store: MemoryStore,
+/// What every request reads and writes through, shared across them.
+pub struct AppState<R = Memory, W = Memory> {
+    reader: Arc<R>,
+    writer: Arc<W>,
+    /// Mints the names namespace writes declare.
+    interner: LeasingInterner<Arc<R>, Arc<W>>,
     pub audit: MemoryAuditLog,
     /// Numbers requests that arrive without an `x-request-id`.
     requests: AtomicU64,
 }
 
 impl AppState {
-    /// Loads namespace documents and fact JSON in the [`namespace`] and [`fact`]
-    /// forms.
-    pub fn load(namespaces: &[&str], facts: &str) -> Result<Self, LoadError> {
-        let state = Self::default();
-        namespace::load_namespaces(namespaces, &state.dictionary, &state.store)?;
-        fact::load_facts(facts, &state.dictionary, &state.store)?;
-        Ok(state)
+    /// A state on an empty in-memory store.
+    pub fn memory() -> Self {
+        let memory = Arc::new(Memory::default());
+        Self::new(Arc::clone(&memory), memory)
+    }
+}
+
+impl<R: Reader, W: Writer> AppState<R, W> {
+    pub fn new(reader: Arc<R>, writer: Arc<W>) -> Self {
+        Self {
+            interner: LeasingInterner::new(Arc::clone(&reader), Arc::clone(&writer), LEASE),
+            reader,
+            writer,
+            audit: MemoryAuditLog::default(),
+            requests: AtomicU64::new(0),
+        }
+    }
+
+    /// Creates each namespace in the documents, then adds the facts in the
+    /// fact document, through the write services, as a caller would. Every
+    /// document is parsed before anything is written. Meant for an empty
+    /// store: creating a namespace that has a version is refused.
+    pub async fn seed(&self, namespaces: &[&str], facts: &str) -> Result<(), LoadError> {
+        let documents = namespaces
+            .iter()
+            .map(|document| namespace::parse(document).map_err(namespace::Refusal))
+            .collect::<Result<Vec<_>, _>>()?;
+        let facts = fact::parse(facts)?;
+        let writer = NamespaceWriteService::new(&self.interner, &*self.writer);
+        for document in documents {
+            writer
+                .write(
+                    &document.namespace,
+                    NamespaceWrite::Create(document.relations),
+                )
+                .await?;
+        }
+        if !facts.is_empty() {
+            FactWriteService::new(&self.interner, &*self.writer)
+                .write(&facts, &[])
+                .await?;
+        }
+        Ok(())
+    }
+
+    fn names(&self) -> ReadingDictionary<&R> {
+        ReadingDictionary(&*self.reader)
     }
 
     fn context(&self, headers: &HeaderMap) -> RequestContext {
@@ -98,14 +189,42 @@ impl AppState {
     }
 }
 
-pub fn router(state: Arc<AppState>) -> Router {
-    Router::new().route("/check", post(check)).with_state(state)
+pub fn router<R: Reader, W: Writer>(state: Arc<AppState<R, W>>) -> Router {
+    Router::new()
+        .route("/check", post(check::<R, W>))
+        .route("/facts/write", post(facts::write::<R, W>))
+        .route("/facts/read", post(facts::read::<R, W>))
+        .route("/namespaces/write", post(namespaces::write::<R, W>))
+        .route("/namespaces/read", post(namespaces::read::<R, W>))
+        .with_state(state)
 }
 
 /// A revision a caller has seen. Plain JSON for now.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Zookie {
     pub revision: u64,
+}
+
+impl From<Revision> for Zookie {
+    fn from(revision: Revision) -> Self {
+        Self {
+            revision: revision.0,
+        }
+    }
+}
+
+impl From<Zookie> for Revision {
+    fn from(zookie: Zookie) -> Self {
+        Self(zookie.revision)
+    }
+}
+
+/// A reply that gives only the zookie of a write.
+#[derive(Serialize)]
+struct Written {
+    request_id: String,
+    zookie: Zookie,
 }
 
 /// The subject is two optional keys rather than a flattened enum, because
@@ -138,23 +257,20 @@ struct ErrorReply {
     error: String,
 }
 
-async fn check(
-    State(state): State<Arc<AppState>>,
+async fn check<R: Reader, W: Writer>(
+    State(state): State<Arc<AppState<R, W>>>,
     headers: HeaderMap,
     body: Result<Json<CheckBody>, JsonRejection>,
 ) -> Response {
     let context = state.context(&headers);
     let request_id = context.request_id.clone();
-    let body = match body {
-        Ok(Json(body)) => body,
-        Err(rejection) => return failure(rejection.status(), request_id, rejection.body_text()),
-    };
-    let request = match body.into_request() {
-        Ok(request) => request,
-        Err(error) => return failure(StatusCode::BAD_REQUEST, request_id, error),
-    };
-    let names = ReadingDictionary(&state.dictionary);
-    let service = CheckService::new(&names, &state.store, &state.store, &state.audit);
+    let request =
+        match accept(body).and_then(|body| body.into_request().map_err(Refused::malformed)) {
+            Ok(request) => request,
+            Err(refused) => return refused.reply(&request_id),
+        };
+    let names = state.names();
+    let service = CheckService::new(&names, &*state.reader, &*state.reader, &state.audit);
     let (verdict, zookie) = match service.check(context, request).await {
         Ok(Verdict::Decided(decision)) => {
             let verdict = if decision.outcome.is_allowed() {
@@ -162,22 +278,18 @@ async fn check(
             } else {
                 "denied"
             };
-            let zookie = Zookie {
-                revision: decision.revision.0,
-            };
-            (verdict, Some(zookie))
+            (verdict, Some(decision.revision.into()))
         }
         Ok(Verdict::Unknown) => ("unknown", None),
-        Ok(Verdict::Failed(error)) => {
-            return failure(StatusCode::INTERNAL_SERVER_ERROR, request_id, error);
+        Ok(Verdict::Failed(failed)) => {
+            let status = match failed {
+                Failure::Ahead { .. } => StatusCode::BAD_REQUEST,
+                Failure::Store(_) => StatusCode::BAD_GATEWAY,
+                Failure::Evaluation(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            return failure(status, &request_id, failed);
         }
-        Err(error) => {
-            return failure(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                request_id,
-                error.to_string(),
-            );
-        }
+        Err(error) => return failure(StatusCode::BAD_GATEWAY, &request_id, error),
     };
     let reply = CheckReply {
         request_id,
@@ -187,8 +299,49 @@ async fn check(
     Json(reply).into_response()
 }
 
-fn failure(status: StatusCode, request_id: String, error: String) -> Response {
-    (status, Json(ErrorReply { request_id, error })).into_response()
+/// A request refused before it reached a service: its status and why.
+struct Refused(StatusCode, String);
+
+impl Refused {
+    fn malformed(error: impl ToString) -> Self {
+        Self(StatusCode::BAD_REQUEST, error.to_string())
+    }
+
+    fn reply(self, request_id: &str) -> Response {
+        failure(self.0, request_id, self.1)
+    }
+}
+
+/// The body, or why it's refused. A body not sent as JSON is 415; any
+/// other body that isn't well formed is 400.
+fn accept<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, Refused> {
+    body.map(|Json(body)| body).map_err(|rejection| {
+        let status = match rejection {
+            JsonRejection::MissingJsonContentType(MissingJsonContentType { .. }) => {
+                StatusCode::UNSUPPORTED_MEDIA_TYPE
+            }
+            _ => StatusCode::BAD_REQUEST,
+        };
+        Refused(status, rejection.body_text())
+    })
+}
+
+fn failure(status: StatusCode, request_id: &str, error: impl ToString) -> Response {
+    let reply = ErrorReply {
+        request_id: request_id.to_owned(),
+        error: error.to_string(),
+    };
+    (status, Json(reply)).into_response()
+}
+
+/// A read refused: a zookie ahead of the latest revision is the caller's,
+/// and a store failure is the store's.
+fn read_failure(request_id: &str, error: ReadError) -> Response {
+    let status = match error {
+        ReadError::Ahead { .. } => StatusCode::BAD_REQUEST,
+        ReadError::Store(_) => StatusCode::BAD_GATEWAY,
+    };
+    failure(status, request_id, error)
 }
 
 impl CheckBody {
@@ -202,11 +355,20 @@ impl CheckBody {
         Ok(CheckRequest {
             set,
             subject,
-            zookie: self.zookie.map(|zookie| Revision(zookie.revision)),
+            zookie: self.zookie.map(Revision::from),
         })
     }
 }
 
 fn parse<T: FromStr<Err = NameError>>(text: &str) -> Result<T, String> {
     text.parse().map_err(|error: NameError| error.to_string())
+}
+
+/// A name read from a JSON string, refused as the grammar refuses it.
+fn named<'de, D: Deserializer<'de>, T: FromStr<Err = NameError>>(
+    deserializer: D,
+) -> Result<T, D::Error> {
+    String::deserialize(deserializer)?
+        .parse()
+        .map_err(de::Error::custom)
 }
