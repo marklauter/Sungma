@@ -27,6 +27,7 @@ sungma-clock = { version = "0.1.0", path = "crates/sungma-clock" }
 sungma-edge = { version = "0.1.0", path = "crates/sungma-edge" }
 sungma-dynamodb = { version = "0.1.0", path = "crates/sungma-dynamodb" }
 sungma-lang = { version = "0.1.0", path = "crates/sungma-lang" }
+sungma-node = { version = "0.1.0", path = "crates/sungma-node" }
 sungma-read = { version = "0.1.0", path = "crates/sungma-read" }
 sungma-schema = { version = "0.1.0", path = "crates/sungma-schema" }
 sungma-names = { version = "0.1.0", path = "crates/sungma-names" }

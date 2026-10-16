@@ -7,116 +7,59 @@ use std::{ops::Range, sync::Arc};
 
 use axum::{Router, http::StatusCode};
 use serde_json::{Value, json};
-use sungma::{
-    graph::{Subject, Subjectset},
-    id::NamespaceId,
-    revision::Revision,
-    store::{DocumentReader, NameReader, Pool, StoreError},
-    version::Version,
-};
+use sungma::revision::Revision;
 use sungma_api::{AppState, router};
-use sungma_check::{closure::MAX_DEPTH, store::FactReader, store::NamespaceReader};
-use sungma_clock::{ClockFault, ManualClock, Reading};
-use sungma_dynamodb::{DynamoReader, DynamoWriter, Table, local};
-use sungma_write::store::{
-    FactWrite, FactWriteError, FactWriter, NameWriter, NamespaceWrite, NamespaceWriteError,
-    NamespaceWriter,
+use sungma_check::closure::MAX_DEPTH;
+use sungma_clock::{ClockFault, DevClock, ManualClock, Reading};
+use sungma_edge::{
+    EdgeError,
+    item::Item,
+    key::Key,
+    memory::{MemorySequence, MemoryTable},
+    read::{Consistency, ItemReader, Query},
+    sequence::Sequence,
+    write::{CommitError, ItemWriter, Work},
 };
+use sungma_node::Node;
 
-use common::{dynamodb_url, post};
+use common::post;
 
 /// A store that is down.
+#[derive(Clone, Copy)]
 struct Down;
 
-fn down() -> StoreError {
-    StoreError("the store is down".to_owned())
+fn down() -> EdgeError {
+    EdgeError("the store is down".to_owned())
 }
 
-impl NameReader for Down {
-    async fn id(&self, _: Pool, _: &str) -> Result<Option<u32>, StoreError> {
+impl ItemReader for Down {
+    async fn get(&self, _: &Key, _: Consistency) -> Result<Option<Item>, EdgeError> {
         Err(down())
     }
 
-    async fn name(&self, _: Pool, _: u32) -> Result<Option<String>, StoreError> {
-        Err(down())
-    }
-}
-
-impl NameWriter for Down {
-    async fn insert_if_absent(&self, _: Pool, _: &str, _: u32) -> Result<u32, StoreError> {
-        Err(down())
-    }
-
-    async fn lease(&self, _: Pool, _: u32) -> Result<Range<u32>, StoreError> {
+    async fn query(&self, _: &Query, _: Consistency) -> Result<Vec<(Vec<u8>, Item)>, EdgeError> {
         Err(down())
     }
 }
 
-impl FactReader for Down {
-    async fn head(&self) -> Result<Revision, StoreError> {
-        Err(down())
+impl ItemWriter for Down {
+    fn max_steps(&self) -> usize {
+        100
     }
 
-    async fn written(
-        &self,
-        _: &Subjectset,
-        _: &Subject,
-        _: Revision,
-    ) -> Result<Option<Revision>, StoreError> {
-        Err(down())
-    }
-
-    async fn subjectsets(
-        &self,
-        _: &Subjectset,
-        _: Revision,
-    ) -> Result<Vec<(Subjectset, Revision)>, StoreError> {
-        Err(down())
-    }
-
-    async fn subjects(
-        &self,
-        _: &Subjectset,
-        _: Revision,
-    ) -> Result<Vec<(Subject, Revision)>, StoreError> {
-        Err(down())
-    }
-}
-
-impl FactWriter for Down {
-    async fn write(&self, _: &[FactWrite]) -> Result<Revision, FactWriteError> {
+    async fn commit(&self, _: Work) -> Result<(), CommitError> {
         Err(down().into())
     }
 }
 
-impl NamespaceReader for Down {
-    async fn version(
-        &self,
-        _: NamespaceId,
-        _: Revision,
-    ) -> Result<Option<Arc<Version>>, StoreError> {
+impl Sequence for Down {
+    async fn next(&self, _: &Key, _: u64) -> Result<Range<u64>, EdgeError> {
         Err(down())
     }
 }
 
-impl DocumentReader for Down {
-    async fn document(
-        &self,
-        _: NamespaceId,
-        _: Revision,
-    ) -> Result<Option<(Revision, String)>, StoreError> {
-        Err(down())
-    }
-}
-
-impl NamespaceWriter for Down {
-    async fn write_namespace(
-        &self,
-        _: NamespaceId,
-        _: NamespaceWrite,
-    ) -> Result<Revision, NamespaceWriteError> {
-        Err(down().into())
-    }
+fn broken() -> AppState<Down, Down> {
+    AppState::new(Node::new(Down, Down, DevClock::default()))
 }
 
 fn readme(identity: &str) -> Value {
@@ -156,9 +99,7 @@ fn requests() -> Vec<(&'static str, Value)> {
 
 #[tokio::test]
 async fn a_store_that_fails_is_a_bad_gateway() {
-    let down = Arc::new(Down);
-    let state = AppState::new(Arc::clone(&down), down);
-    let app = router(Arc::new(state));
+    let app = router(Arc::new(broken()));
     for (path, body) in requests() {
         let (status, reply) = post(&app, path, body.clone()).await;
         assert_eq!(status, StatusCode::BAD_GATEWAY, "{path}: {body}");
@@ -171,33 +112,26 @@ async fn a_store_that_fails_is_a_bad_gateway() {
 
 #[tokio::test]
 async fn a_seed_into_a_store_that_fails_is_refused() {
-    let down = Arc::new(Down);
-    let state = AppState::new(Arc::clone(&down), down);
+    let state = broken();
     let namespace = r#"{ "file": { "owner": "this" } }"#;
     assert!(state.seed(&[namespace], "[]").await.is_err());
 }
 
 /// A writer whose clock can't give a revision it trusts.
-async fn faulted(url: &str) -> Router {
-    let table = Table::new(
-        local(url),
-        format!("sungma-api-clock-{}", std::process::id()),
-    );
-    table.create().await.unwrap();
-    let reader = Arc::new(DynamoReader::new(table.clone()));
+fn faulted() -> Router {
     let clock = ManualClock::new(Reading {
         revision: Revision(1),
         settled: Revision(1),
     });
     clock.fault(ClockFault::Drifted);
-    let writer = Arc::new(DynamoWriter::new(table, clock));
-    router(Arc::new(AppState::new(reader, writer)))
+    let edge = Arc::new(MemoryTable::new());
+    let node = Node::new(edge, Arc::new(MemorySequence::new()), clock);
+    router(Arc::new(AppState::new(node)))
 }
 
 #[tokio::test]
 async fn a_clock_that_fails_is_a_bad_gateway() {
-    let Some(url) = dynamodb_url() else { return };
-    let app = faulted(&url).await;
+    let app = faulted();
     let (status, reply) = post(
         &app,
         "/namespaces/write",
@@ -225,9 +159,13 @@ async fn a_check_past_the_depth_limit_is_a_fault() {
         json!({ "namespace": "group", "resource": format!("g{from}"), "relation": "member",
                 "subject": { "namespace": "group", "resource": format!("g{to}"), "relation": "member" } })
     };
+    // A unit of work holds 100 rows and each new fact takes two, so the
+    // chain goes in a few writes.
     let chain: Vec<Value> = (0..=MAX_DEPTH).map(|n| link(n, n + 1)).collect();
-    let (status, _) = post(&app, "/facts/write", json!({ "add": chain })).await;
-    assert_eq!(status, StatusCode::OK);
+    for links in chain.chunks(40) {
+        let (status, _) = post(&app, "/facts/write", json!({ "add": links })).await;
+        assert_eq!(status, StatusCode::OK);
+    }
     let (status, reply) = post(
         &app,
         "/check",
@@ -252,9 +190,12 @@ async fn a_body_past_the_limit_is_too_large() {
 /// Running out of ids is Sungma's own limit, not the caller's mistake.
 #[tokio::test]
 async fn a_pool_with_no_ids_left_is_a_fault() {
-    let memory = Arc::new(sungma_api::memory::Memory::default());
-    memory.names.lease(Pool::Relations, u32::MAX).await.unwrap();
-    let app = router(Arc::new(AppState::new(Arc::clone(&memory), memory)));
+    let sequence = Arc::new(MemorySequence::new());
+    // The relation pool's counter, run out.
+    let relations = Key::new((3u8, 1u8), 0u8);
+    sequence.next(&relations, u64::MAX).await.unwrap();
+    let node = Node::new(Arc::new(MemoryTable::new()), sequence, DevClock::default());
+    let app = router(Arc::new(AppState::new(node)));
     let (status, reply) = post(
         &app,
         "/namespaces/write",

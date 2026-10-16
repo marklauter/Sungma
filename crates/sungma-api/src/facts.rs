@@ -33,14 +33,14 @@ use sungma::{
     name::{NamespaceName, RelationName, ResourceId, ResourceName, SubjectName, SubjectsetName},
     revision::Revision,
 };
-use sungma_check::read::FactReadService;
 use sungma_lang::fact::{self, WriteRequest};
+use sungma_read::facts::FactReadService;
 use sungma_write::service::{FactWriteService, FactWriteServiceError};
 
-use crate::{AppState, Reader, Writer, Written, Zookie, accept, failure, named, read_failure};
+use crate::{AppState, Edge, Ids, Stamps, Written, Zookie, accept, failure, named, read_failure};
 
-pub(crate) async fn write<R: Reader, W: Writer>(
-    State(state): State<Arc<AppState<R, W>>>,
+pub(crate) async fn write<E: Edge, S: Ids, C: Stamps>(
+    State(state): State<Arc<AppState<E, S, C>>>,
     headers: HeaderMap,
     body: Result<Json<WriteRequest>, JsonRejection>,
 ) -> Response {
@@ -49,7 +49,7 @@ pub(crate) async fn write<R: Reader, W: Writer>(
         Ok(request) => request,
         Err(refused) => return refused.reply(&request_id),
     };
-    let service = FactWriteService::new(&state.interner, &*state.writer);
+    let service = FactWriteService::new(state.node.interner(), state.node.writer());
     match service.write(&request.add, &request.retire).await {
         Ok(revision) => Json(Written {
             request_id,
@@ -95,8 +95,8 @@ struct ReadReply {
     zookie: Zookie,
 }
 
-pub(crate) async fn read<R: Reader, W: Writer>(
-    State(state): State<Arc<AppState<R, W>>>,
+pub(crate) async fn read<E: Edge, S: Ids, C: Stamps>(
+    State(state): State<Arc<AppState<E, S, C>>>,
     headers: HeaderMap,
     body: Result<Json<ReadBody>, JsonRejection>,
 ) -> Response {
@@ -109,8 +109,8 @@ pub(crate) async fn read<R: Reader, W: Writer>(
         ResourceName::new(body.namespace, body.resource),
         body.relation,
     );
-    let names = state.names();
-    let service = FactReadService::new(&names, &*state.reader, &*state.reader);
+    let node = &state.node;
+    let service = FactReadService::new(node.names(), node.edge());
     match service
         .read(&set, body.subject.as_ref(), body.zookie.map(Revision::from))
         .await

@@ -125,3 +125,13 @@ impl<W: ItemWriter + Sync + ?Sized> ItemWriter for &W {
         W::commit(self, work)
     }
 }
+
+impl<W: ItemWriter + Send + Sync + ?Sized> ItemWriter for std::sync::Arc<W> {
+    fn max_steps(&self) -> usize {
+        W::max_steps(self)
+    }
+
+    fn commit(&self, work: Work) -> impl Future<Output = Result<(), CommitError>> + Send {
+        W::commit(self, work)
+    }
+}

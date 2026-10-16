@@ -1864,8 +1864,10 @@ dependencies = [
  "sungma-check",
  "sungma-clock",
  "sungma-dynamodb",
+ "sungma-edge",
  "sungma-lang",
- "sungma-memory",
+ "sungma-node",
+ "sungma-read",
  "sungma-write",
  "thiserror",
  "tokio",
@@ -1973,6 +1975,22 @@ dependencies = [
  "sungma-edge",
  "sungma-write",
  "tokio",
+]
+
+[[package]]
+name = "sungma-node"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sungma",
+ "sungma-check",
+ "sungma-clock",
+ "sungma-edge",
+ "sungma-lang",
+ "sungma-names",
+ "sungma-schema",
+ "sungma-write",
+ "thiserror",
 ]
 
 [[package]]

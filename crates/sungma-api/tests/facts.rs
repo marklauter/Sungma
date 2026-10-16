@@ -338,7 +338,7 @@ async fn a_seed_whose_facts_no_namespace_declares_is_refused() {
     let folder = r#"{ "folder": { "viewer": "this" } }"#;
     let refused = state.seed(&[folder], &facts).await;
     assert!(
-        matches!(refused, Err(sungma_api::LoadError::Fact(_))),
+        matches!(refused, Err(sungma_api::SeedError::Fact(_))),
         "{refused:?}"
     );
 }

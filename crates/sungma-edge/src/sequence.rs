@@ -25,3 +25,13 @@ impl<S: Sequence + Sync + ?Sized> Sequence for &S {
         S::next(self, key, count)
     }
 }
+
+impl<S: Sequence + Send + Sync + ?Sized> Sequence for std::sync::Arc<S> {
+    fn next(
+        &self,
+        key: &Key,
+        count: u64,
+    ) -> impl Future<Output = Result<Range<u64>, EdgeError>> + Send {
+        S::next(self, key, count)
+    }
+}

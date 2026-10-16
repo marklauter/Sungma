@@ -11,8 +11,9 @@
 
 use std::{env, error::Error, fs, sync::Arc};
 
-use sungma_api::{AppState, Reader, Writer, router};
-use sungma_dynamodb::{DynamoReader, DynamoWriter, Table, local};
+use sungma_api::{AppState, Edge, Ids, Stamps, router};
+use sungma_dynamodb::{Table, edge::DynamoEdge, local};
+use sungma_node::Node;
 
 type Failed = Box<dyn Error>;
 
@@ -50,16 +51,15 @@ async fn main() -> Result<(), Failed> {
                 table.create().await?;
                 seed
             };
-            let reader = Arc::new(DynamoReader::new(table.clone()));
-            let writer = Arc::new(DynamoWriter::dev(table).await?);
-            serve(AppState::new(reader, writer), seed).await
+            let edge = DynamoEdge::new(table);
+            serve(AppState::new(Node::dev(edge.clone(), edge).await?), seed).await
         }
         Err(_) => serve(AppState::memory(), seed).await,
     }
 }
 
-async fn serve<R: Reader, W: Writer>(
-    state: AppState<R, W>,
+async fn serve<E: Edge, S: Ids, C: Stamps>(
+    state: AppState<E, S, C>,
     seed: Option<(String, Vec<String>)>,
 ) -> Result<(), Failed> {
     if let Some((facts, namespaces)) = &seed {

@@ -89,3 +89,21 @@ impl<R: ItemReader + Sync + ?Sized> ItemReader for &R {
         R::query(self, query, consistency)
     }
 }
+
+impl<R: ItemReader + Send + Sync + ?Sized> ItemReader for std::sync::Arc<R> {
+    fn get(
+        &self,
+        key: &Key,
+        consistency: Consistency,
+    ) -> impl Future<Output = Result<Option<Item>, EdgeError>> + Send {
+        R::get(self, key, consistency)
+    }
+
+    fn query(
+        &self,
+        query: &Query,
+        consistency: Consistency,
+    ) -> impl Future<Output = Result<Vec<(Vec<u8>, Item)>, EdgeError>> + Send {
+        R::query(self, query, consistency)
+    }
+}
