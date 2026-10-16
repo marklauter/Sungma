@@ -9,7 +9,7 @@ use sungma::{
     namespace::Namespace,
     revision::Revision,
     rewrite::Rewrite::This,
-    version::{Entry, History, HistoryError, StoredVersionError, Version},
+    version::{Entry, Epochs, History, HistoryError, StoredVersionError, Version},
 };
 
 const OWNER: RelationId = RelationId(0);
@@ -114,7 +114,7 @@ fn stored(
         .iter()
         .map(|&(relation, epoch)| (relation, Revision(epoch)))
         .collect::<HashMap<_, _>>();
-    Version::stored(declaring(relations), Revision(30), epochs)
+    Version::stored(declaring(relations), Revision(30), Epochs::new(epochs))
 }
 
 #[test]

@@ -12,7 +12,7 @@ use sungma::{
     namespace::{Namespace, NamespaceError},
     revision::Revision,
     store::{Pool, StoreError},
-    version::{Entry, Version},
+    version::{Entry, Epochs, Version},
 };
 use sungma_lang::namespace::{parse, print};
 
@@ -186,7 +186,7 @@ impl Table {
                 .map_err(|_| StoreError(format!("epoch of {relation} isn't a revision")))?;
             epochs.insert(RelationId(relation), Revision(epoch));
         }
-        let version = Version::stored(namespace, revision, epochs)
+        let version = Version::stored(namespace, revision, Epochs::new(epochs))
             .map_err(|error| StoreError(error.to_string()))?;
         Ok(Entry::Version(Arc::new(version)))
     }

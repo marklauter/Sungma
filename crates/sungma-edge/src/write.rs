@@ -32,11 +32,13 @@ impl Expect {
 pub enum Step {
     /// Stores a new item; refused when one is at the key.
     Insert { key: Key, item: Item },
-    /// Sets the attributes in `set` on the item at the key and leaves its
-    /// others; refused when there's no item, or one an expectation fails.
+    /// Sets the attributes in `set` on the item at the key, removes those
+    /// named in `remove`, and leaves its others; refused when there's no
+    /// item, or one an expectation fails.
     Update {
         key: Key,
         set: Item,
+        remove: Vec<String>,
         expect: Vec<Expect>,
     },
     /// Changes nothing; refused when there's no item at the key, or one an

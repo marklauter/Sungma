@@ -15,42 +15,88 @@ use thiserror::Error;
 
 use crate::{id::RelationId, namespace::Namespace, revision::Revision};
 
+/// The epoch of each relation a namespace version declares: the revision
+/// it was last declared at. A fact counts only when its relation has an
+/// epoch and its span opened at or after it.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct Epochs(HashMap<RelationId, Revision>);
+
+impl Epochs {
+    pub fn new(epochs: HashMap<RelationId, Revision>) -> Self {
+        Self(epochs)
+    }
+
+    /// `None` when the relation isn't declared.
+    pub fn epoch(&self, relation: RelationId) -> Option<Revision> {
+        self.0.get(&relation).copied()
+    }
+
+    pub fn declares(&self, relation: RelationId) -> bool {
+        self.0.contains_key(&relation)
+    }
+
+    /// Whether a fact under `relation` whose span opened at `written`
+    /// counts: the relation is declared, and the span opened at or after
+    /// its epoch.
+    pub fn counts(&self, relation: RelationId, written: Revision) -> bool {
+        self.epoch(relation).is_some_and(|epoch| written >= epoch)
+    }
+
+    /// The epochs of a version opening at `at` that declares `declared`,
+    /// after `previous`, the epochs of the version before it, `None` when
+    /// it's the first or follows a retirement. A relation `previous`
+    /// declares keeps its epoch, and any other gets `at`.
+    pub fn following(
+        previous: Option<&Epochs>,
+        declared: impl IntoIterator<Item = RelationId>,
+        at: Revision,
+    ) -> Self {
+        Self(
+            declared
+                .into_iter()
+                .map(|relation| {
+                    let epoch = previous.and_then(|previous| previous.epoch(relation));
+                    (relation, epoch.unwrap_or(at))
+                })
+                .collect(),
+        )
+    }
+
+    /// Each declared relation and its epoch, in no order.
+    pub fn iter(&self) -> impl Iterator<Item = (RelationId, Revision)> + '_ {
+        self.0.iter().map(|(relation, epoch)| (*relation, *epoch))
+    }
+}
+
 /// A stored namespace version.
 #[derive(Debug)]
 pub struct Version {
     namespace: Arc<Namespace>,
     revision: Revision,
     /// Every relation the namespace declares has one.
-    epochs: HashMap<RelationId, Revision>,
+    epochs: Epochs,
 }
 
 impl Version {
     /// The first version of a namespace, or the first since it was retired.
     /// Every relation it declares gets `revision` as its epoch.
     fn first(namespace: Namespace, revision: Revision) -> Self {
-        let epochs = namespace
-            .relations()
-            .map(|(relation, _)| (*relation, revision))
-            .collect();
+        Self::after(None, namespace, revision)
+    }
+
+    fn after(previous: Option<&Epochs>, namespace: Namespace, revision: Revision) -> Self {
+        let declared = namespace.relations().map(|(relation, _)| *relation);
         Self {
+            epochs: Epochs::following(previous, declared, revision),
             namespace: Arc::new(namespace),
             revision,
-            epochs,
         }
     }
 
     /// The version after this one. A relation this version declares keeps
     /// its epoch, and any other gets `revision`.
     fn next(&self, namespace: Namespace, revision: Revision) -> Self {
-        let epochs = namespace
-            .relations()
-            .map(|(relation, _)| (*relation, self.epoch(*relation).unwrap_or(revision)))
-            .collect();
-        Self {
-            namespace: Arc::new(namespace),
-            revision,
-            epochs,
-        }
+        Self::after(Some(&self.epochs), namespace, revision)
     }
 
     /// A version a store wrote, read back with the epochs it stored.
@@ -59,21 +105,21 @@ impl Version {
     pub fn stored(
         namespace: Namespace,
         revision: Revision,
-        epochs: HashMap<RelationId, Revision>,
+        epochs: Epochs,
     ) -> Result<Self, StoredVersionError> {
         for (relation, _) in namespace.relations() {
             let epoch = epochs
-                .get(relation)
+                .epoch(*relation)
                 .ok_or(StoredVersionError::NoEpoch(*relation))?;
-            if *epoch > revision {
+            if epoch > revision {
                 return Err(StoredVersionError::LaterEpoch(*relation));
             }
         }
-        if let Some(relation) = epochs
-            .keys()
-            .find(|relation| namespace.rewrite(relation).is_none())
+        if let Some((relation, _)) = epochs
+            .iter()
+            .find(|(relation, _)| namespace.rewrite(relation).is_none())
         {
-            return Err(StoredVersionError::Undeclared(*relation));
+            return Err(StoredVersionError::Undeclared(relation));
         }
         Ok(Self {
             namespace: Arc::new(namespace),
@@ -91,20 +137,22 @@ impl Version {
         self.revision
     }
 
+    pub fn epochs(&self) -> &Epochs {
+        &self.epochs
+    }
+
     /// `None` when this version doesn't declare the relation.
     pub fn epoch(&self, relation: RelationId) -> Option<Revision> {
-        self.epochs.get(&relation).copied()
+        self.epochs.epoch(relation)
     }
 
     pub fn declares(&self, relation: RelationId) -> bool {
-        self.epochs.contains_key(&relation)
+        self.epochs.declares(relation)
     }
 
-    /// Whether a fact under `relation` whose span opened at `written`
-    /// counts: this version declares the relation, and the span opened at
-    /// or after its epoch.
+    /// See [`Epochs::counts`].
     pub fn counts(&self, relation: RelationId, written: Revision) -> bool {
-        self.epoch(relation).is_some_and(|epoch| written >= epoch)
+        self.epochs.counts(relation, written)
     }
 }
 

@@ -7,7 +7,6 @@
 use std::{
     collections::{HashMap, hash_map},
     ops::Range,
-    sync::Arc,
 };
 
 use aws_sdk_dynamodb::types::{ConditionCheck, Put, TransactWriteItem, Update};
@@ -17,7 +16,7 @@ use sungma::{
     namespace::Namespace,
     revision::Revision,
     store::{Pool, StoreError},
-    version::{History, HistoryError, Version},
+    version::{Epochs, History, HistoryError},
 };
 use sungma_clock::{Clock, ClockFault, DevClock, Reading};
 use sungma_write::{
@@ -221,7 +220,7 @@ fn fold(
     fact: &Fact,
     inserts: &[bool],
     open: Option<Revision>,
-    latest: Option<&Version>,
+    latest: Option<&Epochs>,
 ) -> (bool, bool) {
     let (mut closed, mut opened) = (false, false);
     for &insert in inserts {
@@ -327,8 +326,13 @@ impl<C: Clock + Sync> DynamoWriter<C> {
         for namespace in judged(writes) {
             latest.insert(namespace, table.latest(namespace, consistent).await?);
         }
-        let version =
-            |namespace: NamespaceId| latest.get(&namespace)?.as_ref()?.version().map(Arc::as_ref);
+        let version = |namespace: NamespaceId| {
+            latest
+                .get(&namespace)?
+                .as_ref()?
+                .version()
+                .map(|version| version.epochs())
+        };
         check_inserts(writes, version)?;
         let mut changes = Vec::new();
         for (fact, inserts) in grouped(writes) {

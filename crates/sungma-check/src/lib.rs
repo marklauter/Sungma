@@ -25,6 +25,7 @@ use sungma::{
 };
 
 pub mod read;
+pub mod rows;
 
 use read::ReadError;
 

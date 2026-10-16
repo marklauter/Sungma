@@ -101,9 +101,14 @@ impl ItemWriter for MemoryTable {
                 Step::Insert { key, item } => {
                     items.insert(key, item);
                 }
-                Step::Update { key, set, .. } => {
+                Step::Update {
+                    key, set, remove, ..
+                } => {
                     if let Some(item) = items.get_mut(&key) {
                         item.0.extend(set.0);
+                        for name in remove {
+                            item.0.remove(&name);
+                        }
                     }
                 }
                 Step::Check { .. } | Step::Absent { .. } => {}

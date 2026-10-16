@@ -131,6 +131,7 @@ pub async fn work_commits_whole_or_not_at_all<E: ItemReader + ItemWriter>(edge: 
             Step::Update {
                 key: key("p", 1),
                 set: item(5),
+                remove: vec![],
                 expect: vec![n(2)],
             },
             Step::Check {
@@ -164,6 +165,7 @@ pub async fn work_commits_whole_or_not_at_all<E: ItemReader + ItemWriter>(edge: 
             Step::Update {
                 key: key("p", 1),
                 set,
+                remove: vec![],
                 expect: vec![n(1), Expect::Missing("t".to_owned())],
             },
             Step::Absent { key: key("q", 1) },
@@ -186,6 +188,7 @@ pub async fn work_commits_whole_or_not_at_all<E: ItemReader + ItemWriter>(edge: 
         vec![Step::Update {
             key: key("p", 1),
             set: flag,
+            remove: vec![],
             expect: vec![],
         }],
     )
@@ -198,6 +201,28 @@ pub async fn work_commits_whole_or_not_at_all<E: ItemReader + ItemWriter>(edge: 
         .unwrap();
     assert_eq!(updated.number("n").unwrap(), Some(5));
     assert!(updated.flag("f").unwrap());
+
+    // An update removes the attributes it names, and one that changes
+    // nothing only checks.
+    for remove in [vec!["t".to_owned(), "f".to_owned()], vec![]] {
+        commit(
+            &edge,
+            vec![Step::Update {
+                key: key("p", 1),
+                set: Item::new(),
+                remove,
+                expect: vec![n(5)],
+            }],
+        )
+        .await
+        .unwrap();
+    }
+    let updated = edge
+        .get(&key("p", 1), Consistency::Strong)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated, item(5));
 
     let checked = commit(
         &edge,

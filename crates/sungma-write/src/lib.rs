@@ -4,6 +4,7 @@
 
 pub mod fact;
 pub mod intern;
+pub mod rows;
 pub mod service;
 pub mod store;
 

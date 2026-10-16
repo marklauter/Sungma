@@ -14,7 +14,7 @@ use sungma::{
     namespace::Namespace,
     revision::Revision,
     store::{FactReader, NameReader, NamespaceReader, Pool, StoreError},
-    version::{History, HistoryError, Version},
+    version::{Epochs, History, HistoryError, Version},
 };
 use sungma_clock::{Clock, ClockFault, DevClock, Reading};
 use sungma_write::{
@@ -136,7 +136,7 @@ impl Facts {
     /// Opens a span for `fact` at `revision` when [`opens_span`] says so
     /// under `latest`, its namespace's latest version, closing any open
     /// span there.
-    fn insert(&mut self, fact: &Fact, revision: Revision, latest: Option<&Version>) {
+    fn insert(&mut self, fact: &Fact, revision: Revision, latest: Option<&Epochs>) {
         let open = Span {
             written: revision,
             retired: None,
@@ -222,7 +222,9 @@ struct State {
 
 impl State {
     fn check_facts(&self, writes: &[FactWrite]) -> Result<(), FactWriteError> {
-        check_inserts(writes, |id| self.namespaces.latest(id).map(Arc::as_ref))
+        check_inserts(writes, |id| {
+            self.namespaces.latest(id).map(|version| version.epochs())
+        })
     }
 
     fn write_facts(&mut self, writes: &[FactWrite], revision: Revision) {
@@ -233,7 +235,7 @@ impl State {
             match write {
                 FactWrite::Insert(fact) => {
                     let latest = namespaces.latest(fact.subjectset.resource.namespace);
-                    facts.insert(fact, revision, latest.map(Arc::as_ref));
+                    facts.insert(fact, revision, latest.map(|version| version.epochs()));
                 }
                 FactWrite::Retire(fact) => facts.retire(fact, revision),
             }

@@ -185,8 +185,9 @@ impl DynamoEdge {
             Step::Update {
                 key: at,
                 set,
+                remove,
                 expect,
-            } if !set.0.is_empty() => {
+            } if !set.0.is_empty() || !remove.is_empty() => {
                 exists(&mut expression);
                 expression.expect(&expect);
                 let sets: Vec<String> = set
@@ -196,10 +197,19 @@ impl DynamoEdge {
                         format!("{} = {}", expression.name(name), expression.value(value))
                     })
                     .collect();
+                let removes: Vec<String> =
+                    remove.iter().map(|name| expression.name(name)).collect();
+                let mut clauses = Vec::new();
+                if !sets.is_empty() {
+                    clauses.push(format!("SET {}", sets.join(", ")));
+                }
+                if !removes.is_empty() {
+                    clauses.push(format!("REMOVE {}", removes.join(", ")));
+                }
                 let update = Update::builder()
                     .table_name(self.table.name())
                     .set_key(Some(key(&at)))
-                    .update_expression(format!("SET {}", sets.join(", ")))
+                    .update_expression(clauses.join(" "))
                     .condition_expression(expression.condition())
                     .set_expression_attribute_names(expression.names())
                     .set_expression_attribute_values(expression.values())
@@ -207,7 +217,7 @@ impl DynamoEdge {
                     .map_err(failed)?;
                 TransactWriteItem::builder().update(update).build()
             }
-            // An update that sets nothing only checks.
+            // An update that changes nothing only checks.
             Step::Update {
                 key: at, expect, ..
             }
