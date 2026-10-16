@@ -19,7 +19,7 @@ A revision doesn't close the gap between a check and the action that follows it.
 
 ## Status
 
-A proof of concept. The evaluator, decisions with grounds and replay, namespace documents and the revision clock work; storage is in memory only, and there is one HTTP route, `POST /check`. [docs/roadmap.md](docs/roadmap.md) lists what comes next.
+A proof of concept. The evaluator, decisions with grounds and replay, namespace documents, the revision clock and a DynamoDB storage adapter work, and there is one HTTP route, `POST /check`. [docs/roadmap.md](docs/roadmap.md) lists what comes next.
 
 ## Crates
 
@@ -27,13 +27,15 @@ A proof of concept. The evaluator, decisions with grounds and replay, namespace 
 - `sungma-check`: the Check service. Resolves a request's names, decides it and appends an audit record.
 - `sungma-write`: the write ports and id minting, and the write pipeline to come.
 - `sungma-memory`: in-memory adapters for the storage ports.
+- `sungma-dynamodb`: DynamoDB adapters for the storage ports.
 - `sungma-clock`: the revision clock, with NTP, NTS and platform clocks.
 - `sungma-lang`: namespace and fact documents: parsing, printing and loading.
 - `sungma-api`: an axum shell with `POST /check`.
 
 ## Docs
 
-- [Architecture](docs/architecture.md): how the code fits together, with a worked sample.
+- [Architecture](docs/architecture.md): Sungma, its neighbors and its services.
+- [Sample](docs/sample.md): files, folders and groups, with a trace of one check.
 - [Glossary](docs/glossary): the domain terms.
 - [Specs](docs/specs): namespace documents, fact documents, the revision clock and one timeline.
 - [Notes](docs/notes): open work and the current thinking on it.
