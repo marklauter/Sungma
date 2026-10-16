@@ -1,0 +1,13 @@
+[package]
+name = "sungma-names"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sungma.workspace = true
+sungma-edge.workspace = true
+sungma-write.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
