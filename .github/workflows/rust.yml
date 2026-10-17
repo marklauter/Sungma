@@ -164,7 +164,9 @@ jobs:
           exit 0
         fi
         git diff origin/${{ github.base_ref }}... > pr.diff
-        cargo mutants --workspace --in-diff pr.diff -- --locked
+        # Three mutants at a time on the runner's four cores: the job is
+        # billed by its length, so this saves minutes as well as waiting.
+        cargo mutants --workspace --in-diff pr.diff -j 3 -- --locked
 
   fuzz:
     needs: changes
