@@ -1,0 +1,16 @@
+[package]
+name = "sungma-table"
+version.workspace = true
+edition.workspace = true
+
+[features]
+testkit = []
+
+[dependencies]
+parking_lot.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+sungma-table = { path = ".", features = ["testkit"] }
+proptest.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }

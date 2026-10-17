@@ -8,8 +8,9 @@ thiserror.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-sungma-check.workspace = true
+sungma-table.workspace = true
 sungma-lang.workspace = true
-sungma-memory.workspace = true
+sungma-names.workspace = true
+sungma-node = { workspace = true, features = ["testkit"] }
 sungma-write.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

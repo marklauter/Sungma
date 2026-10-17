@@ -1,6 +1,7 @@
-//! The read side: Check, which resolves a request's names, decides it at a
-//! revision and appends an audit record, and the fact and namespace reads
-//! in [`read`].
+//! The Check context: resolve a request's names, decide it at a revision,
+//! and append an audit record. Check reads facts and namespace versions
+//! through its own ports in [`store`], which [`rows::RowReader`] serves
+//! from the store edge, and walks rewrites in [`closure`].
 //!
 //! The [`Decision`] is what replay needs. The [`AuditRecord`] wraps it with
 //! what only the edge knows: who asked, when, the names they sent, and the
@@ -15,18 +16,27 @@ use parking_lot::Mutex;
 
 use thiserror::Error;
 
-use sungma::{
+use crate::{
     closure::{Closure, ClosureError},
     decision::Decision,
+    store::FactReader,
+    store::NamespaceReader,
+};
+use sungma::{
     name::{SubjectName, SubjectsetName},
-    resolve::{self, ResolveError},
     revision::Revision,
-    store::{Dictionary, FactReader, NamespaceReader, StoreError},
+    store::StoreError,
+};
+use sungma_names::{
+    resolve::{self, ResolveError},
+    store::Dictionary,
 };
 
-pub mod read;
-
-use read::ReadError;
+pub mod closure;
+pub mod decision;
+pub mod replay;
+pub mod rows;
+pub mod store;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CheckRequest {
@@ -72,15 +82,6 @@ pub enum Failure {
 impl From<StoreError> for Failure {
     fn from(error: StoreError) -> Self {
         Self::Store(error.to_string())
-    }
-}
-
-impl From<ReadError> for Failure {
-    fn from(error: ReadError) -> Self {
-        match error {
-            ReadError::Ahead { zookie, head } => Self::Ahead { zookie, head },
-            ReadError::Store(error) => error.into(),
-        }
     }
 }
 
@@ -183,6 +184,15 @@ where
         }
     }
 
+    /// The latest revision, which must be at least as fresh as the zookie.
+    async fn revision(&self, zookie: Option<Revision>) -> Result<Revision, Failure> {
+        let head = self.facts.head().await?;
+        match zookie {
+            Some(zookie) if zookie > head => Err(Failure::Ahead { zookie, head }),
+            _ => Ok(head),
+        }
+    }
+
     /// `Ok(None)` when a namespace or relation name was never interned.
     async fn try_decide(&self, request: &CheckRequest) -> Result<Option<Decision>, Failure> {
         let names = async {
@@ -193,7 +203,7 @@ where
         let Some((set, subject)) = resolve::known(names.await)? else {
             return Ok(None);
         };
-        let revision = read::revision(self.facts, request.zookie).await?;
+        let revision = self.revision(request.zookie).await?;
         Ok(Some(
             Closure::new(self.namespaces, self.facts, &set, revision)
                 .decide(subject)

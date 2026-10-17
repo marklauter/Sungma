@@ -1,0 +1,18 @@
+[package]
+name = "sungma-read"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sungma.workspace = true
+sungma-table.workspace = true
+sungma-names.workspace = true
+sungma-schema.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+sungma-clock.workspace = true
+sungma-lang.workspace = true
+sungma-names.workspace = true
+sungma-write.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }

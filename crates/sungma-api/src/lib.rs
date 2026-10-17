@@ -31,7 +31,8 @@
 //!   a zookie ahead of the latest revision.
 //! - 404: a namespace read that finds no version.
 //! - 409: a namespace write whose `based_on` isn't the latest version.
-//! - 413: a body past the size limit.
+//! - 413: a body past the size limit, or a fact write past what one write
+//!   holds.
 //! - 415: a body that isn't sent as JSON.
 //! - 422: a refused write. A refused namespace document is 422 whatever
 //!   its problems, names included, so it lists them all in one reply.
@@ -43,11 +44,9 @@
 //! so it isn't audited.
 
 mod facts;
-pub mod memory;
 mod namespaces;
 
 use std::{
-    num::NonZeroU32,
     str::FromStr,
     sync::{
         Arc,
@@ -67,114 +66,62 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 use sungma::{
     name::{NameError, SubjectName},
     revision::Revision,
-    store::{DocumentReader, FactReader, NameReader, NamespaceReader, ReadingDictionary},
 };
-use sungma_check::{
-    CheckRequest, CheckService, Failure, MemoryAuditLog, RequestContext, Verdict, read::ReadError,
+use sungma_check::{CheckRequest, CheckService, Failure, MemoryAuditLog, RequestContext, Verdict};
+use sungma_clock::{Clock, DevClock};
+use sungma_node::Node;
+use sungma_read::ReadError;
+use sungma_table::{
+    memory::{MemorySequence, MemoryTable},
+    read::ItemReader,
+    sequence::Sequence,
+    write::ItemWriter,
 };
-use sungma_lang::{fact, namespace};
-use sungma_write::{
-    intern::LeasingInterner,
-    service::{
-        FactWriteService, FactWriteServiceError, NamespaceWriteService, NamespaceWriteServiceError,
-    },
-    store::{FactWriter, NameWriter, NamespaceWrite, NamespaceWriter},
-};
-use thiserror::Error;
 
-use memory::Memory;
+pub use sungma_node::SeedError;
 
-/// What every route reads through.
-pub trait Reader:
-    NameReader + FactReader + NamespaceReader + DocumentReader + Send + Sync + 'static
-{
-}
+/// The table every route reads and writes through.
+pub trait Items: ItemReader + ItemWriter + Clone + Send + Sync + 'static {}
 
-impl<T> Reader for T where
-    T: NameReader + FactReader + NamespaceReader + DocumentReader + Send + Sync + 'static
-{
-}
+impl<T: ItemReader + ItemWriter + Clone + Send + Sync + 'static> Items for T {}
 
-/// What every route writes through.
-pub trait Writer: NameWriter + FactWriter + NamespaceWriter + Send + Sync + 'static {}
+/// Where interned ids are leased from.
+pub trait Ids: Sequence + Send + Sync + 'static {}
 
-impl<T: NameWriter + FactWriter + NamespaceWriter + Send + Sync + 'static> Writer for T {}
+impl<T: Sequence + Send + Sync + 'static> Ids for T {}
 
-/// How many ids a lease takes at a time.
-const LEASE: NonZeroU32 = NonZeroU32::new(64).unwrap();
+/// The clock writes are stamped from.
+pub trait Stamps: Clock + Send + Sync + 'static {}
 
-/// Why the seed data didn't load.
-#[derive(Debug, Error)]
-pub enum LoadError {
-    #[error(transparent)]
-    Refused(#[from] namespace::Refusal),
-    #[error(transparent)]
-    Namespace(#[from] NamespaceWriteServiceError),
-    #[error(transparent)]
-    Facts(#[from] serde_json::Error),
-    #[error(transparent)]
-    Fact(#[from] FactWriteServiceError),
-}
+impl<T: Clock + Send + Sync + 'static> Stamps for T {}
 
 /// What every request reads and writes through, shared across them.
-pub struct AppState<R = Memory, W = Memory> {
-    reader: Arc<R>,
-    writer: Arc<W>,
-    /// Mints the names namespace writes declare.
-    interner: LeasingInterner<Arc<R>, Arc<W>>,
+pub struct AppState<E = Arc<MemoryTable>, S = Arc<MemorySequence>, C = DevClock> {
+    node: Node<E, S, C>,
     pub audit: MemoryAuditLog,
     /// Numbers requests that arrive without an `x-request-id`.
     requests: AtomicU64,
 }
 
 impl AppState {
-    /// A state on an empty in-memory store.
+    /// A state on an empty memory table.
     pub fn memory() -> Self {
-        let memory = Arc::new(Memory::default());
-        Self::new(Arc::clone(&memory), memory)
+        Self::new(Node::memory())
     }
 }
 
-impl<R: Reader, W: Writer> AppState<R, W> {
-    pub fn new(reader: Arc<R>, writer: Arc<W>) -> Self {
+impl<E: Items, S: Ids, C: Stamps> AppState<E, S, C> {
+    pub fn new(node: Node<E, S, C>) -> Self {
         Self {
-            interner: LeasingInterner::new(Arc::clone(&reader), Arc::clone(&writer), LEASE),
-            reader,
-            writer,
+            node,
             audit: MemoryAuditLog::default(),
             requests: AtomicU64::new(0),
         }
     }
 
-    /// Creates each namespace in the documents, then adds the facts in the
-    /// fact document, through the write services, as a caller would. Every
-    /// document is parsed before anything is written. Meant for an empty
-    /// store: creating a namespace that has a version is refused.
-    pub async fn seed(&self, namespaces: &[&str], facts: &str) -> Result<(), LoadError> {
-        let documents = namespaces
-            .iter()
-            .map(|document| namespace::parse(document).map_err(namespace::Refusal))
-            .collect::<Result<Vec<_>, _>>()?;
-        let facts = fact::parse(facts)?;
-        let writer = NamespaceWriteService::new(&self.interner, &*self.writer);
-        for document in documents {
-            writer
-                .write(
-                    &document.namespace,
-                    NamespaceWrite::Create(document.relations),
-                )
-                .await?;
-        }
-        if !facts.is_empty() {
-            FactWriteService::new(&self.interner, &*self.writer)
-                .write(&facts, &[])
-                .await?;
-        }
-        Ok(())
-    }
-
-    fn names(&self) -> ReadingDictionary<&R> {
-        ReadingDictionary(&*self.reader)
+    /// Seeds the store; see [`Node::seed`].
+    pub async fn seed(&self, namespaces: &[&str], facts: &str) -> Result<(), SeedError> {
+        self.node.seed(namespaces, facts).await
     }
 
     fn context(&self, headers: &HeaderMap) -> RequestContext {
@@ -195,13 +142,13 @@ impl<R: Reader, W: Writer> AppState<R, W> {
     }
 }
 
-pub fn router<R: Reader, W: Writer>(state: Arc<AppState<R, W>>) -> Router {
+pub fn router<E: Items, S: Ids, C: Stamps>(state: Arc<AppState<E, S, C>>) -> Router {
     Router::new()
-        .route("/check", post(check::<R, W>))
-        .route("/facts/write", post(facts::write::<R, W>))
-        .route("/facts/read", post(facts::read::<R, W>))
-        .route("/namespaces/write", post(namespaces::write::<R, W>))
-        .route("/namespaces/read", post(namespaces::read::<R, W>))
+        .route("/check", post(check::<E, S, C>))
+        .route("/facts/write", post(facts::write::<E, S, C>))
+        .route("/facts/read", post(facts::read::<E, S, C>))
+        .route("/namespaces/write", post(namespaces::write::<E, S, C>))
+        .route("/namespaces/read", post(namespaces::read::<E, S, C>))
         .with_state(state)
 }
 
@@ -263,8 +210,8 @@ struct ErrorReply {
     error: String,
 }
 
-async fn check<R: Reader, W: Writer>(
-    State(state): State<Arc<AppState<R, W>>>,
+async fn check<E: Items, S: Ids, C: Stamps>(
+    State(state): State<Arc<AppState<E, S, C>>>,
     headers: HeaderMap,
     body: Result<Json<CheckBody>, JsonRejection>,
 ) -> Response {
@@ -275,8 +222,8 @@ async fn check<R: Reader, W: Writer>(
             Ok(request) => request,
             Err(refused) => return refused.reply(&request_id),
         };
-    let names = state.names();
-    let service = CheckService::new(&names, &*state.reader, &*state.reader, &state.audit);
+    let node = &state.node;
+    let service = CheckService::new(node.names(), node.check(), node.check(), &state.audit);
     let (verdict, zookie) = match service.check(context, request).await {
         Ok(Verdict::Decided(decision)) => {
             let verdict = if decision.outcome.is_allowed() {

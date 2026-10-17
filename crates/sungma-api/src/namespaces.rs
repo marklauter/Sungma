@@ -27,15 +27,18 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
-use sungma::{name::NamespaceName, revision::Revision, version::HistoryError};
-use sungma_check::read::NamespaceReadService;
+use sungma::{name::NamespaceName, revision::Revision};
 use sungma_lang::namespace::{self, Refusal};
+use sungma_names::store::InternError;
+use sungma_read::namespaces::NamespaceReadService;
 use sungma_write::{
     service::{NamespaceWriteService, NamespaceWriteServiceError},
-    store::{InternError, NamespaceWrite, NamespaceWriteError},
+    store::{NamespaceWrite, NamespaceWriteError},
 };
 
-use crate::{AppState, Reader, Refused, Writer, Written, Zookie, accept, failure, read_failure};
+use crate::{
+    AppState, Ids, Items, Refused, Stamps, Written, Zookie, accept, failure, read_failure,
+};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -76,8 +79,8 @@ struct Conflict {
     latest: Option<Zookie>,
 }
 
-pub(crate) async fn write<R: Reader, W: Writer>(
-    State(state): State<Arc<AppState<R, W>>>,
+pub(crate) async fn write<E: Items, S: Ids, C: Stamps>(
+    State(state): State<Arc<AppState<E, S, C>>>,
     headers: HeaderMap,
     body: Result<Json<WriteBody>, JsonRejection>,
 ) -> Response {
@@ -114,7 +117,7 @@ pub(crate) async fn write<R: Reader, W: Writer>(
             Err(refused) => return refused.reply(&request_id),
         },
     };
-    let service = NamespaceWriteService::new(&state.interner, &*state.writer);
+    let service = NamespaceWriteService::new(state.node.interner(), state.node.writer());
     match service.write(&name, write).await {
         Ok(revision) => Json(Written {
             request_id,
@@ -142,14 +145,9 @@ pub(crate) async fn write<R: Reader, W: Writer>(
 fn status(error: &NamespaceWriteServiceError) -> StatusCode {
     use NamespaceWriteServiceError::{Intern, Write};
     match error {
-        Write(NamespaceWriteError::History(HistoryError::NothingToRetire)) => {
-            StatusCode::UNPROCESSABLE_ENTITY
-        }
+        Write(NamespaceWriteError::NothingToRetire) => StatusCode::UNPROCESSABLE_ENTITY,
         Write(NamespaceWriteError::Conflict { .. }) => StatusCode::CONFLICT,
-        Intern(InternError::Exhausted(_))
-        | Write(NamespaceWriteError::History(HistoryError::NotLater { .. })) => {
-            StatusCode::INTERNAL_SERVER_ERROR
-        }
+        Intern(InternError::Exhausted(_)) => StatusCode::INTERNAL_SERVER_ERROR,
         Intern(InternError::Store(_))
         | Write(NamespaceWriteError::Clock(_) | NamespaceWriteError::Store(_)) => {
             StatusCode::BAD_GATEWAY
@@ -174,8 +172,8 @@ struct ReadReply {
     zookie: Zookie,
 }
 
-pub(crate) async fn read<R: Reader, W: Writer>(
-    State(state): State<Arc<AppState<R, W>>>,
+pub(crate) async fn read<E: Items, S: Ids, C: Stamps>(
+    State(state): State<Arc<AppState<E, S, C>>>,
     headers: HeaderMap,
     body: Result<Json<ReadBody>, JsonRejection>,
 ) -> Response {
@@ -184,8 +182,8 @@ pub(crate) async fn read<R: Reader, W: Writer>(
         Ok(body) => body,
         Err(refused) => return refused.reply(&request_id),
     };
-    let names = state.names();
-    let service = NamespaceReadService::new(&names, &*state.reader, &*state.reader);
+    let node = &state.node;
+    let service = NamespaceReadService::new(node.names(), node.table());
     let read = match service
         .read(&body.namespace, body.zookie.map(Revision::from))
         .await

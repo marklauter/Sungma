@@ -25,33 +25,11 @@ use serde::{
     de::{self, MapAccess, Visitor},
 };
 use serde_json::{Map, Value, json};
-use thiserror::Error;
 
-use sungma::{
-    graph::{Fact, Resource, Subject, Subjectset},
-    id::{NamespaceId, RelationId},
-    name::{
-        FactName, Identity, NameError, NamespaceName, RelationName, ResourceId, ResourceName,
-        SubjectName, SubjectsetName,
-    },
-    store::Pool,
+use sungma::name::{
+    FactName, Identity, NameError, NamespaceName, RelationName, ResourceId, ResourceName,
+    SubjectName, SubjectsetName,
 };
-use sungma_memory::{MemoryDictionary, MemoryStore};
-use sungma_write::store::FactWriteError;
-
-/// Why a fact document wasn't loaded.
-#[derive(Debug, Error)]
-pub enum FactError {
-    /// The document was refused, with its line and column.
-    #[error(transparent)]
-    Json(#[from] serde_json::Error),
-    #[error("namespace '{0}' was never declared")]
-    UnknownNamespace(NamespaceName),
-    #[error("relation '{0}' was never declared")]
-    UnknownRelation(RelationName),
-    #[error(transparent)]
-    Write(#[from] FactWriteError),
-}
 
 /// One fact as written.
 struct FactDto(FactName);
@@ -265,63 +243,4 @@ fn subjectset_value(set: &SubjectsetName) -> Map<String, Value> {
     let mut value = resource_value(set.resource());
     value.insert("relation".to_owned(), set.relation().as_str().into());
     value
-}
-
-/// Parses a fact document whole, then looks up every fact's namespace and
-/// relation names, and then inserts the facts in one write at one
-/// revision; an empty document writes nothing. A refused document stores
-/// no fact. A name never interned, or a relation no latest version
-/// declares, refuses the document.
-pub fn load_facts(
-    json: &str,
-    dictionary: &MemoryDictionary,
-    store: &MemoryStore,
-) -> Result<(), FactError> {
-    let mut facts = Vec::new();
-    for name in parse(json)? {
-        let subjectset = find_subjectset(dictionary, &name.subjectset)?;
-        let subject = match name.subject {
-            SubjectName::Identity(identity) => Subject::Identity(identity),
-            SubjectName::Resource(resource) => {
-                Subject::ResourceMember(find_resource(dictionary, &resource)?)
-            }
-            SubjectName::Subjectset(set) => Subject::Subjectset(find_subjectset(dictionary, &set)?),
-        };
-        facts.push(Fact {
-            subjectset,
-            subject,
-        });
-    }
-    if !facts.is_empty() {
-        store.insert(facts)?;
-    }
-    Ok(())
-}
-
-fn find_resource(
-    dictionary: &MemoryDictionary,
-    name: &ResourceName,
-) -> Result<Resource, FactError> {
-    let namespace = name.namespace();
-    let id = dictionary
-        .id(Pool::Namespaces, namespace.as_str())
-        .ok_or_else(|| FactError::UnknownNamespace(namespace.clone()))?;
-    Ok(Resource {
-        namespace: NamespaceId(id),
-        id: name.id().clone(),
-    })
-}
-
-fn find_subjectset(
-    dictionary: &MemoryDictionary,
-    name: &SubjectsetName,
-) -> Result<Subjectset, FactError> {
-    let relation = name.relation();
-    let id = dictionary
-        .id(Pool::Relations, relation.as_str())
-        .ok_or_else(|| FactError::UnknownRelation(relation.clone()))?;
-    Ok(Subjectset {
-        resource: find_resource(dictionary, name.resource())?,
-        relation: RelationId(id),
-    })
 }

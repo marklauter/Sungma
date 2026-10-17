@@ -1,27 +1,18 @@
-//! The storage ports on one DynamoDB table: facts, namespace versions,
-//! names and the head, on one timeline. Development runs it against
-//! DynamoDB Local. `docs/specs/dynamodb-adapter.md` specifies it.
-//!
-//! A [`DynamoReader`] serves the read ports and a [`DynamoWriter`] the
-//! write ports, so code that only reads is given only a reader. Both share
-//! one [`Table`].
+//! One DynamoDB table as a key-value table: items under binary hash and range
+//! keys, units of work as transactions, and sequences as atomic adds. It
+//! knows nothing of what the items mean; each context lays out its own.
+//! Development runs it against DynamoDB Local. `docs/specs/dynamodb-adapter.md`
+//! specifies it.
 
-mod facts;
-pub mod key;
-mod names;
-mod namespaces;
-mod reader;
+pub mod items;
 mod table;
-mod writer;
 
 use aws_sdk_dynamodb::{
     Client, Config,
     config::{BehaviorVersion, Credentials, Region},
 };
 
-pub use reader::DynamoReader;
 pub use table::Table;
-pub use writer::DynamoWriter;
 
 /// A client for DynamoDB Local at `endpoint`, such as
 /// `http://localhost:8000`. Local takes any credentials.

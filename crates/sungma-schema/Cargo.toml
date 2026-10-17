@@ -1,0 +1,8 @@
+[package]
+name = "sungma-schema"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sungma.workspace = true
+sungma-table.workspace = true
