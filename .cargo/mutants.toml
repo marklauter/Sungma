@@ -40,4 +40,7 @@ exclude_re = [
     # A lookup exactly as old as the stale limit, to the nanosecond, is
     # either side of it; no test can time one that closely.
     'servers\.rs:.*replace < with <= in Lookups::start',
+    # Whether a read asks DynamoDB for consistency: DynamoDB Local reads
+    # every item consistently, so no test can tell the difference.
+    'items\.rs:.*replace == with != in <impl ItemReader for DynamoTable>',
 ]

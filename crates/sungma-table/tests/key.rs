@@ -1,7 +1,7 @@
 //! Keys encode so they sort as their parts do, and read back unambiguously.
 
 use proptest::prelude::*;
-use sungma_table::key::{Parts, encode};
+use sungma_table::key::{Key, Parts, encode};
 
 #[test]
 fn text_holding_a_zero_byte_is_not_two_texts() {
@@ -11,6 +11,15 @@ fn text_holding_a_zero_byte_is_not_two_texts() {
     assert_eq!(parts.text().as_deref(), Some("a\0b"));
     assert_eq!(parts.u32(), Some(7));
     assert_eq!(parts.end(()), Some(()));
+}
+
+#[test]
+fn a_key_debugs_as_hex() {
+    let key = Key {
+        partition: vec![0x0a, 0xff],
+        sort: vec![0x01],
+    };
+    assert_eq!(format!("{key:?}"), "Key(0aff/01)");
 }
 
 proptest! {

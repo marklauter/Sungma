@@ -72,6 +72,7 @@ fn a_stored_version_keeps_its_epochs() {
     assert_eq!(version.epoch(OWNER), Some(Revision(10)));
     assert_eq!(version.epoch(BANNED), Some(Revision(30)));
     assert!(version.declares(OWNER));
+    assert!(!version.declares(RelationId(2)));
     assert!(version.counts(BANNED, Revision(30)));
     assert!(!version.counts(BANNED, Revision(29)));
     assert!(version.namespace().rewrite(&OWNER).is_some());

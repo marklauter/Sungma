@@ -112,10 +112,6 @@ impl Version {
         self.revision
     }
 
-    pub fn epochs(&self) -> &Epochs {
-        &self.epochs
-    }
-
     /// `None` when this version doesn't declare the relation.
     pub fn epoch(&self, relation: RelationId) -> Option<Revision> {
         self.epochs.epoch(relation)

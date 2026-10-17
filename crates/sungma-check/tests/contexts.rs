@@ -487,3 +487,46 @@ async fn a_span_its_pointer_disagrees_with_is_reported() {
     assert!(!message.contains("races"), "{message}");
     assert!(message.contains("span"), "{message}");
 }
+
+/// Check's reader keeps the versions it parsed, up to its capacity, and
+/// lets the oldest go first.
+#[tokio::test]
+async fn the_reader_keeps_parsed_versions_up_to_its_capacity() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let table = memory();
+    let first = declared(&table).await;
+    let writer = writer(&table, DevClock::default());
+    let mut revisions = vec![first];
+    for _ in 0..2 {
+        let next = NamespaceWrite::NewVersion {
+            based_on: *revisions.last().unwrap(),
+            namespace: declaring(OWNER),
+        };
+        revisions.push(writer.write_namespace(DOC, next).await.unwrap());
+    }
+    let parsed = Arc::new(AtomicUsize::new(0));
+    let counting = {
+        let parsed = Arc::clone(&parsed);
+        move |document: &str| {
+            parsed.fetch_add(1, Ordering::Relaxed);
+            parse(document)
+        }
+    };
+    let reader = RowReader::new(
+        table.clone(),
+        NameRows::new(table.clone(), Consistency::Eventual),
+        counting,
+        2,
+    );
+    // The third version lets the first go, and the first is parsed again.
+    for (at, parses) in [(0, 1), (1, 2), (0, 2), (2, 3), (1, 3), (0, 4)] {
+        let version = reader.version(DOC, revisions[at]).await.unwrap();
+        assert!(version.is_some(), "reading version {at}");
+        assert_eq!(
+            parsed.load(Ordering::Relaxed),
+            parses,
+            "reading version {at}"
+        );
+    }
+}

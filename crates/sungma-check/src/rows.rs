@@ -62,10 +62,11 @@ impl Buffer {
             return;
         }
         self.order.push_back(key);
-        while self.order.len() > capacity {
-            if let Some(oldest) = self.order.pop_front() {
-                self.versions.remove(&oldest);
-            }
+        // One version in, so at most one out.
+        if self.order.len() > capacity
+            && let Some(oldest) = self.order.pop_front()
+        {
+            self.versions.remove(&oldest);
         }
     }
 }

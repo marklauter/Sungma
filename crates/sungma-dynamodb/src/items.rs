@@ -308,9 +308,9 @@ impl ItemReader for DynamoTable {
             for item in output.items() {
                 items.push((sort_key(item)?, from_item(item)?));
             }
-            start = output.last_evaluated_key;
-            if start.is_none() || items.len() >= limit {
-                return Ok(items);
+            match output.last_evaluated_key {
+                Some(next) if items.len() < limit => start = Some(next),
+                _ => return Ok(items),
             }
         }
     }
