@@ -1884,7 +1884,6 @@ dependencies = [
  "proptest",
  "sungma",
  "sungma-clock",
- "sungma-dynamodb",
  "sungma-lang",
  "sungma-names",
  "sungma-node",
@@ -1919,7 +1918,9 @@ name = "sungma-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aws-sdk-dynamodb",
+ "proptest",
  "sungma-table",
+ "sungma-write",
  "tokio",
 ]
 

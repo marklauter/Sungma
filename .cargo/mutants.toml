@@ -20,6 +20,7 @@ minimum_test_timeout = 180
 # code under test.
 exclude_globs = [
     "crates/sungma-write/src/testkit.rs",
+    "crates/sungma-write/src/testkit/**",
     "crates/sungma-table/src/testkit.rs",
     "crates/sungma-node/src/testkit.rs",
 ]

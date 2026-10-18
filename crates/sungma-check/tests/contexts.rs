@@ -1,9 +1,6 @@
 //! What Check's reader does over a table beyond the shared store tests:
 //! rows Sungma didn't write, names an eventual read misses, and the
-//! versions it keeps parsed. The row writer's own tests run here on
-//! DynamoDB Local; they run on the memory table in `sungma-write`.
-
-mod common;
+//! versions it keeps parsed.
 
 use std::sync::Arc;
 
@@ -13,7 +10,6 @@ use sungma_check::{
     store::{FactReader, NamespaceReader},
 };
 use sungma_clock::DevClock;
-use sungma_dynamodb::items::DynamoTable;
 use sungma_names::read::NameRows;
 use sungma_names::store::Pool;
 use sungma_table::{
@@ -26,25 +22,12 @@ use sungma_write::{
     store::{NamespaceWrite, NamespaceWriter},
     testkit::{
         Parse, parse,
-        rows::{DOC, Make, Memory, OWNER, Table, declared, declaring, owner, reader, writer},
+        rows::{DOC, Memory, OWNER, Table, declared, declaring, owner, reader, writer},
     },
 };
 
 fn memory() -> Memory {
     Memory::default()
-}
-
-/// Makes a table of its own on DynamoDB Local for each test.
-struct MakeDynamo;
-
-impl Make<DynamoTable> for MakeDynamo {
-    async fn make(&self) -> DynamoTable {
-        DynamoTable::new(common::table().await)
-    }
-}
-
-mod on_dynamodb {
-    sungma_write::row_writer_tests!(super::MakeDynamo);
 }
 
 /// Rows Sungma didn't write are refused when read.
@@ -91,13 +74,8 @@ async fn a_row_sungma_did_not_write_is_refused<E: Table>(table: E) {
 }
 
 #[tokio::test]
-async fn a_row_sungma_did_not_write_is_refused_on_memory() {
+async fn a_row_sungma_did_not_write_is_refused_on_the_memory_table() {
     a_row_sungma_did_not_write_is_refused(memory()).await;
-}
-
-#[tokio::test]
-async fn a_row_sungma_did_not_write_is_refused_on_dynamodb() {
-    a_row_sungma_did_not_write_is_refused(MakeDynamo.make().await).await;
 }
 
 /// A name reader that lags: it never finds a name by key, as an eventual

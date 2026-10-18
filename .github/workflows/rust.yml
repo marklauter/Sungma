@@ -92,7 +92,7 @@ jobs:
     # Windows runners can't run the DynamoDB Local service, so they skip
     # the crates that need it.
     - name: Test
-      run: cargo test --workspace --locked --profile ${{ matrix.profile }} ${{ matrix.os == 'windows-latest' && '--exclude sungma-dynamodb --exclude sungma-check' || '' }}
+      run: cargo test --workspace --locked --profile ${{ matrix.profile }} ${{ matrix.os == 'windows-latest' && '--exclude sungma-dynamodb' || '' }}
 
   coverage:
     needs: changes
