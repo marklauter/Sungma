@@ -55,10 +55,10 @@ Dropping a relation empties it everywhere, including in other namespaces that re
 
 ## Storage
 
-- A version is stored as the printer's form of the checked namespace, never as the text the caller sent. The printer sorts relations by name, so a version prints the same document every time. A store may keep it as that printed document with names, as the DynamoDB adapter does, or parsed with interned ids, as the memory store does. A name keeps its id for good, so both forms read back the same version.
+- A version is stored as the printer's form of the checked namespace, never as the text the caller sent. The printer sorts relations by name, so a version prints the same document every time. It's stored as that printed document, with names, and a read parses it and maps the names to ids. A name keeps its id for good, so the document reads back the same version.
 - Namespace and relation names are interned when a namespace is written, and only then. Checks look names up and never intern them. See [Interner](../interner.md).
 - A namespace write takes its revision from the [[revision-clock]] and waits out commit-wait before acknowledging, as a fact write does. See [Clock](clock.md).
-- The `NamespaceWriter` port in `sungma-write`, beside `FactWriter`, takes the version a write expects. `NamespaceReader::version` in the kernel reads the version whose span covers a revision.
+- A namespace write names the version it expects. A namespace read finds the version whose span covers a revision.
 
 ## Answered elsewhere
 

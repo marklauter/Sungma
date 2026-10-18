@@ -9,7 +9,7 @@ status: evolving
 
 ## Where it stands
 
-The clock that [[clock]] specifies is built in `sungma` (the port) and `sungma-clock` (the clocks), on the `crate-split` branch. What follows is outside the spec: work deferred, questions not yet answered, and checks that run after the merge.
+The clock that [[clock]] specifies is built in `sungma-clock`, the port and the clocks. What follows is outside the spec: work deferred, questions not yet answered, and checks that run after the merge.
 
 ## Deferred
 
