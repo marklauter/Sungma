@@ -91,3 +91,17 @@ async fn a_large_seed_is_written_in_parts() {
     let held = world.store().subjects(&set.unwrap(), head).await.unwrap();
     assert_eq!(held.len(), 1);
 }
+
+/// A seeded namespace is stored as its printed document, which Check reads
+/// back as the version that declares its relations.
+#[tokio::test]
+async fn a_seeded_namespace_reads_back_as_its_version() {
+    let world = World::load(&[FILE], "[]").await.unwrap();
+    let file = resolve::namespace(world.names(), &"file".parse().unwrap()).await;
+    let version = world.latest(file.unwrap()).await.unwrap();
+    for relation in ["owner", "viewer"] {
+        let id = world.names().lookup(Pool::Relations, relation).await;
+        let id = sungma::id::RelationId(id.unwrap().unwrap());
+        assert!(version.declares(id), "{relation}");
+    }
+}

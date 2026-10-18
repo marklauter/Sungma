@@ -1990,6 +1990,7 @@ version = "0.1.0"
 dependencies = [
  "sungma",
  "sungma-table",
+ "tokio",
 ]
 
 [[package]]
@@ -2012,10 +2013,12 @@ dependencies = [
  "sungma",
  "sungma-check",
  "sungma-clock",
+ "sungma-lang",
  "sungma-names",
  "sungma-node",
  "sungma-schema",
  "sungma-table",
+ "sungma-write",
  "thiserror",
  "tokio",
 ]

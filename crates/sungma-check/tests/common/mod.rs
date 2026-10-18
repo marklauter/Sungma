@@ -2,85 +2,13 @@
 //! take them, and a table of its own for each DynamoDB test.
 
 // Each test file compiles this module separately and uses only part of it.
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sungma::{
-    name::{NamespaceName, RelationName},
-    namespace::Namespace,
-};
-use sungma_check::rows::RowReader;
-use sungma_clock::DevClock;
 use sungma_dynamodb::{Table, local};
-use sungma_lang::namespace;
-use sungma_names::{read::NameRows, write::NameRowWriter};
-use sungma_table::{
-    read::{Consistency, ItemReader},
-    sequence::Sequence,
-    write::ItemWriter,
-};
-use sungma_write::{rows::RowWriter, testkit::Stores};
 
-pub type Print = fn(&NamespaceName, &Namespace<RelationName>) -> Result<String, String>;
-pub type Parse = fn(&str) -> Result<(NamespaceName, Namespace<RelationName>), String>;
-
-fn print(name: &NamespaceName, relations: &Namespace<RelationName>) -> Result<String, String> {
-    namespace::print(name, relations).map_err(|error| error.to_string())
-}
-
-fn parse(document: &str) -> Result<(NamespaceName, Namespace<RelationName>), String> {
-    namespace::parse(document)
-        .map(|document| (document.namespace, document.relations))
-        .map_err(|errors| namespace::Refusal(errors).to_string())
-}
-
-/// The contexts over one table `E` and sequence `S`.
-pub struct Contexts<E, S> {
-    reader: RowReader<E, NameRows<E>, Parse>,
-    writer: RowWriter<E, E, DevClock, NameRows<E>, Print>,
-    names: NameRowWriter<E, E, S>,
-}
-
-impl<E: ItemReader + ItemWriter + Clone + Sync, S> Contexts<E, S> {
-    pub async fn new(table: E, sequence: S) -> Self {
-        let names = |consistency| NameRows::new(table.clone(), consistency);
-        Self {
-            reader: RowReader::new(table.clone(), names(Consistency::Eventual), parse, 64),
-            writer: RowWriter::dev(
-                table.clone(),
-                table.clone(),
-                names(Consistency::Strong),
-                print as Print,
-            )
-            .await
-            .unwrap(),
-            names: NameRowWriter::new(table.clone(), table, sequence),
-        }
-    }
-}
-
-impl<E, S> Stores for Contexts<E, S>
-where
-    E: ItemReader + ItemWriter + Send + Sync + 'static,
-    S: Sequence + Send + Sync + 'static,
-{
-    type Reader = RowReader<E, NameRows<E>, Parse>;
-    type Writer = RowWriter<E, E, DevClock, NameRows<E>, Print>;
-    type Names = NameRowWriter<E, E, S>;
-
-    fn reader(&self) -> &Self::Reader {
-        &self.reader
-    }
-
-    fn writer(&self) -> &Self::Writer {
-        &self.writer
-    }
-
-    fn names(&self) -> &Self::Names {
-        &self.names
-    }
-}
+pub use sungma_write::testkit::Contexts;
 
 /// A new table on DynamoDB Local at `SUNGMA_DYNAMODB_URL`,
 /// `http://localhost:8000` by default.

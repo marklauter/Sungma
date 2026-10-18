@@ -122,16 +122,19 @@ impl<'a> Parts<'a> {
 
     pub fn text(&mut self) -> Option<String> {
         let mut bytes = Vec::new();
+        let mut rest = self.0.iter();
         loop {
-            match self.byte()? {
-                0 => match self.byte()? {
-                    0 => return String::from_utf8(bytes).ok(),
+            match rest.next()? {
+                0 => match rest.next()? {
+                    0 => break,
                     1 => bytes.push(0),
                     _ => return None,
                 },
-                byte => bytes.push(byte),
+                &byte => bytes.push(byte),
             }
         }
+        self.0 = rest.as_slice();
+        String::from_utf8(bytes).ok()
     }
 
     /// `Some(value)` only when every byte was read.

@@ -1,6 +1,9 @@
-# Every mutant runs every crate's tests: sungma-lang's tests check the core
-# code its parsers call, such as namespace checks and names.
-test_workspace = true
+# Each mutant runs only its own crate's tests, so each crate's tests must
+# catch its own mutants.
+test_workspace = false
+
+# Mutants build without debug info: see the mutants profile in Cargo.toml.
+profile = "mutants"
 
 # CI builds with RUSTFLAGS="-D warnings". A mutant such as `fn f(x) -> Ok(())`
 # leaves a parameter unused, and that warning would fail its build and mark

@@ -6,8 +6,15 @@ use sungma::{
     name::{Identity, ResourceId},
     revision::Revision,
 };
-use sungma_schema::facts::{Row, covering, pointer, row, span};
-use sungma_table::item::{Item, Value};
+use sungma_schema::facts::{
+    self, Row, Rows, covering, pointer, pointer_moved, row, span, span_closed, span_opened,
+};
+use sungma_table::{
+    item::{Item, Value},
+    memory::MemoryTable,
+    read::Consistency,
+    write::{ItemWriter, Work},
+};
 
 fn set(namespace: u32, id: &str, relation: u32) -> Subjectset {
     Subjectset {
@@ -142,4 +149,69 @@ fn a_span_covers_from_its_writing_until_its_retirement() {
     assert!(held(5).is_empty());
     assert!(held(6).is_empty());
     assert_eq!(held(7), [(alice, Revision(7))]);
+}
+
+const READ: Consistency = Consistency::Strong;
+
+async fn read_rows(table: &MemoryTable, set: &Subjectset, of: Rows<'_>) -> Vec<Row> {
+    facts::rows(table, set, of, READ).await.unwrap()
+}
+
+/// A fact's steps write rows that read back under its subjectset, and
+/// nowhere else.
+#[tokio::test]
+async fn a_fact_s_rows_read_back_under_its_subjectset() {
+    let table = MemoryTable::new();
+    let (at, other) = (set(0, "readme", 2), set(0, "readme", 3));
+    let subjects = subjects();
+    let (alice, nested) = (&subjects[0], &subjects[3]);
+    let read = facts::read_pointer(&table, &at, alice, READ).await;
+    assert_eq!(read.unwrap(), None);
+    let opened = vec![
+        span_opened(&at, alice, Revision(3)),
+        pointer_moved(&at, alice, None, Some(Revision(3))),
+        span_opened(&at, nested, Revision(3)),
+        pointer_moved(&at, nested, None, Some(Revision(3))),
+    ];
+    table.commit(Work(opened)).await.unwrap();
+    let read = facts::read_pointer(&table, &at, alice, READ).await;
+    assert_eq!(read.unwrap(), Some(Some(Revision(3))));
+    let closed = vec![
+        span_closed(&at, alice, Revision(3), Revision(6)),
+        pointer_moved(&at, alice, Some(Some(Revision(3))), None),
+    ];
+    table.commit(Work(closed)).await.unwrap();
+    let read = facts::read_pointer(&table, &at, alice, READ).await;
+    assert_eq!(read.unwrap(), Some(None));
+    let alice_rows = vec![
+        Row::Pointer {
+            subject: alice.clone(),
+            open: None,
+        },
+        Row::Span {
+            subject: alice.clone(),
+            written: Revision(3),
+            retired: Some(Revision(6)),
+        },
+    ];
+    let nested_rows = vec![
+        Row::Pointer {
+            subject: nested.clone(),
+            open: Some(Revision(3)),
+        },
+        Row::Span {
+            subject: nested.clone(),
+            written: Revision(3),
+            retired: None,
+        },
+    ];
+    assert_eq!(read_rows(&table, &at, Rows::Of(alice)).await, alice_rows);
+    assert_eq!(read_rows(&table, &at, Rows::Subjectsets).await, nested_rows);
+    assert_eq!(
+        read_rows(&table, &at, Rows::All).await,
+        [alice_rows, nested_rows].concat()
+    );
+    assert!(read_rows(&table, &other, Rows::All).await.is_empty());
+    let read = facts::read_pointer(&table, &other, alice, READ).await;
+    assert_eq!(read.unwrap(), None);
 }

@@ -136,6 +136,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    # Four runners each test a quarter of the mutants, so the wait is a
+    # quarter as long; the minutes billed stay about the same.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [ 0, 1, 2, 3 ]
     # DynamoDB Local for the sungma-dynamodb tests, the image
     # scripts/dynamodb.sh runs. Service containers run on Linux only.
     services:
@@ -166,7 +172,7 @@ jobs:
         git diff origin/${{ github.base_ref }}... > pr.diff
         # Three mutants at a time on the runner's four cores: the job is
         # billed by its length, so this saves minutes as well as waiting.
-        cargo mutants --workspace --in-diff pr.diff -j 3 -- --locked
+        cargo mutants --workspace --in-diff pr.diff -j 3 --shard ${{ matrix.shard }}/4 -- --locked
 
   fuzz:
     needs: changes
