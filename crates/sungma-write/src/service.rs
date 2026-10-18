@@ -10,16 +10,20 @@ use sungma::{
     id::{NamespaceId, RelationId},
     name::{FactName, NamespaceName, RelationName},
     namespace::{Namespace, NamespaceError},
-    resolve::{self, ResolveError, UnknownName},
     revision::Revision,
-    store::{Dictionary, Pool, StoreError},
-    version::HistoryError,
+    store::StoreError,
 };
 use sungma_clock::ClockFault;
+use sungma_names::{
+    resolve::{self, ResolveError, UnknownName},
+    store::Dictionary,
+    store::Pool,
+};
+
+use sungma_names::store::{InternError, Interner};
 
 use crate::store::{
-    FactWrite, FactWriteError, FactWriter, InternError, Interner, NamespaceWrite,
-    NamespaceWriteError, NamespaceWriter,
+    FactWrite, FactWriteError, FactWriter, NamespaceWrite, NamespaceWriteError, NamespaceWriter,
 };
 
 #[derive(Debug, Error)]
@@ -30,6 +34,9 @@ pub enum FactWriteServiceError {
     /// its subjectset subject's relation.
     #[error("'{0}' names a relation the latest namespace version doesn't declare")]
     Undeclared(FactName),
+    /// More facts than one write holds; the caller splits them.
+    #[error("a write of {rows} rows is more than one write holds, {most}")]
+    TooLarge { rows: usize, most: usize },
     #[error(transparent)]
     Clock(ClockFault),
     #[error(transparent)]
@@ -94,6 +101,9 @@ where
                         "the store refused a fact it wasn't given to add: {fact:?}"
                     ))),
                 },
+                FactWriteError::TooLarge { rows, most } => {
+                    FactWriteServiceError::TooLarge { rows, most }
+                }
                 FactWriteError::Clock(fault) => FactWriteServiceError::Clock(fault),
                 FactWriteError::Store(error) => FactWriteServiceError::Store(error),
             })
@@ -156,7 +166,7 @@ where
                     .lookup(Pool::Namespaces, name.as_str())
                     .await
                     .map_err(InternError::from)?
-                    .ok_or(NamespaceWriteError::History(HistoryError::NothingToRetire))?;
+                    .ok_or(NamespaceWriteError::NothingToRetire)?;
                 (NamespaceId(id), NamespaceWrite::Retire { based_on })
             }
             NamespaceWrite::Create(namespace) => (

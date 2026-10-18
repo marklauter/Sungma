@@ -1,0 +1,24 @@
+[package]
+name = "sungma-node"
+version.workspace = true
+edition.workspace = true
+
+[features]
+# A node on the memory table for tests: see `testkit`.
+testkit = []
+
+[dependencies]
+serde_json.workspace = true
+sungma.workspace = true
+sungma-check.workspace = true
+sungma-clock.workspace = true
+sungma-table.workspace = true
+sungma-lang.workspace = true
+sungma-names.workspace = true
+sungma-schema.workspace = true
+sungma-write.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+sungma-node = { path = ".", features = ["testkit"] }
+tokio = { workspace = true, features = ["macros", "rt"] }

@@ -338,7 +338,21 @@ async fn a_seed_whose_facts_no_namespace_declares_is_refused() {
     let folder = r#"{ "folder": { "viewer": "this" } }"#;
     let refused = state.seed(&[folder], &facts).await;
     assert!(
-        matches!(refused, Err(sungma_api::LoadError::Fact(_))),
+        matches!(refused, Err(sungma_api::SeedError::Fact(_))),
         "{refused:?}"
     );
+}
+
+/// A write past what one write holds is the caller's to split: 413, not a
+/// store failure.
+#[tokio::test]
+async fn a_write_too_large_for_one_write_is_too_large() {
+    for (store, app) in stores().await {
+        declare(&app).await;
+        let add: Vec<Value> = (0..60).map(|i| owner(&format!("p{i}"))).collect();
+        let (status, reply) = write(&app, json!({ "add": add })).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{store}: {reply}");
+        let (_, read) = read(&app, owners()).await;
+        assert_eq!(read["facts"], json!([]), "{store}");
+    }
 }

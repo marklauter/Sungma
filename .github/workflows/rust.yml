@@ -90,7 +90,7 @@ jobs:
       run: cargo build --workspace --all-targets --locked --profile ${{ matrix.profile }}
 
     # Windows runners can't run the DynamoDB Local service, so they skip
-    # the crate that needs it.
+    # the crates that need it.
     - name: Test
       run: cargo test --workspace --locked --profile ${{ matrix.profile }} ${{ matrix.os == 'windows-latest' && '--exclude sungma-dynamodb' || '' }}
 
@@ -136,6 +136,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    # Four runners each test a quarter of the mutants, so the wait is a
+    # quarter as long; the minutes billed stay about the same.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [ 0, 1, 2, 3 ]
     # DynamoDB Local for the sungma-dynamodb tests, the image
     # scripts/dynamodb.sh runs. Service containers run on Linux only.
     services:
@@ -164,7 +170,9 @@ jobs:
           exit 0
         fi
         git diff origin/${{ github.base_ref }}... > pr.diff
-        cargo mutants --workspace --in-diff pr.diff -- --locked
+        # Three mutants at a time on the runner's four cores: the job is
+        # billed by its length, so this saves minutes as well as waiting.
+        cargo mutants --workspace --in-diff pr.diff -j 3 --shard ${{ matrix.shard }}/4 -- --locked
 
   fuzz:
     needs: changes

@@ -1859,9 +1859,10 @@ name = "sungma"
 version = "0.1.0"
 dependencies = [
  "proptest",
- "sungma-check",
  "sungma-lang",
- "sungma-memory",
+ "sungma-names",
+ "sungma-node",
+ "sungma-table",
  "sungma-write",
  "thiserror",
  "tokio",
@@ -1880,7 +1881,10 @@ dependencies = [
  "sungma-clock",
  "sungma-dynamodb",
  "sungma-lang",
- "sungma-memory",
+ "sungma-names",
+ "sungma-node",
+ "sungma-read",
+ "sungma-table",
  "sungma-write",
  "thiserror",
  "tokio",
@@ -1892,8 +1896,17 @@ name = "sungma-check"
 version = "0.1.0"
 dependencies = [
  "parking_lot",
+ "proptest",
  "sungma",
+ "sungma-clock",
+ "sungma-lang",
+ "sungma-names",
+ "sungma-node",
+ "sungma-schema",
+ "sungma-table",
+ "sungma-write",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -1921,10 +1934,7 @@ version = "0.1.0"
 dependencies = [
  "aws-sdk-dynamodb",
  "proptest",
- "serde_json",
- "sungma",
- "sungma-clock",
- "sungma-lang",
+ "sungma-table",
  "sungma-write",
  "tokio",
 ]
@@ -1938,21 +1948,75 @@ dependencies = [
  "serde_json",
  "sungma",
  "sungma-check",
- "sungma-memory",
+ "sungma-names",
+ "sungma-node",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "sungma-names"
+version = "0.1.0"
+dependencies = [
+ "parking_lot",
+ "proptest",
+ "sungma",
+ "sungma-schema",
+ "sungma-table",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "sungma-node"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sungma",
+ "sungma-check",
+ "sungma-clock",
+ "sungma-lang",
+ "sungma-names",
+ "sungma-node",
+ "sungma-schema",
+ "sungma-table",
  "sungma-write",
  "thiserror",
  "tokio",
 ]
 
 [[package]]
-name = "sungma-memory"
+name = "sungma-read"
+version = "0.1.0"
+dependencies = [
+ "sungma",
+ "sungma-clock",
+ "sungma-lang",
+ "sungma-names",
+ "sungma-schema",
+ "sungma-table",
+ "sungma-write",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "sungma-schema"
+version = "0.1.0"
+dependencies = [
+ "sungma",
+ "sungma-table",
+ "tokio",
+]
+
+[[package]]
+name = "sungma-table"
 version = "0.1.0"
 dependencies = [
  "parking_lot",
  "proptest",
- "sungma",
- "sungma-clock",
- "sungma-write",
+ "sungma-table",
+ "thiserror",
  "tokio",
 ]
 
@@ -1963,8 +2027,14 @@ dependencies = [
  "parking_lot",
  "proptest",
  "sungma",
+ "sungma-check",
  "sungma-clock",
- "sungma-memory",
+ "sungma-lang",
+ "sungma-names",
+ "sungma-node",
+ "sungma-schema",
+ "sungma-table",
+ "sungma-write",
  "thiserror",
  "tokio",
 ]

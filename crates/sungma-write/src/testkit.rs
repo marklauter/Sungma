@@ -1,27 +1,45 @@
 //! The tests every store runs, against its own ports. A store's crate
-//! implements [`Stores`] and calls [`store_tests!`](crate::store_tests),
-//! which writes a test for each function here. Facts and namespace
+//! implements [`Stores`], or takes [`Contexts`] over its table, and calls
+//! [`store_tests!`](crate::store_tests), which writes a test for each
+//! function here. Facts and namespace
 //! versions are stamped from a counting clock that starts at 1, as
 //! `DevClock` counts.
+
+pub mod rows;
 
 use std::{collections::HashSet, future::Future, sync::Arc};
 
 use proptest::{prop_assert, prop_assert_eq, test_runner::TestCaseError};
 use sungma::{
-    closure::{Closure, Expansion},
     graph::{Fact, Resource, Subject, Subjectset},
     id::{NamespaceId, RelationId},
     name::{Identity, ResourceId},
+    name::{NamespaceName, RelationName},
     namespace::Namespace,
     revision::Revision,
     rewrite::Rewrite::{self, FactTo, This},
-    store::{FactReader, NamespaceReader, Pool},
-    version::{HistoryError, Version},
+    version::Version,
+};
+use sungma_check::{
+    closure::{Closure, Expansion},
+    rows::RowReader,
+    store::FactReader,
+    store::NamespaceReader,
+};
+use sungma_clock::DevClock;
+use sungma_lang::namespace;
+use sungma_names::store::Pool;
+use sungma_names::{read::NameRows, store::NameWriter, write::NameRowWriter};
+use sungma_table::{
+    read::{Consistency, ItemReader},
+    sequence::Sequence,
+    write::ItemWriter,
 };
 
+use crate::rows::RowWriter;
 use crate::store::{
     FactWrite::{self, Insert, Retire},
-    FactWriteError, FactWriter, NameWriter,
+    FactWriteError, FactWriter,
     NamespaceWrite::{self, Create, NewVersion},
     NamespaceWriteError, NamespaceWriter,
 };
@@ -35,6 +53,67 @@ pub trait Stores: Send + Sync + 'static {
     fn reader(&self) -> &Self::Reader;
     fn writer(&self) -> &Self::Writer;
     fn names(&self) -> &Self::Names;
+}
+
+pub type Print = fn(&NamespaceName, &Namespace<RelationName>) -> Result<String, String>;
+pub type Parse = fn(&str) -> Result<(NamespaceName, Namespace<RelationName>), String>;
+
+/// The canonical document, printed with `sungma-lang`.
+pub fn print(name: &NamespaceName, relations: &Namespace<RelationName>) -> Result<String, String> {
+    namespace::print(name, relations).map_err(|error| error.to_string())
+}
+
+pub fn parse(document: &str) -> Result<(NamespaceName, Namespace<RelationName>), String> {
+    namespace::parse(document)
+        .map(|document| (document.namespace, document.relations))
+        .map_err(|errors| namespace::Refusal(errors).to_string())
+}
+
+/// The write and Check contexts over one table `E` and sequence `S`.
+pub struct Contexts<E, S> {
+    reader: RowReader<E, NameRows<E>, Parse>,
+    writer: RowWriter<E, E, DevClock, NameRows<E>, Print>,
+    names: NameRowWriter<E, E, S>,
+}
+
+impl<E: ItemReader + ItemWriter + Clone + Sync, S> Contexts<E, S> {
+    pub async fn new(table: E, sequence: S) -> Self {
+        let names = |consistency| NameRows::new(table.clone(), consistency);
+        Self {
+            reader: RowReader::new(table.clone(), names(Consistency::Eventual), parse, 64),
+            writer: RowWriter::dev(
+                table.clone(),
+                table.clone(),
+                names(Consistency::Strong),
+                print as Print,
+            )
+            .await
+            .unwrap(),
+            names: NameRowWriter::new(table.clone(), table, sequence),
+        }
+    }
+}
+
+impl<E, S> Stores for Contexts<E, S>
+where
+    E: ItemReader + ItemWriter + Send + Sync + 'static,
+    S: Sequence + Send + Sync + 'static,
+{
+    type Reader = RowReader<E, NameRows<E>, Parse>;
+    type Writer = RowWriter<E, E, DevClock, NameRows<E>, Print>;
+    type Names = NameRowWriter<E, E, S>;
+
+    fn reader(&self) -> &Self::Reader {
+        &self.reader
+    }
+
+    fn writer(&self) -> &Self::Writer {
+        &self.writer
+    }
+
+    fn names(&self) -> &Self::Names {
+        &self.names
+    }
 }
 
 /// Writes a test for each function in [`crate::testkit`], against the
@@ -507,10 +586,7 @@ async fn rewrite<S: Stores>(stores: &S, relation: RelationId) -> Option<Arc<Rewr
 }
 
 fn refused_retirement(result: Result<Revision, NamespaceWriteError>) -> bool {
-    matches!(
-        result,
-        Err(NamespaceWriteError::History(HistoryError::NothingToRetire))
-    )
+    matches!(result, Err(NamespaceWriteError::NothingToRetire))
 }
 
 pub async fn creating_a_namespace_that_has_a_current_version_is_refused<S: Stores>(stores: S) {

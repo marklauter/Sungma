@@ -24,11 +24,20 @@ serde_json = "1.0.151"
 sungma = { version = "0.1.0", path = "crates/sungma" }
 sungma-check = { version = "0.1.0", path = "crates/sungma-check" }
 sungma-clock = { version = "0.1.0", path = "crates/sungma-clock" }
+sungma-table = { version = "0.1.0", path = "crates/sungma-table" }
 sungma-dynamodb = { version = "0.1.0", path = "crates/sungma-dynamodb" }
 sungma-lang = { version = "0.1.0", path = "crates/sungma-lang" }
-sungma-memory = { version = "0.1.0", path = "crates/sungma-memory" }
+sungma-node = { version = "0.1.0", path = "crates/sungma-node" }
+sungma-read = { version = "0.1.0", path = "crates/sungma-read" }
+sungma-schema = { version = "0.1.0", path = "crates/sungma-schema" }
+sungma-names = { version = "0.1.0", path = "crates/sungma-names" }
 sungma-write = { version = "0.1.0", path = "crates/sungma-write" }
 thiserror = "2.0.21"
 tokio = "1.53.2"
 tower = "0.5.3"
 webpki-roots = "1.0.9"
+
+# cargo-mutants builds every mutant; debug info only slows those builds.
+[profile.mutants]
+inherits = "test"
+debug = "none"
