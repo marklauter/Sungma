@@ -19,31 +19,37 @@ A revision doesn't close the gap between a check and the action that follows it.
 
 ## Status
 
-A proof of concept. The evaluator, decisions with grounds and replay, namespace documents, the revision clock and a DynamoDB storage adapter work, and there is one HTTP route, `POST /check`. [docs/roadmap.md](docs/roadmap.md) lists what comes next.
+A proof of concept. The evaluator, decisions with grounds and replay, namespace documents, versioned namespaces, the revision clock and a DynamoDB table work. The HTTP API checks access and reads and writes facts and namespaces. [docs/roadmap.md](docs/roadmap.md) lists what comes next.
 
 ## Crates
 
-- `sungma`: the kernel. Names, ids, the fact graph, namespaces and rewrites, the read ports, closure evaluation, decisions and replay.
-- `sungma-check`: the Check service. Resolves a request's names, decides it and appends an audit record.
-- `sungma-write`: the write ports and id minting, and the write pipeline to come.
-- `sungma-memory`: in-memory adapters for the storage ports.
-- `sungma-dynamodb`: DynamoDB adapters for the storage ports.
+Each context has its own readers, writers and shapes, over one key-value table and a small shared kernel.
+
+- `sungma`: the shared kernel. Names, ids and revisions, the fact graph, namespaces and rewrites, and namespace versions with their epochs.
+- `sungma-table`: the key-value table, which knows nothing of what its items mean: a get by key, a query of a partition, a unit of work that commits whole or not at all, and sequences. Holds the memory table, for tests, and the tests every table passes.
+- `sungma-dynamodb`: the table on DynamoDB.
+- `sungma-schema`: where facts, namespace versions and the head live on the table, and what each row holds.
+- `sungma-names`: the names context. Names and their interned ids, the interner, and resolving a caller's names.
+- `sungma-write`: the write context. Fact and namespace writes, judged by the epoch rules and committed as one unit of work.
+- `sungma-check`: the Check context. Resolves a request's names, decides it at a revision and appends an audit record; closure evaluation and replay.
+- `sungma-read`: the API's reads of facts and namespace documents at a snapshot.
 - `sungma-clock`: the revision clock, with NTP, NTS and platform clocks.
-- `sungma-lang`: namespace and fact documents: parsing, printing and loading.
-- `sungma-api`: an axum shell with `POST /check`.
+- `sungma-lang`: namespace and fact documents: parsing and printing.
+- `sungma-node`: one node's contexts wired over one table.
+- `sungma-api`: the HTTP API, on axum.
 
 ## Docs
 
 - [Architecture](docs/architecture.md): Sungma, its neighbors and its services.
 - [Sample](docs/sample.md): files, folders and groups, with a trace of one check.
 - [Glossary](docs/glossary): the domain terms.
-- [Specs](docs/specs): namespace documents, fact documents, namespace writes, the revision clock, one timeline and the DynamoDB adapter.
+- [Specs](docs/specs): namespace documents, fact documents, namespace writes, the revision clock, one timeline and the table.
 - [Notes](docs/notes): open work and the current thinking on it.
 - [C4 diagrams](docs/c4): the services and their containers, in Excalidraw.
 
 ## Development
 
-`cargo test --workspace` runs the tests. Line coverage stays above 95%, measured with `cargo llvm-cov`.
+`cargo test --workspace` runs the tests. The `sungma-dynamodb` tests need DynamoDB Local, which `scripts/dynamodb.sh` starts. Each crate's own tests cover its code. Line coverage stays above 95%, measured with `cargo llvm-cov`.
 
 `rust-toolchain.toml` installs the stable toolchain with clippy, rustfmt and rust-analyzer. Enable the hooks once per clone. Before each commit they check formatting, lints, docs and tests; before each push, coverage and the dependency audit, as CI does. The push checks need `cargo-llvm-cov` and `cargo-audit`. Mutation testing of a branch's changes runs in CI only.
 

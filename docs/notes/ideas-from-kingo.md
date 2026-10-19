@@ -49,11 +49,11 @@ The epoch exists for one purpose: when a later namespace version re-declares a d
 - Re-adding a dropped relation in a later version moves its epoch, so older facts under it stay dead and old grants don't resurrect.
 - A replay or expand at an earlier revision reads the earlier version and its epoch, so the facts are valid there.
 - The namespace write is cheap: no fact is rewritten, no cross-namespace scan runs, and facts carry no namespace version. Late binding means the catalog can't see which other namespaces reach a dropped relation, and scanning the fact graph on every namespace write is impractical. Dropping a relation therefore empties it everywhere, including on the excluded side of another namespace's exclusion, which can widen access there. That widening is accepted.
-- Re-applying a fact whose span started before the epoch opens a new span (`crates/sungma-memory/src/lib.rs`, `Facts::insert`), so a re-asserted grant counts again.
+- Re-applying a fact whose span started before the epoch opens a new span (`crates/sungma-write/src/fact.rs`, `opens_span`), so a re-asserted grant counts again.
 - Every reader of the graph applies the same epoch filter: Check, Expand, Read, Watch and dumps. A reader that skips it shows orphans as live.
 - The eager alternative closes the orphans' spans in the namespace write. It gives the same visible facts at every revision and needs no reader filter, but the write costs as much as there are orphans.
 - This replaces the namespace-write half of idea 4, which refuses a namespace write that strands live facts. It depends on idea 5: `replay` reads the namespaces of the decision's revision ([[namespace-writes-wait-on-namespace-versioning]]).
-- **Sungma: done.** Each `Version` keeps an epoch per relation, and `crates/sungma/src/closure.rs` counts a fact only when its version declares the relation and the fact was written at or after the epoch.
+- **Sungma: done.** Each `Version` keeps an epoch per relation, and `crates/sungma-check/src/closure` counts a fact only when its version declares the relation and the fact was written at or after the epoch.
 - Source: decided in conversation on 2026-10-04. It departs from Kingo's `docs/decisions/preventing-drift-between-facts-and-theories.md`, which refuses the namespace write, and keeps that decision's rule that facts carry no namespace version.
 
 ### 4. Fact/namespace drift is prevented at write time
@@ -132,7 +132,7 @@ Wrong denies get reported and wrong allows don't, so overgrant must be caught by
 
 Documents and test doubles live in their own crate, with a dependency check on the core.
 
-- **Sungma: partial.** Namespace documents and fact JSON live in `sungma-lang`, so the core no longer depends on serde. The core still ships `memory`, and nothing checks its dependencies.
+- **Sungma: partial.** Namespace documents and fact JSON live in `sungma-lang`, so the core doesn't depend on serde. The core ships no adapters or test doubles: the memory table lives in `sungma-table`. Nothing checks the core's dependencies.
 - Source: `docs/decisions/deciding-which-types-parse-text.md`, `tests/Kingo.Testing/ArchitectureTestsBase.cs`.
 
 ### 15. Stricter build gates

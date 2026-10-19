@@ -20,11 +20,15 @@ Sungma is a set of Rust services over one table. [c4-containers.excalidraw](c4/c
 - **Audit**: listens for Watch events; the audit log, replay and a UI.
 - **Table**: facts, namespace versions and names, by key.
 
-Only Check exists today, as `sungma-api` with one HTTP route, `POST /check`. The [roadmap](roadmap.md) lists the rest.
+Check, Read and Write exist today, in one service, `sungma-api`, over HTTP. Read reads by subjectset only. The [roadmap](roadmap.md) lists the rest.
+
+## Inside a service
+
+Each service is a set of bounded contexts over the table: names, write, Check and read. Each context has its own readers, writers and shapes, and shares only a small kernel of names, ids, the fact graph, rewrites and the epoch rule. The table knows nothing of what its items mean. It gets an item by key, queries a run of a partition, and commits a unit of work whole or not at all. One shared layout says where each kind of row lives, so every context reads the rows the others write. In tests, a table in memory stands in for DynamoDB.
 
 ## Where to look
 
 - [Sample](sample.md): files, folders and groups, with a trace of one check.
 - [Glossary](glossary): the domain terms.
-- [Specs](specs): namespace documents, fact documents, namespace writes, the revision clock, one timeline and the DynamoDB adapter.
+- [Specs](specs): namespace documents, fact documents, namespace writes, the revision clock, one timeline and the table.
 - [Notes](notes): open work and the current thinking on it.
