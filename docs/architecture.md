@@ -30,5 +30,5 @@ Each service is a set of bounded contexts over the table: names, write, Check an
 
 - [Sample](sample.md): files, folders and groups, with a trace of one check.
 - [Glossary](glossary): the domain terms.
-- [Specs](specs): namespace documents, fact documents, namespace writes, the revision clock, one timeline and the DynamoDB adapter.
+- [Specs](specs): namespace documents, fact documents, namespace writes, the revision clock, one timeline and the table.
 - [Notes](notes): open work and the current thinking on it.

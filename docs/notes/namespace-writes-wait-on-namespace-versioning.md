@@ -1,7 +1,7 @@
 ---
 title: Namespace writes wait on namespace versioning
 type: note
-summary: Namespace versioning is settled by one timeline for facts and namespaces, and the write methods are settled, so a port for writing namespaces can now be designed.
+summary: One timeline settles namespace versioning, and namespaces are written as whole documents through the write context; the response, reads, errors, propagation and who may write are open.
 status: evolving
 ---
 
@@ -9,9 +9,9 @@ status: evolving
 
 ## Where it stands
 
-- Namespaces enter only as namespace documents (`docs/specs/namespace-documents.md`), through `namespace::load_namespaces` (`crates/sungma-lang/src/namespace.rs`), or built in code by the tests through `Namespace::new`, into `MemoryStore` (`crates/sungma-memory/src/lib.rs`). `sungma-api` loads them once at startup.
-- `NamespaceReader` (`crates/sungma/src/store.rs`) reads the version whose span covers a revision.
-- A `Decision` (`crates/sungma/src/decision.rs`) records the fact `Revision` and the `Semantics` version, not which namespaces it was judged under. `replay` (`crates/sungma/src/replay.rs`) reads the namespaces of the decision's revision.
+- Namespaces enter as namespace documents (`docs/specs/namespace-documents.md`), parsed by `namespace::parse` (`crates/sungma-lang/src/namespace.rs`) and written through `NamespaceWriter::write_namespace` (`crates/sungma-write/src/store.rs`). The API writes them at `/namespaces/write`, and a node seeds them at startup.
+- `NamespaceReader` (`crates/sungma-check/src/store.rs`) reads the version whose span covers a revision.
+- A `Decision` (`crates/sungma-check/src/decision.rs`) records the fact `Revision` and the `Semantics` version, not which namespaces it was judged under. `replay` (`crates/sungma-check/src/replay.rs`) reads the namespaces of the decision's revision.
 - `Namespace::new` (`crates/sungma/src/namespace.rs`) checks a namespace whole and returns every problem. A namespace is valid once built, and a write port keeps that: no stored namespace fails to evaluate.
 
 ## The versioning questions are answered
@@ -26,15 +26,15 @@ A caller holds a [[revision-token]], not a revision. A request with a revision t
 
 ## Write methods
 
-- Creating a namespace that already exists is refused by the write pipeline.
-- PUT is refused. A namespace is never replaced in place.
-- PATCH appends a new version, which supersedes the previous one and closes its span.
+- Creating a namespace that already exists is refused.
+- A namespace is never replaced in place.
+- Writing a version appends it, and it supersedes the previous one and closes its span.
 
 Duplicate namespaces are therefore gated on the write side. A reader never sees two versions of one namespace at one revision, so neither the namespace document parser nor the namespace store checks for them.
 
 ## Storage
 
-Namespace documents are JSON and carry no grammar version; the REST endpoint that takes them is versioned instead. How a namespace version is stored is open.
+Namespace documents are JSON and carry no grammar version; the REST endpoint that takes them is versioned instead. A version is stored as its printed document, as [The table](../specs/table.md#namespace-versions) specifies.
 
 ## Settled
 

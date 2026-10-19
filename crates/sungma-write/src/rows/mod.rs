@@ -3,7 +3,7 @@
 //! still holds what the writer read, and checks every row the write
 //! depends on, so a write that raced another is refused whole and tried
 //! again. A writer handles one write at a time, so its revisions follow
-//! the order its writes land in. See `docs/specs/dynamodb-adapter.md`.
+//! the order its writes land in. See `docs/specs/table.md`.
 
 mod facts;
 mod namespaces;

@@ -1,7 +1,7 @@
 //! One DynamoDB table as a key-value table: items under binary hash and range
 //! keys, units of work as transactions, and sequences as atomic adds. It
 //! knows nothing of what the items mean; each context lays out its own.
-//! Development runs it against DynamoDB Local. `docs/specs/dynamodb-adapter.md`
+//! Development runs it against DynamoDB Local. `docs/specs/table.md`
 //! specifies it.
 
 pub mod items;

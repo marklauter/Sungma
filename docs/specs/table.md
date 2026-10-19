@@ -1,5 +1,5 @@
 ---
-title: The DynamoDB adapter
+title: The table
 type: specification
 summary: "Sungma keeps facts, namespace versions, interned names and the head in one key-value table on one timeline: each fact span, namespace entry and name is an item under a key that sorts in the order reads need, and each write is one unit of work that moves the head. On DynamoDB, a unit of work is a transaction."
 status: evolving
@@ -17,7 +17,7 @@ cites:
   - "[[relation]]"
 ---
 
-# The DynamoDB adapter
+# The table
 
 Sungma keeps everything in one key-value table: every [[fact]] [[span]], every [[namespace]] version, the interned names, and the head, all on one [[revision]] timeline, as [One timeline](one-timeline.md) specifies. In production the table is a DynamoDB table. Tests run it against DynamoDB Local. Local reads consistently whatever a read asks for, and runs one transaction at a time, so tests can't reach the paths for stale reads and transaction conflicts.
 
