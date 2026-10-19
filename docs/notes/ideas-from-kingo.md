@@ -132,7 +132,7 @@ Wrong denies get reported and wrong allows don't, so overgrant must be caught by
 
 Documents and test doubles live in their own crate, with a dependency check on the core.
 
-- **Sungma: partial.** Namespace documents and fact JSON live in `sungma-lang`, so the core no longer depends on serde. The core ships no adapters or test doubles: the memory table lives in `sungma-table`. Nothing checks the core's dependencies.
+- **Sungma: partial.** Namespace documents and fact JSON live in `sungma-lang`, so the core doesn't depend on serde. The core ships no adapters or test doubles: the memory table lives in `sungma-table`. Nothing checks the core's dependencies.
 - Source: `docs/decisions/deciding-which-types-parse-text.md`, `tests/Kingo.Testing/ArchitectureTestsBase.cs`.
 
 ### 15. Stricter build gates
