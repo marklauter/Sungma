@@ -2,6 +2,10 @@
 # The fast CI checks, before each commit: formatting, lints, docs and tests.
 # Enable once per clone: git config core.hooksPath .githooks
 set -e
+# A commit of Markdown alone has no code to check.
+if ! git diff --cached --name-only | grep -qv '\.md$'; then
+  exit 0
+fi
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked --quiet
