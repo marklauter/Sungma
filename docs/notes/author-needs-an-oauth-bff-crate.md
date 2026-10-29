@@ -1,17 +1,17 @@
 ---
-title: The UI needs an OAuth BFF crate
+title: Author needs an OAuth BFF crate
 type: note
-summary: Sungma's UI runs behind an OAuth backend-for-frontend that holds the tokens on the back channel and renders HTMX pages; Rust has the parts but no BFF library, so Sungma builds one as a crate of its own.
+summary: Author, Sungma's UI, runs behind an OAuth backend-for-frontend that holds the tokens on the back channel and renders HTMX pages; Rust has the parts but no BFF library, so Sungma builds one as a crate of its own.
 status: evolving
 cites:
   - "[[check-takes-a-caller-token-and-a-subject-token]]"
 ---
 
-# The UI needs an OAuth BFF crate
+# Author needs an OAuth BFF crate
 
 ## The shape
 
-The UI is a backend-for-frontend (BFF): one service that signs the user in, holds their tokens, calls Read and Write, and renders HTML that HTMX swaps into the page. The browser never sees a token or Sungma's APIs, so Read and Write stay on a private network, serving machines. This follows the BFF pattern in the IETF draft "OAuth 2.0 for Browser-Based Applications".
+Author, Sungma's UI, is a backend-for-frontend (BFF): one service that signs the user in, holds their tokens, calls Read and Write, and renders HTML that HTMX swaps into the page. The browser never sees a token or Sungma's APIs, so Read and Write stay on a private network, serving machines. This follows the BFF pattern in the IETF draft "OAuth 2.0 for Browser-Based Applications".
 
 The BFF calls Read and Write through a client generated from their OpenAPI descriptions, not through Sungma's crates, so it depends on the APIs' contract alone.
 
