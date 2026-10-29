@@ -84,6 +84,13 @@ pub struct Namespace<R = RelationId> {
 
 impl<R: Eq + Hash + Clone + Display> Namespace<R> {
     /// The relations, or every problem with them, in declaration order.
+    ///
+    /// Linear in the namespace's size, its relations and the nodes of their
+    /// rewrites, with hashing taken as constant: each relation is indexed
+    /// once and each rewrite walked once, the cycle search visits each
+    /// relation and each computed edge once, and a cycle's shortest path is
+    /// searched only within its own component. Sorting the problems found
+    /// adds `p log p` for `p` problems.
     pub fn new(relations: Vec<(R, Rewrite<R>)>) -> Result<Self, Vec<Problem>> {
         // Each relation at its first declaration; a later one is a problem.
         let mut index = HashMap::new();

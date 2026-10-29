@@ -109,6 +109,10 @@ pub enum ErrorKind {
 }
 
 /// Parses and checks a namespace document, as the [module](self) describes.
+///
+/// Linear in the document's length: one JSON pass, one pass over each
+/// expression's lexemes, and [`Namespace::new`]'s linear check. A document
+/// past [`MAX_RELATIONS`] is refused after the JSON pass alone.
 pub fn parse(text: &str) -> Result<NamespaceDocument, Vec<DocumentError>> {
     let fail = |kind| Err(vec![error(None, None, kind)]);
     if text.len() > MAX_DOCUMENT_BYTES {

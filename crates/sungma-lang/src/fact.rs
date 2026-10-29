@@ -172,6 +172,9 @@ pub fn subject<'de, D: Deserializer<'de>>(deserializer: D) -> Result<SubjectName
 }
 
 /// Parses a fact document whole. A refused document gives no facts.
+///
+/// Linear in the document's length: one JSON pass, which builds each fact
+/// as it reads it.
 pub fn parse(json: &str) -> Result<Vec<FactName>, serde_json::Error> {
     let dtos = serde_json::from_str::<Vec<FactDto>>(json)?;
     Ok(dtos.into_iter().map(|dto| dto.0).collect())
