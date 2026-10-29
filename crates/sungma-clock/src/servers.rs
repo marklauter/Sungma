@@ -84,7 +84,8 @@ type Names = Arc<Mutex<HashMap<String, Running>>>;
 pub(crate) struct Lookups {
     pub(crate) resolver: Arc<dyn Resolve>,
     running: Names,
-    stale: Duration,
+    /// The time a lookup starts at and is judged stuck by.
+    now: Arc<dyn Fn() -> Instant + Send + Sync>,
 }
 
 impl Lookups {
@@ -92,7 +93,7 @@ impl Lookups {
         Self {
             resolver: Arc::new(resolver),
             running: Arc::default(),
-            stale: STALE,
+            now: Arc::new(Instant::now),
         }
     }
 
@@ -123,15 +124,16 @@ impl Lookups {
     /// stuck and the name has room for another thread, or a new one. The
     /// error when the system can't start a thread.
     fn start(&self, server: &str) -> io::Result<Arc<Lookup>> {
+        let now = (self.now)();
         let mut running = self.running.lock();
         if let Some(entry) = running.get(server)
             && let Some(lookup) = &entry.current
-            && (lookup.started.elapsed() < self.stale || entry.threads >= MOST)
+            && (now.saturating_duration_since(lookup.started) < STALE || entry.threads >= MOST)
         {
             return Ok(lookup.clone());
         }
         let lookup = Arc::new(Lookup {
-            started: Instant::now(),
+            started: now,
             found: Mutex::new(None),
             finished: Condvar::new(),
         });
@@ -300,16 +302,47 @@ mod tests {
         matches!(resolved, Err(ClockError::Io(failed)) if failed.kind() == io::ErrorKind::TimedOut)
     }
 
+    /// A resolver whose every lookup hangs until the returned sender is
+    /// dropped, counting the lookups it was asked for.
+    fn hanging(address: SocketAddr) -> (Lookups, Arc<AtomicUsize>, mpsc::Sender<()>) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (release, released) = mpsc::channel::<()>();
+        let released = Mutex::new(released);
+        let counted = calls.clone();
+        let lookups = Lookups::new(move |_: &str| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            let _ = released.lock().recv();
+            Ok(vec![address])
+        });
+        (lookups, calls, release)
+    }
+
+    /// How many lookup threads `name` holds. `start` counts a thread in
+    /// before it returns, so this doesn't wait on the thread.
+    fn threads(lookups: &Lookups, name: &str) -> usize {
+        lookups
+            .running
+            .lock()
+            .get(name)
+            .map_or(0, |entry| entry.threads)
+    }
+
+    /// Waits until every lookup thread has counted itself out.
+    fn settled(lookups: &Lookups) -> bool {
+        let gone = Instant::now() + Duration::from_secs(10);
+        while !lookups.running.lock().is_empty() && Instant::now() < gone {
+            thread::yield_now();
+        }
+        lookups.running.lock().is_empty()
+    }
+
     #[test]
     fn a_slow_resolver_is_given_up_at_the_deadline() {
-        let slow = Lookups::new(|_: &str| {
-            thread::sleep(Duration::from_secs(2));
-            Ok(vec![])
-        });
-        let started = Instant::now();
-        let deadline = started + Duration::from_millis(100);
-        assert!(timed_out(slow.resolve_by("slow.test:123", deadline)));
-        assert!(started.elapsed() < Duration::from_secs(1));
+        let (slow, _, release) = hanging("10.0.0.4:123".parse().unwrap());
+        // A deadline already passed gives up without waiting at all.
+        assert!(timed_out(slow.resolve_by("slow.test:123", Instant::now())));
+        drop(release);
+        assert!(settled(&slow));
         let fine = Lookups::new(Dns);
         let later = Instant::now() + Duration::from_secs(5);
         assert_eq!(fine.resolve_by("127.0.0.1:9", later).unwrap().len(), 1);
@@ -322,67 +355,56 @@ mod tests {
     #[test]
     fn a_name_has_one_lookup_at_a_time() {
         let address: SocketAddr = "10.0.0.1:123".parse().unwrap();
-        let calls = Arc::new(AtomicUsize::new(0));
-        // Every lookup hangs until `release` is dropped.
-        let (release, released) = mpsc::channel::<()>();
-        let released = Mutex::new(released);
-        let counted = calls.clone();
-        let hung = Lookups::new(move |_: &str| {
-            counted.fetch_add(1, Ordering::SeqCst);
-            let _ = released.lock().recv();
-            Ok(vec![address])
-        });
-        let soon = || Instant::now() + Duration::from_millis(20);
+        let (hung, calls, release) = hanging(address);
+        let first = hung.start("hung.test:123").unwrap();
         for _ in 0..3 {
-            assert!(timed_out(hung.resolve_by("hung.test:123", soon())));
+            assert!(Arc::ptr_eq(&first, &hung.start("hung.test:123").unwrap()));
         }
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(threads(&hung, "hung.test:123"), 1);
         // Another name has a lookup of its own.
-        assert!(timed_out(hung.resolve_by("other.test:123", soon())));
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(!Arc::ptr_eq(&first, &hung.start("other.test:123").unwrap()));
+        assert_eq!(threads(&hung, "other.test:123"), 1);
         // A caller waiting on the running lookup gets what it finds.
         drop(release);
-        let later = Instant::now() + Duration::from_secs(5);
+        let later = Instant::now() + Duration::from_secs(10);
         assert_eq!(hung.resolve_by("hung.test:123", later).unwrap(), [address]);
+        assert!(settled(&hung));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]
     fn a_stuck_lookup_makes_way_for_another_up_to_three() {
         let address: SocketAddr = "10.0.0.3:123".parse().unwrap();
-        let calls = Arc::new(AtomicUsize::new(0));
-        // Every lookup hangs until `release` is dropped.
-        let (release, released) = mpsc::channel::<()>();
-        let released = Mutex::new(released);
-        let counted = calls.clone();
-        let mut hung = Lookups::new(move |_: &str| {
-            counted.fetch_add(1, Ordering::SeqCst);
-            let _ = released.lock().recv();
-            Ok(vec![address])
-        });
-        hung.stale = Duration::from_millis(30);
-        let soon = || Instant::now() + Duration::from_millis(5);
-        let calls_after = |hung: &Lookups| {
-            assert!(timed_out(hung.resolve_by("hung.test:123", soon())));
-            calls.load(Ordering::SeqCst)
-        };
-        // A fresh lookup is waited on; a stuck one makes way.
-        assert_eq!(calls_after(&hung), 1);
-        assert_eq!(calls_after(&hung), 1);
-        thread::sleep(Duration::from_millis(40));
-        assert_eq!(calls_after(&hung), 2);
-        thread::sleep(Duration::from_millis(40));
-        assert_eq!(calls_after(&hung), 3);
+        let (mut hung, calls, release) = hanging(address);
+        // Time moves only when the test moves it.
+        let time = Arc::new(Mutex::new(Instant::now()));
+        let read = time.clone();
+        hung.now = Arc::new(move || *read.lock());
+        let pass = |by: Duration| *time.lock() += by;
+        let name = "hung.test:123";
+        // A fresh lookup is waited on, until the moment it turns stale.
+        let first = hung.start(name).unwrap();
+        pass(STALE - Duration::from_nanos(1));
+        assert!(Arc::ptr_eq(&first, &hung.start(name).unwrap()));
+        assert_eq!(threads(&hung, name), 1);
+        // A stuck one makes way.
+        pass(Duration::from_nanos(1));
+        let second = hung.start(name).unwrap();
+        assert!(!Arc::ptr_eq(&first, &second));
+        assert_eq!(threads(&hung, name), 2);
+        pass(STALE);
+        let third = hung.start(name).unwrap();
+        assert!(!Arc::ptr_eq(&second, &third));
+        assert_eq!(threads(&hung, name), 3);
         // Three threads is the most a name holds.
-        thread::sleep(Duration::from_millis(40));
-        assert_eq!(calls_after(&hung), 3);
+        pass(STALE);
+        assert!(Arc::ptr_eq(&third, &hung.start(name).unwrap()));
+        assert_eq!(threads(&hung, name), 3);
         drop(release);
-        let later = Instant::now() + Duration::from_secs(5);
-        assert_eq!(hung.resolve_by("hung.test:123", later).unwrap(), [address]);
-        let gone = Instant::now() + Duration::from_secs(5);
-        while !hung.running.lock().is_empty() && Instant::now() < gone {
-            thread::yield_now();
-        }
-        assert!(hung.running.lock().is_empty());
+        let later = Instant::now() + Duration::from_secs(10);
+        assert_eq!(hung.resolve_by(name, later).unwrap(), [address]);
+        assert!(settled(&hung));
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
     }
 
     #[test]
@@ -401,11 +423,7 @@ mod tests {
             matches!(panicked, Err(ClockError::Io(failed)) if failed.to_string() == "the resolver stopped without an answer")
         );
         // The lookup that panicked leaves the running set once it has ended.
-        let gone = Instant::now() + Duration::from_secs(5);
-        while !lookups.running.lock().is_empty() && Instant::now() < gone {
-            thread::yield_now();
-        }
-        assert!(lookups.running.lock().is_empty());
+        assert!(settled(&lookups));
         assert_eq!(lookups.resolve_by("a.test:123", later()).unwrap().len(), 1);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
