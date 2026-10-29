@@ -1,18 +1,20 @@
 //! The write services over the in-memory store.
 
 use sungma::{
-    name::{FactName, RelationName, SubjectName},
+    name::{FactName, NamespaceName, RelationName, SubjectName},
     namespace::Namespace,
     revision::Revision,
     rewrite::Rewrite,
     store::StoreError,
 };
+use sungma_check::store::FactReader;
 use sungma_clock::ClockFault;
-use sungma_names::{store::Dictionary, store::Pool};
+use sungma_names::{resolve, store::Dictionary, store::Pool};
 use sungma_node::testkit::World;
 use sungma_write::{
     service::{
         FactWriteService, FactWriteServiceError, NamespaceWriteService, NamespaceWriteServiceError,
+        SeedError, seed,
     },
     store::{FactWrite, FactWriteError, FactWriter, NamespaceWrite, NamespaceWriteError},
 };
@@ -203,4 +205,70 @@ async fn a_new_version_and_a_retirement_follow_the_latest_version() {
     assert!(retired > second);
     let id = sungma::id::NamespaceId(world.intern(Pool::Namespaces, "file").await);
     assert!(world.latest(id).await.is_none());
+}
+
+fn file() -> Vec<(NamespaceName, Namespace<RelationName>)> {
+    vec![("file".parse().unwrap(), relations(&["owner"]))]
+}
+
+/// A seed holds as many facts as it likes, whatever one write holds, and
+/// takes a revision for each namespace and each write of facts.
+#[tokio::test]
+async fn a_large_seed_is_written_in_parts() {
+    let world = World::new();
+    let facts: Vec<FactName> = (0..250)
+        .map(|i| FactName {
+            subjectset: format!("file:f{i}#owner").parse().unwrap(),
+            subject: SubjectName::Identity(format!("p{i}").parse().unwrap()),
+        })
+        .collect();
+    let node = world.node();
+    seed(node.interner(), node.writer(), file(), &facts)
+        .await
+        .unwrap();
+    // One namespace, then 250 facts at 24 a write.
+    assert_eq!(world.head().await, Revision(1 + 11));
+    for i in [0, 249] {
+        let set = format!("file:f{i}#owner").parse().unwrap();
+        let set = resolve::subjectset(world.names(), &set).await.unwrap();
+        let held = world.store().subjects(&set, world.head().await).await;
+        assert_eq!(held.unwrap().len(), 1, "f{i}");
+    }
+}
+
+#[tokio::test]
+async fn a_seed_of_nothing_writes_nothing() {
+    let world = World::new();
+    let node = world.node();
+    seed(node.interner(), node.writer(), Vec::new(), &[])
+        .await
+        .unwrap();
+    assert_eq!(world.head().await, Revision(0));
+}
+
+/// A namespace that has a version can't be created again.
+#[tokio::test]
+async fn a_seed_into_a_store_with_the_namespace_is_refused() {
+    let world = World::new();
+    let node = world.node();
+    seed(node.interner(), node.writer(), file(), &[])
+        .await
+        .unwrap();
+    let seeded = seed(node.interner(), node.writer(), file(), &[]).await;
+    assert!(matches!(seeded, Err(SeedError::Namespace(_))), "{seeded:?}");
+}
+
+/// A fact the namespaces don't declare refuses the facts, after the
+/// namespaces were written.
+#[tokio::test]
+async fn facts_the_namespaces_do_not_declare_are_refused() {
+    let world = World::new();
+    let node = world.node();
+    let editor = FactName {
+        subjectset: "file:a#editor".parse().unwrap(),
+        subject: SubjectName::Identity("alice".parse().unwrap()),
+    };
+    let seeded = seed(node.interner(), node.writer(), file(), &[editor]).await;
+    assert!(matches!(seeded, Err(SeedError::Fact(_))), "{seeded:?}");
+    assert_eq!(world.head().await, Revision(1));
 }

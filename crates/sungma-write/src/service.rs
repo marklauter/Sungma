@@ -212,3 +212,43 @@ where
         })
     }
 }
+
+/// How many facts a seed writes at a time. A new fact takes two rows and
+/// may name two namespaces, so this many fit one write whatever they are.
+const SEED_FACTS: usize = 24;
+
+/// Why a seed didn't load.
+#[derive(Debug, Error)]
+pub enum SeedError {
+    #[error(transparent)]
+    Namespace(#[from] NamespaceWriteServiceError),
+    #[error(transparent)]
+    Fact(#[from] FactWriteServiceError),
+}
+
+/// Creates each namespace, then adds the facts, through the write
+/// services, as a caller would, in as many writes as the facts take.
+/// Meant for an empty store: creating a namespace that has a version is
+/// refused.
+pub async fn seed<I, W>(
+    interner: &I,
+    writer: &W,
+    namespaces: Vec<(NamespaceName, Namespace<RelationName>)>,
+    facts: &[FactName],
+) -> Result<(), SeedError>
+where
+    I: Interner + Sync,
+    W: NamespaceWriter + FactWriter + Sync,
+{
+    let namespace_writer = NamespaceWriteService::new(interner, writer);
+    for (name, relations) in namespaces {
+        namespace_writer
+            .write(&name, NamespaceWrite::Create(relations))
+            .await?;
+    }
+    let fact_writer = FactWriteService::new(interner, writer);
+    for facts in facts.chunks(SEED_FACTS) {
+        fact_writer.write(facts, &[]).await?;
+    }
+    Ok(())
+}

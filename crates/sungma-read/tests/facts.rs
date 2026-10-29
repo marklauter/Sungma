@@ -83,87 +83,6 @@ async fn facts_are_written_and_read_back() {
 }
 
 #[tokio::test]
-async fn a_write_retires_and_adds_at_one_revision() {
-    for (store, app) in stores().await {
-        declare(&app).await;
-        write(&app, json!({ "add": [owner("alice"), owner("bob")] })).await;
-        let (status, moved) = write(
-            &app,
-            json!({ "retire": [owner("alice"), owner("bob")], "add": [owner("bob"), owner("carol")] }),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{store}: {moved}");
-        let (_, reply) = read(&app, owners()).await;
-        assert_eq!(
-            reply["facts"],
-            json!([owner("bob"), owner("carol")]),
-            "{store}"
-        );
-        assert_eq!(reply["zookie"], moved["zookie"], "{store}");
-
-        // Retiring a fact not held, and adding one held, change nothing.
-        let (status, _) = write(
-            &app,
-            json!({ "retire": [owner("alice")], "add": [owner("bob")] }),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{store}");
-        let (_, reply) = read(&app, owners()).await;
-        assert_eq!(
-            reply["facts"],
-            json!([owner("bob"), owner("carol")]),
-            "{store}"
-        );
-    }
-}
-
-#[tokio::test]
-async fn a_write_naming_what_no_namespace_declares_is_refused_whole() {
-    for (store, app) in stores().await {
-        declare(&app).await;
-        // Names never interned refuse an addition and a retirement.
-        let unknown = [
-            (
-                json!({ "namespace": "user", "resource": "a", "relation": "owner",
-                     "subject": { "identity": "alice" } }),
-                "user",
-            ),
-            (
-                json!({ "namespace": "file", "resource": "a", "relation": "editor",
-                     "subject": { "identity": "alice" } }),
-                "editor",
-            ),
-            (
-                json!({ "namespace": "file", "resource": "a", "relation": "owner",
-                     "subject": { "namespace": "file", "resource": "b", "relation": "editor" } }),
-                "editor",
-            ),
-        ];
-        for (fact, named) in unknown {
-            for body in [
-                json!({ "add": [owner("alice"), fact.clone()] }),
-                json!({ "add": [owner("alice")], "retire": [fact.clone()] }),
-            ] {
-                let (status, reply) = write(&app, body.clone()).await;
-                assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{store}: {body}");
-                let error = reply["error"].as_str().unwrap();
-                assert!(error.contains(named), "{store}: {error}");
-            }
-        }
-        // `owner` is interned by `file`, but `folder` doesn't declare it.
-        let undeclared = json!({ "namespace": "folder", "resource": "a", "relation": "owner",
-                                 "subject": { "identity": "alice" } });
-        let (status, reply) = write(&app, json!({ "add": [owner("alice"), undeclared] })).await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{store}: {reply}");
-        let error = reply["error"].as_str().unwrap();
-        assert!(error.contains("folder:a#owner@alice"), "{store}: {error}");
-
-        let (_, reply) = read(&app, owners()).await;
-        assert_eq!(reply["facts"], json!([]), "{store}");
-    }
-}
-
-#[tokio::test]
 async fn a_read_naming_what_no_namespace_declares_finds_nothing() {
     for (store, app) in stores().await {
         declare(&app).await;
@@ -272,20 +191,6 @@ async fn a_body_that_is_not_well_formed_is_refused() {
         declare(&app).await;
         for body in [
             json!({}),
-            json!({ "add": [owner("alice")], "extra": [] }),
-            json!({ "add": [{ "namespace": "file", "resource": "a", "relation": "owner" }] }),
-            json!({ "add": [{ "namespace": "File!", "resource": "a", "relation": "owner",
-                              "subject": { "identity": "alice" } }] }),
-            json!({ "add": [{ "namespace": "file", "resource": "a b", "relation": "owner",
-                              "subject": { "identity": "alice" } }] }),
-            json!({ "add": "alice" }),
-        ] {
-            let (status, reply) = write(&app, body.clone()).await;
-            assert_eq!(status, StatusCode::BAD_REQUEST, "{store}: {body}");
-            assert!(reply["error"].is_string(), "{store}");
-        }
-        for body in [
-            json!({}),
             json!({ "namespace": "file", "resource": "readme" }),
             json!({ "namespace": "file", "resource": "readme", "relation": "this" }),
             json!({ "namespace": "file", "resource": "", "relation": "owner" }),
@@ -295,64 +200,14 @@ async fn a_body_that_is_not_well_formed_is_refused() {
                     "subject": null }),
             json!({ "namespace": "file", "resource": "readme", "relation": "owner", "extra": 1 }),
         ] {
-            let (status, _) = read(&app, body.clone()).await;
+            let (status, reply) = read(&app, body.clone()).await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{store}: {body}");
+            assert!(reply["error"].is_string(), "{store}");
         }
-        for path in ["/facts/write", "/facts/read"] {
-            let (status, _) = post_raw(&app, path, "{", Some("application/json")).await;
-            assert_eq!(status, StatusCode::BAD_REQUEST, "{store}: {path}");
-            let (status, _) = post_raw(&app, path, "{}", None).await;
-            assert_eq!(
-                status,
-                StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                "{store}: {path}"
-            );
-        }
-    }
-}
-
-#[tokio::test]
-async fn a_write_of_no_facts_is_refused_and_writes_no_revision() {
-    for (store, app) in stores().await {
-        let declared = declare(&app).await;
-        for body in [
-            json!({ "add": [] }),
-            json!({ "retire": [] }),
-            json!({ "add": [], "retire": [] }),
-        ] {
-            let (status, reply) = write(&app, body.clone()).await;
-            assert_eq!(status, StatusCode::BAD_REQUEST, "{store}: {body}: {reply}");
-        }
-        let (_, reply) = read(&app, owners()).await;
-        assert_eq!(reply["zookie"], declared, "{store}");
-    }
-}
-
-#[tokio::test]
-async fn a_seed_whose_facts_no_namespace_declares_is_refused() {
-    let state = sungma_api::AppState::memory();
-    let namespace = r#"{ "file": { "owner": "this" } }"#;
-    let facts = serde_json::to_string(&json!([owner("alice")])).unwrap();
-    assert!(state.seed(&[namespace], &facts).await.is_ok());
-    let state = sungma_api::AppState::memory();
-    let folder = r#"{ "folder": { "viewer": "this" } }"#;
-    let refused = state.seed(&[folder], &facts).await;
-    assert!(
-        matches!(refused, Err(sungma_api::SeedError::Fact(_))),
-        "{refused:?}"
-    );
-}
-
-/// A write past what one write holds is the caller's to split: 413, not a
-/// store failure.
-#[tokio::test]
-async fn a_write_too_large_for_one_write_is_too_large() {
-    for (store, app) in stores().await {
-        declare(&app).await;
-        let add: Vec<Value> = (0..60).map(|i| owner(&format!("p{i}"))).collect();
-        let (status, reply) = write(&app, json!({ "add": add })).await;
-        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{store}: {reply}");
-        let (_, read) = read(&app, owners()).await;
-        assert_eq!(read["facts"], json!([]), "{store}");
+        let path = "/facts/read";
+        let (status, _) = post_raw(&app, path, "{", Some("application/json")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{store}");
+        let (status, _) = post_raw(&app, path, "{}", None).await;
+        assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE, "{store}");
     }
 }

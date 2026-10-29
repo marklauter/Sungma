@@ -6,13 +6,27 @@ edition.workspace = true
 [features]
 # The tests every store runs: see `testkit`.
 testkit = ["dep:proptest", "dep:sungma-check", "dep:sungma-lang", "tokio/rt"]
+# The Write service's routes, on axum: see `http`.
+http = ["dep:axum", "dep:serde", "dep:serde_json", "dep:sungma-http", "dep:sungma-lang"]
+# The Write service's binary, on a memory table or DynamoDB Local.
+server = ["http", "dep:sungma-dynamodb", "tokio/macros", "tokio/rt-multi-thread", "tokio/net"]
+
+[[bin]]
+name = "sungma-write"
+path = "src/main.rs"
+required-features = ["server"]
 
 [dependencies]
+axum = { workspace = true, optional = true }
 parking_lot.workspace = true
 proptest = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true, features = ["raw_value"] }
 sungma.workspace = true
 sungma-check = { workspace = true, optional = true }
 sungma-clock.workspace = true
+sungma-dynamodb = { workspace = true, optional = true }
+sungma-http = { workspace = true, optional = true }
 sungma-lang = { workspace = true, optional = true }
 sungma-table.workspace = true
 sungma-names.workspace = true
@@ -21,6 +35,12 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
-sungma-write = { path = ".", features = ["testkit"] }
+http-body-util.workspace = true
+serde_json.workspace = true
+sungma-clock = { workspace = true, features = ["test-util"] }
+sungma-dynamodb.workspace = true
+sungma-write = { path = ".", features = ["testkit", "server"] }
 sungma-node = { workspace = true, features = ["testkit"] }
+sungma-read = { workspace = true, features = ["http"] }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+tower = { workspace = true, features = ["util"] }

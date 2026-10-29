@@ -3,16 +3,40 @@ name = "sungma-read"
 version.workspace = true
 edition.workspace = true
 
+[features]
+# The Read service's routes, on axum: see `http`.
+http = ["dep:axum", "dep:serde", "dep:serde_json", "dep:sungma-http", "dep:sungma-lang"]
+# The Read service's binary, on a memory table or DynamoDB Local.
+server = ["http", "dep:sungma-dynamodb", "dep:tokio"]
+
+[[bin]]
+name = "sungma-read"
+path = "src/main.rs"
+required-features = ["server"]
+
 [dependencies]
+axum = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true, features = ["raw_value"] }
 sungma.workspace = true
+sungma-dynamodb = { workspace = true, optional = true }
+sungma-http = { workspace = true, optional = true }
+sungma-lang = { workspace = true, optional = true }
 sungma-table.workspace = true
 sungma-names.workspace = true
 sungma-schema.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, optional = true, features = ["macros", "rt-multi-thread", "net"] }
 
 [dev-dependencies]
+http-body-util.workspace = true
+serde_json.workspace = true
 sungma-clock.workspace = true
+sungma-dynamodb.workspace = true
 sungma-lang.workspace = true
 sungma-names.workspace = true
-sungma-write.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
+sungma-node.workspace = true
+sungma-read = { path = ".", features = ["server"] }
+sungma-write = { workspace = true, features = ["http"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+tower = { workspace = true, features = ["util"] }

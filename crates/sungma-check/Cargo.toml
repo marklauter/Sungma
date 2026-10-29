@@ -3,19 +3,40 @@ name = "sungma-check"
 version.workspace = true
 edition.workspace = true
 
+[features]
+# The Check service's route, on axum: see `http`.
+http = ["dep:axum", "dep:serde", "dep:sungma-http"]
+# The Check service's binary, on a memory table or DynamoDB Local.
+server = ["http", "dep:sungma-dynamodb", "dep:sungma-lang", "dep:tokio"]
+
+[[bin]]
+name = "sungma-check"
+path = "src/main.rs"
+required-features = ["server"]
+
 [dependencies]
+axum = { workspace = true, optional = true }
 parking_lot.workspace = true
+serde = { workspace = true, optional = true }
 sungma.workspace = true
+sungma-dynamodb = { workspace = true, optional = true }
+sungma-http = { workspace = true, optional = true }
+sungma-lang = { workspace = true, optional = true }
 sungma-table.workspace = true
 sungma-names.workspace = true
 sungma-schema.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, optional = true, features = ["macros", "rt-multi-thread", "net"] }
 
 [dev-dependencies]
+http-body-util.workspace = true
 proptest.workspace = true
+serde_json.workspace = true
+sungma-check = { path = ".", features = ["server"] }
 sungma-clock.workspace = true
 sungma-lang.workspace = true
 sungma-names.workspace = true
 sungma-node = { workspace = true, features = ["testkit"] }
 sungma-write = { workspace = true, features = ["testkit"] }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+tower = { workspace = true, features = ["util"] }

@@ -1,5 +1,5 @@
 //! `POST /check` against the docs namespaces and facts from the core's
-//! fixtures.
+//! fixtures, and against stores that fail.
 
 use std::sync::Arc;
 
@@ -11,8 +11,19 @@ use axum::{
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use sungma::name::MAX_IDENTITY_BYTES;
-use sungma_api::{AppState, router};
-use sungma_check::Verdict;
+use sungma_check::{
+    Verdict,
+    closure::MAX_DEPTH,
+    http::{AppState, router},
+};
+use sungma_node::{CheckReader, Names, testkit::World};
+use sungma_table::{
+    TableError,
+    item::Item,
+    key::Key,
+    memory::MemoryTable,
+    read::{Consistency, ItemReader, Query},
+};
 use tower::ServiceExt;
 
 const NAMESPACES: [&str; 3] = [
@@ -22,10 +33,16 @@ const NAMESPACES: [&str; 3] = [
 ];
 const FACTS: &str = include_str!("../../sungma/tests/fixtures/docs.facts.json");
 
-async fn state() -> Arc<AppState> {
-    let state = AppState::memory();
-    state.seed(&NAMESPACES, FACTS).await.unwrap();
-    Arc::new(state)
+type State<E = Arc<MemoryTable>> = AppState<Names<E>, CheckReader<E>>;
+
+/// Check over the table.
+fn on<E: Clone>(table: &E) -> State<E> {
+    AppState::new(sungma_node::names(table), sungma_node::check_reader(table))
+}
+
+async fn state() -> Arc<State> {
+    let world = World::load(&NAMESPACES, FACTS).await.unwrap();
+    Arc::new(on(world.node().table()))
 }
 
 async fn post(app: Router, body: Value, headers: &[(&str, &str)]) -> (StatusCode, Value) {
@@ -40,7 +57,7 @@ async fn post(app: Router, body: Value, headers: &[(&str, &str)]) -> (StatusCode
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
-async fn check(state: &Arc<AppState>, body: Value) -> (StatusCode, Value) {
+async fn check(state: &Arc<State>, body: Value) -> (StatusCode, Value) {
     post(router(state.clone()), body, &[]).await
 }
 
@@ -218,7 +235,7 @@ async fn no_subject_is_rejected() {
 
 /// Sends a raw body, so the JSON extractor can reject it.
 async fn post_raw(
-    state: &Arc<AppState>,
+    state: &Arc<State>,
     body: &str,
     content_type: Option<&str>,
 ) -> (StatusCode, Value) {
@@ -259,4 +276,52 @@ async fn rejected_bodies_get_json_errors() {
         assert!(reply["request_id"].as_str().unwrap().starts_with("sungma-"));
         assert!(reply["error"].is_string());
     }
+}
+
+/// A store that is down.
+#[derive(Clone, Copy)]
+struct Down;
+
+fn down() -> TableError {
+    TableError("the store is down".to_owned())
+}
+
+impl ItemReader for Down {
+    async fn get(&self, _: &Key, _: Consistency) -> Result<Option<Item>, TableError> {
+        Err(down())
+    }
+
+    async fn query(&self, _: &Query, _: Consistency) -> Result<Vec<(Vec<u8>, Item)>, TableError> {
+        Err(down())
+    }
+}
+
+#[tokio::test]
+async fn a_store_that_fails_is_a_bad_gateway() {
+    let app = router(Arc::new(on(&Down)));
+    let body = json!({ "set": "file:readme#owner", "identity": "alice" });
+    let (status, reply) = post(app, body, &[]).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{reply}");
+    assert!(reply["error"].as_str().unwrap().contains("down"), "{reply}");
+}
+
+/// A chain of groups longer than a check may walk.
+#[tokio::test]
+async fn a_check_past_the_depth_limit_is_a_fault() {
+    let link = |from: usize, to: usize| {
+        json!({ "namespace": "group", "resource": format!("g{from}"), "relation": "member",
+                "subject": { "namespace": "group", "resource": format!("g{to}"), "relation": "member" } })
+    };
+    let chain: Vec<Value> = (0..=MAX_DEPTH).map(|n| link(n, n + 1)).collect();
+    let group = r#"{ "group": { "member": "this" } }"#;
+    let world = World::load(&[group], &Value::from(chain).to_string())
+        .await
+        .unwrap();
+    let state = Arc::new(on(world.node().table()));
+    let (status, reply) = check(
+        &state,
+        json!({ "set": "group:g0#member", "identity": "alice" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{reply}");
 }

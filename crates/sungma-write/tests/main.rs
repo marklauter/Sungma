@@ -1,9 +1,16 @@
-//! The `sungma-api` binary's arguments and stores. Each run is given an
+//! The `sungma-write` binary's arguments and stores. Each run is given an
 //! address it can't bind, so none starts a server.
 
 mod common;
 
-use std::process::{Command, Output};
+use std::{
+    fs,
+    process::{Command, Output},
+};
+
+use serde_json::Value;
+use sungma_dynamodb::{Table, items::DynamoTable, local};
+use sungma_read::namespaces::NamespaceReadService;
 
 use common::dynamodb_url;
 
@@ -28,7 +35,7 @@ const NAMESPACES: [&str; 3] = [
 ];
 
 fn run(args: &[&str], env: &[(&str, &str)]) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_sungma-api"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_sungma-write"));
     command
         .args(args)
         .env("SUNGMA_ADDR", "not an address")
@@ -52,7 +59,7 @@ fn facts_need_at_least_one_namespace() {
     let facts = format!("{FIXTURES}/docs.facts.json");
     let output = run(&[&facts], &[]);
     assert!(!output.status.success());
-    assert!(stderr(&output).contains("usage: sungma-api"));
+    assert!(stderr(&output).contains("usage: sungma-write"));
 }
 
 #[test]
@@ -82,19 +89,45 @@ fn a_seed_that_is_refused_stops_the_server() {
     assert!(!stderr(&output).contains(UNBOUND));
 }
 
-/// Runs on DynamoDB Local, creating the table, and seeds it; a second
-/// run finds the table and serves it without seeding it again.
 #[test]
-fn the_server_runs_on_dynamodb_when_given_a_url() {
+fn a_seed_that_breaks_the_grammar_stops_the_server() {
+    let facts = format!("{FIXTURES}/docs.facts.json");
+    let refused = format!("{}/refused.json", env!("CARGO_TARGET_TMPDIR"));
+    fs::write(&refused, r#"{ "file": { "viewer": "editor" } }"#).unwrap();
+    // A namespace document, then a fact document, that's refused.
+    for args in [[facts.as_str(), &refused], [&refused, NAMESPACES[0]]] {
+        let output = run(&args, &[]);
+        assert!(!output.status.success());
+        let stderr = stderr(&output);
+        assert!(!stderr.contains(UNBOUND), "{stderr}");
+    }
+}
+
+/// Runs on DynamoDB Local, creating the table, and seeds it with the
+/// printed documents; a second run finds the table and serves it without
+/// seeding it again.
+#[tokio::test]
+async fn the_server_runs_on_dynamodb_when_given_a_url() {
     let Some(url) = dynamodb_url() else { return };
-    let table = format!("sungma-api-{}", std::process::id());
+    let name = format!("sungma-write-{}", std::process::id());
     let env = [
         ("SUNGMA_DYNAMODB_URL", url.as_str()),
-        ("SUNGMA_DYNAMODB_TABLE", table.as_str()),
+        ("SUNGMA_DYNAMODB_TABLE", name.as_str()),
     ];
     let facts = format!("{FIXTURES}/docs.facts.json");
     let seeded = run(&seed(&facts), &env);
     assert!(stderr(&seeded).contains(UNBOUND), "{}", stderr(&seeded));
+
+    let table = DynamoTable::new(Table::new(local(&url), name.clone()));
+    let names = sungma_node::names(&table);
+    let read = NamespaceReadService::new(&names, &table)
+        .read(&"file".parse().unwrap(), None)
+        .await
+        .unwrap();
+    let stored: Value = serde_json::from_str(&read.version.unwrap().document).unwrap();
+    let file: Value = serde_json::from_str(&fs::read_to_string(NAMESPACES[0]).unwrap()).unwrap();
+    assert_eq!(stored, file);
+
     let again = run(&seed(&facts), &env);
     let stderr = stderr(&again);
     assert!(stderr.contains(UNBOUND), "{stderr}");

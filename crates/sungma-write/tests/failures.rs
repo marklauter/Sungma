@@ -1,5 +1,5 @@
 //! Failures outside the caller's control: a store or a clock that fails
-//! is 502, and a check past Sungma's own limits is 500.
+//! is 502, and a write past Sungma's own limits is 500.
 
 mod common;
 
@@ -8,10 +8,7 @@ use std::{ops::Range, sync::Arc};
 use axum::{Router, http::StatusCode};
 use serde_json::{Value, json};
 use sungma::revision::Revision;
-use sungma_api::{AppState, router};
-use sungma_check::closure::MAX_DEPTH;
-use sungma_clock::{ClockFault, DevClock, ManualClock, Reading};
-use sungma_node::Node;
+use sungma_clock::{Clock, ClockFault, DevClock, ManualClock, Reading};
 use sungma_table::{
     TableError,
     item::Item,
@@ -21,6 +18,7 @@ use sungma_table::{
     sequence::Sequence,
     write::{CommitError, ItemWriter, Work},
 };
+use sungma_write::http::{AppState, router};
 
 use common::post;
 
@@ -58,8 +56,27 @@ impl Sequence for Down {
     }
 }
 
-fn broken() -> AppState<Down, Down> {
-    AppState::new(Node::new(Down, Down, DevClock::default()))
+/// The Write service's routes over the table, stamping writes from the
+/// clock.
+fn app<E, S, C>(table: E, sequence: S, clock: C) -> Router
+where
+    E: ItemReader + ItemWriter + Clone + Send + Sync + 'static,
+    S: Sequence + Send + Sync + 'static,
+    C: Clock + Send + Sync + 'static,
+{
+    let state = AppState::new(
+        sungma_node::interner(&table, sequence),
+        sungma_node::writer(&table, clock),
+    );
+    router(Arc::new(state))
+}
+
+fn memory() -> Router {
+    app(
+        Arc::new(MemoryTable::new()),
+        Arc::new(MemorySequence::new()),
+        DevClock::default(),
+    )
 }
 
 fn readme(identity: &str) -> Value {
@@ -71,16 +88,8 @@ fn readme(identity: &str) -> Value {
 fn requests() -> Vec<(&'static str, Value)> {
     let zookie = json!({ "revision": 1 });
     vec![
-        (
-            "/check",
-            json!({ "set": "file:readme#owner", "identity": "alice" }),
-        ),
         ("/facts/write", json!({ "add": [readme("alice")] })),
         ("/facts/write", json!({ "retire": [readme("alice")] })),
-        (
-            "/facts/read",
-            json!({ "namespace": "file", "resource": "readme", "relation": "owner" }),
-        ),
         (
             "/namespaces/write",
             json!({ "create": { "file": { "owner": "this" } } }),
@@ -93,13 +102,12 @@ fn requests() -> Vec<(&'static str, Value)> {
             "/namespaces/write",
             json!({ "retire": "file", "based_on": zookie }),
         ),
-        ("/namespaces/read", json!({ "namespace": "file" })),
     ]
 }
 
 #[tokio::test]
 async fn a_store_that_fails_is_a_bad_gateway() {
-    let app = router(Arc::new(broken()));
+    let app = app(Down, Down, DevClock::default());
     for (path, body) in requests() {
         let (status, reply) = post(&app, path, body.clone()).await;
         assert_eq!(status, StatusCode::BAD_GATEWAY, "{path}: {body}");
@@ -110,13 +118,6 @@ async fn a_store_that_fails_is_a_bad_gateway() {
     }
 }
 
-#[tokio::test]
-async fn a_seed_into_a_store_that_fails_is_refused() {
-    let state = broken();
-    let namespace = r#"{ "file": { "owner": "this" } }"#;
-    assert!(state.seed(&[namespace], "[]").await.is_err());
-}
-
 /// A writer whose clock can't give a revision it trusts.
 fn faulted() -> Router {
     let clock = ManualClock::new(Reading {
@@ -124,9 +125,11 @@ fn faulted() -> Router {
         settled: Revision(1),
     });
     clock.fault(ClockFault::Drifted);
-    let table = Arc::new(MemoryTable::new());
-    let node = Node::new(table, Arc::new(MemorySequence::new()), clock);
-    router(Arc::new(AppState::new(node)))
+    app(
+        Arc::new(MemoryTable::new()),
+        Arc::new(MemorySequence::new()),
+        clock,
+    )
 }
 
 #[tokio::test]
@@ -145,40 +148,10 @@ async fn a_clock_that_fails_is_a_bad_gateway() {
     );
 }
 
-/// A chain of groups longer than a check may walk.
-#[tokio::test]
-async fn a_check_past_the_depth_limit_is_a_fault() {
-    let app = router(Arc::new(AppState::memory()));
-    post(
-        &app,
-        "/namespaces/write",
-        json!({ "create": { "group": { "member": "this" } } }),
-    )
-    .await;
-    let link = |from: usize, to: usize| {
-        json!({ "namespace": "group", "resource": format!("g{from}"), "relation": "member",
-                "subject": { "namespace": "group", "resource": format!("g{to}"), "relation": "member" } })
-    };
-    // A unit of work holds 100 rows and each new fact takes two, so the
-    // chain goes in a few writes.
-    let chain: Vec<Value> = (0..=MAX_DEPTH).map(|n| link(n, n + 1)).collect();
-    for links in chain.chunks(40) {
-        let (status, _) = post(&app, "/facts/write", json!({ "add": links })).await;
-        assert_eq!(status, StatusCode::OK);
-    }
-    let (status, reply) = post(
-        &app,
-        "/check",
-        json!({ "set": "group:g0#member", "identity": "alice" }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{reply}");
-}
-
 /// A body past the size limit is too large, not malformed.
 #[tokio::test]
 async fn a_body_past_the_limit_is_too_large() {
-    let app = router(Arc::new(AppState::memory()));
+    let app = memory();
     let big = format!(
         r#"{{ "add": [], "pad": "{}" }}"#,
         "x".repeat(3 * 1024 * 1024)
@@ -194,8 +167,7 @@ async fn a_pool_with_no_ids_left_is_a_fault() {
     // The relation pool's counter, run out.
     let relations = Key::new((3u8, 1u8), 0u8);
     sequence.next(&relations, u64::MAX).await.unwrap();
-    let node = Node::new(Arc::new(MemoryTable::new()), sequence, DevClock::default());
-    let app = router(Arc::new(AppState::new(node)));
+    let app = app(Arc::new(MemoryTable::new()), sequence, DevClock::default());
     let (status, reply) = post(
         &app,
         "/namespaces/write",

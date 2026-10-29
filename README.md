@@ -36,7 +36,7 @@ Each context has its own readers, writers and shapes, over one key-value table a
 - `sungma-clock`: the revision clock, with NTP, NTS and platform clocks.
 - `sungma-lang`: namespace and fact documents: parsing and printing.
 - `sungma-node`: one node's contexts wired over one table.
-- `sungma-api`: the HTTP API, on axum.
+- `sungma-http`: what the HTTP services share. `sungma-check`, `sungma-read` and `sungma-write` each serve their context over HTTP, on axum, with the `server` feature.
 
 ## Docs
 
@@ -67,8 +67,13 @@ cargo +nightly fuzz run fact
 ### Run the check API
 
 ```sh
+scripts/dynamodb.sh
+export SUNGMA_DYNAMODB_URL=http://localhost:8000
 F=crates/sungma/tests/fixtures
-cargo run -p sungma-api -- $F/docs.facts.json $F/namespaces/*.json
+# The Write service creates the table and seeds it.
+cargo run -p sungma-write --features server -- $F/docs.facts.json $F/namespaces/*.json &
+# Once it listens:
+cargo run -p sungma-check --features server &
 
 curl -d '{"set": "file:design.md#viewer", "identity": "alice"}'   -H 'content-type: application/json' localhost:8080/check
 # {"request_id":"sungma-1","verdict":"allowed","zookie":{"revision":16}}

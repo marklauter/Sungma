@@ -26,6 +26,7 @@ sungma-check = { version = "0.1.0", path = "crates/sungma-check" }
 sungma-clock = { version = "0.1.0", path = "crates/sungma-clock" }
 sungma-table = { version = "0.1.0", path = "crates/sungma-table" }
 sungma-dynamodb = { version = "0.1.0", path = "crates/sungma-dynamodb" }
+sungma-http = { version = "0.1.0", path = "crates/sungma-http" }
 sungma-lang = { version = "0.1.0", path = "crates/sungma-lang" }
 sungma-node = { version = "0.1.0", path = "crates/sungma-node" }
 sungma-read = { version = "0.1.0", path = "crates/sungma-read" }
@@ -38,6 +39,12 @@ tower = "0.5.3"
 webpki-roots = "1.0.9"
 
 # cargo-mutants builds every mutant; debug info only slows those builds.
+# Line numbers in backtraces, without full debug info, and no incremental
+# state: both keep target/ small.
+[profile.dev]
+debug = "line-tables-only"
+incremental = false
+
 [profile.mutants]
 inherits = "test"
 debug = "none"
