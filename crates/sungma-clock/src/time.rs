@@ -165,7 +165,11 @@ impl TimeSource for ManualTime {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Mutex, thread, time::Duration};
+    use std::{
+        sync::Mutex,
+        thread,
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    };
 
     use super::*;
 
@@ -226,15 +230,34 @@ mod tests {
         assert_eq!(bracket(&time), moment(50, 0));
     }
 
+    fn nanos(elapsed: Duration) -> u64 {
+        u64::try_from(elapsed.as_nanos()).unwrap()
+    }
+
     #[test]
-    fn the_os_clocks_both_count_time_passing() {
-        let (wall, monotonic) = (OsTime.wall(), OsTime.monotonic());
-        thread::sleep(Duration::from_millis(20));
-        let walled = OsTime.wall() - wall;
-        let counted = OsTime.monotonic() - monotonic;
-        assert!((20_000_000..1_000_000_000).contains(&counted), "{counted}");
-        assert!(walled.abs_diff(counted) < 10_000_000, "{walled} {counted}");
-        assert!(OsTime.wall().abs_diff(wall::wall_nanos()) < 1_000_000_000);
+    fn the_os_system_clock_reads_between_the_readings_around_it() {
+        let since = || nanos(SystemTime::now().duration_since(UNIX_EPOCH).unwrap());
+        let before = since();
+        let wall = OsTime.wall();
+        let after = since();
+        assert!(before <= wall && wall <= after, "{before} {wall} {after}");
+    }
+
+    #[test]
+    fn the_os_monotonic_clock_counts_nanoseconds_passing() {
+        let outer = Instant::now();
+        let first = OsTime.monotonic();
+        let inner = Instant::now();
+        while inner.elapsed() < Duration::from_millis(1) {
+            thread::yield_now();
+        }
+        let within = inner.elapsed();
+        let counted = OsTime.monotonic() - first;
+        let around = outer.elapsed();
+        // It counted at least the time between its readings, and no more
+        // than the time around them.
+        assert!(nanos(within) <= counted, "{within:?} {counted}");
+        assert!(counted <= nanos(around), "{counted} {around:?}");
     }
 
     #[test]

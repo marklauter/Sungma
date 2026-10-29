@@ -5,9 +5,9 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     io::{self, Read, Write},
     net::{SocketAddr, TcpListener, UdpSocket},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, mpsc},
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use aes_siv::{
@@ -60,35 +60,50 @@ struct State {
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Exchange {
     Honest,
-    /// Trickles its response a byte every 50 ms.
-    Slow,
-    /// Trickles every TLS byte, the handshake's included, one every 20 ms,
-    /// so no TLS record is ever whole for long.
-    Trickle,
+    /// Sends the start of its response, then stalls.
+    Stalls,
+    /// Sends the first byte of its TLS handshake, then stalls, so no TLS
+    /// record is ever whole.
+    StallsTls,
     /// Streams more than 64 KiB of cookies.
     Flood,
 }
 
-/// A socket that writes one byte at a time, `delay` apart, when it has a
-/// delay.
-struct Trickling {
-    socket: std::net::TcpStream,
-    delay: Option<Duration>,
+/// Holds a stalled server until the test drops it, or for a minute at
+/// most, after which it goes on honestly: a client that waited that long
+/// gets its answer.
+fn stall(until: &mpsc::Receiver<()>) {
+    let _ = until.recv_timeout(Duration::from_secs(60));
 }
 
-impl Read for Trickling {
+/// A socket that, given a stall, writes one byte and holds every write
+/// after it until the stall ends.
+struct Stalling<'s> {
+    socket: std::net::TcpStream,
+    stall: Option<&'s mpsc::Receiver<()>>,
+    wrote: bool,
+}
+
+impl Read for Stalling<'_> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         self.socket.read(buffer)
     }
 }
 
-impl Write for Trickling {
+impl Write for Stalling<'_> {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        let Some(delay) = self.delay else {
-            return self.socket.write(buffer);
-        };
-        thread::sleep(delay);
-        self.socket.write(&buffer[..buffer.len().min(1)])
+        match self.stall {
+            Some(until) if self.wrote => {
+                stall(until);
+                self.stall = None;
+            }
+            Some(_) => {
+                self.wrote = true;
+                return self.socket.write(&buffer[..buffer.len().min(1)]);
+            }
+            None => {}
+        }
+        self.socket.write(buffer)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -96,11 +111,13 @@ impl Write for Trickling {
     }
 }
 
-/// An NTS server: a key exchange listener and an NTP socket.
+/// An NTS server: a key exchange listener and an NTP socket. A stalled key
+/// exchange ends when the server is dropped.
 struct NtsServer {
     host: &'static str,
     ke: SocketAddr,
     state: Arc<Mutex<State>>,
+    _stalled: mpsc::Sender<()>,
 }
 
 impl NtsServer {
@@ -218,15 +235,16 @@ fn serve_exchanging(
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let ke = listener.local_addr().unwrap();
     let shared = state.clone();
+    let (stalled, until) = mpsc::channel();
     thread::spawn(move || {
         for tcp in listener.incoming() {
             let connection = ServerConnection::new(config.clone()).unwrap();
-            let delay = (exchange == Exchange::Trickle).then_some(Duration::from_millis(20));
             let mut stream = StreamOwned::new(
                 connection,
-                Trickling {
+                Stalling {
                     socket: tcp.unwrap(),
-                    delay,
+                    stall: (exchange == Exchange::StallsTls).then_some(&until),
+                    wrote: false,
                 },
             );
             // The client's records end with the critical end record.
@@ -270,18 +288,11 @@ fn serve_exchanging(
                 }
             }
             response.extend(record(0x8000, &[]));
-            if exchange == Exchange::Slow {
-                for byte in response {
-                    if stream
-                        .write_all(&[byte])
-                        .and_then(|()| stream.flush())
-                        .is_err()
-                    {
-                        break;
-                    }
-                    thread::sleep(Duration::from_millis(50));
-                }
-                continue;
+            if exchange == Exchange::Stalls {
+                let (start, rest) = response.split_at(10);
+                let _ = stream.write_all(start).and_then(|()| stream.flush());
+                stall(&until);
+                response = rest.to_vec();
             }
             let _ = stream.write_all(&response);
             stream.conn.send_close_notify();
@@ -366,7 +377,12 @@ fn serve_exchanging(
             ntp.send_to(&packet, client).unwrap();
         }
     });
-    NtsServer { host, ke, state }
+    NtsServer {
+        host,
+        ke,
+        state,
+        _stalled: stalled,
+    }
 }
 
 /// NTS servers trusting only the test certificate, resolved to the
@@ -503,28 +519,16 @@ fn four_exchanging(exchange: Exchange) -> (Vec<NtsServer>, Vec<u8>) {
 }
 
 #[test]
-fn a_key_exchange_that_trickles_gives_up_at_its_deadline() {
-    let (nts, certificate) = four_exchanging(Exchange::Slow);
-    let started = Instant::now();
+fn a_key_exchange_that_stalls_gives_up_at_its_deadline() {
+    let (nts, certificate) = four_exchanging(Exchange::Stalls);
     let clock = NtpClock::sync(servers(&all(&nts), &certificate)).unwrap();
-    let took = started.elapsed();
-    assert!(
-        took >= Duration::from_secs(5) && took < Duration::from_secs(7),
-        "{took:?}"
-    );
     assert_eq!(clock.last_sync().unanswered, vec!["d.test".to_owned()]);
 }
 
 #[test]
-fn a_key_exchange_that_trickles_its_tls_bytes_gives_up_at_its_deadline() {
-    let (nts, certificate) = four_exchanging(Exchange::Trickle);
-    let started = Instant::now();
+fn a_key_exchange_that_stalls_its_tls_handshake_gives_up_at_its_deadline() {
+    let (nts, certificate) = four_exchanging(Exchange::StallsTls);
     let clock = NtpClock::sync(servers(&all(&nts), &certificate)).unwrap();
-    let took = started.elapsed();
-    assert!(
-        took >= Duration::from_secs(5) && took < Duration::from_secs(7),
-        "{took:?}"
-    );
     assert_eq!(clock.last_sync().unanswered, vec!["d.test".to_owned()]);
 }
 
@@ -583,6 +587,7 @@ fn a_failed_key_exchange_leaves_the_server_unanswered() {
         host: "d.test",
         ke: address,
         state: Arc::default(),
+        _stalled: mpsc::channel().0,
     };
     list[3] = &missing;
     let clock = NtpClock::sync(servers(&list, &certificate)).unwrap();

@@ -2,13 +2,17 @@
 //! loopback interface.
 
 use std::{
+    future::Future,
     net::{SocketAddr, UdpSocket},
+    pin::Pin,
     sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        Arc, Barrier, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc,
     },
+    task::{Context, Poll, Waker},
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use sungma::revision::Revision;
@@ -85,30 +89,58 @@ fn counting(answers: Vec<Answer>) -> (SocketAddr, Arc<AtomicUsize>) {
             let Some(answer) = answers.next() else {
                 continue;
             };
-            let sent = u64::from_be_bytes(request[40..48].try_into().unwrap());
-            let mut reply = [0; 48];
-            reply[0] = 0x24;
-            reply[1] = 2;
-            reply[8..12].copy_from_slice(&655u32.to_be_bytes());
-            reply[24..32].copy_from_slice(&request[40..48]);
-            let mut now = sent;
-            match answer {
-                Answer::Ahead(seconds) => {
-                    now = sent.wrapping_add_signed(i64::from(seconds) << 32);
-                }
-                Answer::Kiss(code) => {
-                    reply[0] = 0xe4;
-                    reply[1] = 0;
-                    reply[12..16].copy_from_slice(code);
-                }
-                Answer::Leap(indicator) => reply[0] |= indicator << 6,
-            }
-            reply[32..40].copy_from_slice(&now.to_be_bytes());
-            reply[40..48].copy_from_slice(&now.to_be_bytes());
-            socket.send_to(&reply, client).unwrap();
+            socket.send_to(&reply(&request, answer), client).unwrap();
         }
     });
     (address, asked)
+}
+
+/// The reply that gives `answer` to `request`, with a root dispersion of
+/// 10 ms.
+fn reply(request: &[u8; 48], answer: Answer) -> [u8; 48] {
+    let sent = u64::from_be_bytes(request[40..48].try_into().unwrap());
+    let mut reply = [0; 48];
+    reply[0] = 0x24;
+    reply[1] = 2;
+    reply[8..12].copy_from_slice(&655u32.to_be_bytes());
+    reply[24..32].copy_from_slice(&request[40..48]);
+    let mut now = sent;
+    match answer {
+        Answer::Ahead(seconds) => {
+            now = sent.wrapping_add_signed(i64::from(seconds) << 32);
+        }
+        Answer::Kiss(code) => {
+            reply[0] = 0xe4;
+            reply[1] = 0;
+            reply[12..16].copy_from_slice(code);
+        }
+        Answer::Leap(indicator) => reply[0] |= indicator << 6,
+    }
+    reply[32..40].copy_from_slice(&now.to_be_bytes());
+    reply[40..48].copy_from_slice(&now.to_be_bytes());
+    reply
+}
+
+/// Three servers in step with the client that each hold their answer until
+/// all three have been asked, so only a client that asks them at once
+/// hears from any of them.
+fn gathered() -> Vec<SocketAddr> {
+    let asked = Arc::new(Barrier::new(3));
+    (0..3)
+        .map(|_| {
+            let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+            let address = socket.local_addr().unwrap();
+            let asked = asked.clone();
+            thread::spawn(move || {
+                let mut request = [0; 48];
+                let (_, client) = socket.recv_from(&mut request).unwrap();
+                asked.wait();
+                let answer = reply(&request, Answer::Ahead(0));
+                socket.send_to(&answer, client).unwrap();
+            });
+            address
+        })
+        .collect()
 }
 
 fn asked(count: &AtomicUsize) -> usize {
@@ -132,8 +164,12 @@ fn silent() -> (UdpSocket, SocketAddr) {
     (socket, address)
 }
 
+/// The servers' root dispersion, 655/65536 s, in nanoseconds.
+const DISPERSION: u64 = 9_994_506;
+
 /// Whether `clock` reads true time as the system clock plus `ahead`
-/// seconds, within a bound of 10 ms plus the loopback round trip.
+/// seconds, within a bound of the servers' dispersion plus half the
+/// loopback round trip.
 fn reads_ahead(clock: &impl Clock, ahead: u64) {
     let before = wall() + ahead * SECOND;
     let now = clock.now().unwrap();
@@ -143,7 +179,7 @@ fn reads_ahead(clock: &impl Clock, ahead: u64) {
         "{now:?}"
     );
     let width = now.revision.0 - now.settled.0;
-    assert!((20_000_000..100_000_000).contains(&width), "{width}");
+    assert!(width >= 2 * DISPERSION, "{width}");
 }
 
 #[test]
@@ -164,32 +200,33 @@ async fn a_dev_clock_wait_moves_the_counter_past_the_revision() {
     assert_eq!(clock.now(), Ok(at(11, 11)));
 }
 
-#[tokio::test]
-async fn a_manual_clock_holds_a_wait_until_settled_passes() {
+/// Polls `wait` once, so a test sees whether it has ended without waiting.
+fn poll<T>(wait: Pin<&mut impl Future<Output = T>>) -> Poll<T> {
+    wait.poll(&mut Context::from_waker(Waker::noop()))
+}
+
+#[test]
+fn a_manual_clock_holds_a_wait_until_settled_passes() {
     let clock = ManualClock::new(at(5, 9));
     assert_eq!(clock.now(), Ok(at(5, 9)));
     let wait = clock.wait(at(5, 9));
     tokio::pin!(wait);
-    assert!(timeout(Duration::from_millis(20), &mut wait).await.is_err());
+    assert!(poll(wait.as_mut()).is_pending());
     clock.set(at(9, 13));
     assert_eq!(clock.now(), Ok(at(9, 13)));
-    assert!(timeout(Duration::from_millis(20), &mut wait).await.is_err());
+    assert!(poll(wait.as_mut()).is_pending());
     clock.set(at(10, 14));
-    timeout(Duration::from_secs(1), wait)
-        .await
-        .unwrap()
-        .unwrap();
+    assert_eq!(poll(wait), Poll::Ready(Ok(())));
 }
 
-#[tokio::test]
-async fn a_manual_fault_ends_a_wait_and_every_reading() {
+#[test]
+fn a_manual_fault_ends_a_wait_and_every_reading() {
     let clock = ManualClock::new(at(5, 9));
     let wait = clock.wait(at(5, 9));
     tokio::pin!(wait);
-    assert!(timeout(Duration::from_millis(20), &mut wait).await.is_err());
+    assert!(poll(wait.as_mut()).is_pending());
     clock.fault(ClockFault::Drifted);
-    let ended = timeout(Duration::from_secs(1), wait).await.unwrap();
-    assert_eq!(ended, Err(ClockFault::Drifted));
+    assert_eq!(poll(wait), Poll::Ready(Err(ClockFault::Drifted)));
     assert_eq!(clock.now(), Err(ClockFault::Drifted));
     clock.set(at(5, 9));
     assert_eq!(clock.now(), Ok(at(5, 9)));
@@ -347,6 +384,10 @@ fn an_ntp_clock_reads_its_time_source() {
     };
     // NTP's fixed-point timestamps cost up to a nanosecond.
     assert!(reading(&clock).abs_diff(start + 3 * SECOND) <= 1);
+    // Time stood still through the sync, so no round trip widens the bound
+    // past the servers' dispersion.
+    let now = clock.now().unwrap();
+    assert_eq!(now.revision.0 - now.settled.0, 2 * DISPERSION);
     time.advance(Duration::from_secs(1));
     assert!(reading(&clock).abs_diff(start + 4 * SECOND) <= 1);
 }
@@ -457,14 +498,11 @@ fn two_wrong_servers_of_four_fail_the_sync() {
 
 #[test]
 fn a_sync_asks_every_server_at_once() {
-    let quiet: Vec<_> = (0..3).map(|_| silent()).collect();
-    let good = counting_trio(vec![Answer::Ahead(0)]);
-    let servers = quiet.iter().map(|(_, address)| *address).chain(good);
-    let started = Instant::now();
-    let clock = NtpClock::sync(Servers::new(servers)).unwrap();
-    // One timeout for all three silent servers, not one each.
-    assert!(started.elapsed() < Duration::from_millis(1_500));
-    assert_eq!(clock.last_sync().unanswered.len(), 3);
+    // Asked one after another, the first would wait out its timeout for
+    // the others, and the sync would have one answer.
+    let clock = NtpClock::sync(Servers::new(gathered())).unwrap();
+    assert!(clock.last_sync().unanswered.is_empty());
+    reads_ahead(&clock, 0);
 }
 
 #[test]
@@ -745,54 +783,39 @@ fn an_address_that_refuses_gives_way_to_the_next() {
         let at = usize::from(name.as_bytes()[0] - b'a');
         Ok(vec![refusing, good[at]])
     });
-    let started = Instant::now();
     let clock = NtpClock::sync(servers).unwrap();
     assert!(clock.last_sync().unanswered.is_empty());
-    assert!(started.elapsed() < Duration::from_millis(900));
 }
 
 #[test]
 fn a_slow_resolver_leaves_its_server_unanswered_in_time() {
     let good = counting_trio(vec![Answer::Ahead(0)]);
     let names = ["a.test:123", "b.test:123", "c.test:123", "slow.test:123"];
+    // The slow lookup holds until the test lets it go, or for a minute
+    // should the sync wait on it.
+    let (release, released) = mpsc::channel::<()>();
+    let released = Mutex::new(released);
+    let finished = Arc::new(AtomicBool::new(false));
+    let done = finished.clone();
     let servers = Servers::new(names).resolving_with(move |name: &str| {
         if name == "slow.test:123" {
-            thread::sleep(Duration::from_secs(3));
+            let _ = released
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(60));
+            done.store(true, Ordering::SeqCst);
         }
         let at = usize::from(name.as_bytes()[0] - b'a') % 3;
         Ok(vec![good[at]])
     });
-    let started = Instant::now();
     let clock = NtpClock::sync(servers).unwrap();
+    // The sync ended while the lookup was still running.
+    assert!(!finished.load(Ordering::SeqCst));
     assert_eq!(
         clock.last_sync().unanswered,
         vec!["slow.test:123".to_owned()]
     );
-    assert!(started.elapsed() < Duration::from_millis(1_500));
-}
-
-#[test]
-fn the_last_address_waits_out_the_time_left() {
-    let good = counting_trio(vec![Answer::Ahead(0)]);
-    let (_first, first) = silent();
-    let (_second, second) = silent();
-    let names = ["a.test:123", "b.test:123", "c.test:123", "quiet.test:123"];
-    let servers = Servers::new(names).resolving_with(move |name: &str| {
-        if name == "quiet.test:123" {
-            return Ok(vec![first, second]);
-        }
-        let at = usize::from(name.as_bytes()[0] - b'a');
-        Ok(vec![good[at]])
-    });
-    let started = Instant::now();
-    let clock = NtpClock::sync(servers).unwrap();
-    assert_eq!(
-        clock.last_sync().unanswered,
-        vec!["quiet.test:123".to_owned()]
-    );
-    // Half the second on each silent address, the second's half all that's
-    // left, not a third of it.
-    assert!(started.elapsed() >= Duration::from_millis(900));
+    drop(release);
 }
 
 #[test]
@@ -804,9 +827,7 @@ fn a_silent_address_gives_the_next_its_share_of_the_time() {
         let at = usize::from(name.as_bytes()[0] - b'a');
         Ok(vec![silent_address, good[at]])
     });
-    let started = Instant::now();
+    // Half the second waiting on the silent address, then the good one.
     let clock = NtpClock::sync(servers).unwrap();
     assert!(clock.last_sync().unanswered.is_empty());
-    // Half the second waiting on the silent address, then the good one.
-    assert!(started.elapsed() < Duration::from_millis(900));
 }

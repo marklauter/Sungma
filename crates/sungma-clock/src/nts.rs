@@ -214,37 +214,49 @@ pub(crate) fn exported(
     Ok(Aes128SivAead::new(&key))
 }
 
-/// A socket that gives up at a deadline, however the bytes trickle. TLS
-/// reads and writes it as often as a record needs, and every one of those
-/// gets only the time left.
-struct Deadline {
-    socket: TcpStream,
-    started: Instant,
+/// A stream whose reads and writes give up after a timeout.
+trait Timeouts: Read + Write {
+    fn set_timeouts(&self, timeout: Duration) -> io::Result<()>;
 }
 
-impl Deadline {
+impl Timeouts for TcpStream {
+    fn set_timeouts(&self, timeout: Duration) -> io::Result<()> {
+        self.set_read_timeout(Some(timeout))?;
+        self.set_write_timeout(Some(timeout))
+    }
+}
+
+/// A socket that gives up at a deadline, however the bytes trickle. TLS
+/// reads and writes it as often as a record needs, and every one of those
+/// gets only the time left, as `now` reads the time.
+struct Deadline<S, N> {
+    socket: S,
+    until: Instant,
+    now: N,
+}
+
+impl<S: Timeouts, N: Fn() -> Instant> Deadline<S, N> {
     /// Sets the socket's timeouts to the time left, or fails once none is.
     fn remaining(&self) -> io::Result<()> {
-        let left = KE_DEADLINE.saturating_sub(self.started.elapsed());
+        let left = self.until.saturating_duration_since((self.now)());
         if left.is_zero() {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 "the key exchange took too long",
             ));
         }
-        self.socket.set_read_timeout(Some(left))?;
-        self.socket.set_write_timeout(Some(left))
+        self.socket.set_timeouts(left)
     }
 }
 
-impl Read for Deadline {
+impl<S: Timeouts, N: Fn() -> Instant> Read for Deadline<S, N> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         self.remaining()?;
         self.socket.read(buffer)
     }
 }
 
-impl Write for Deadline {
+impl<S: Timeouts, N: Fn() -> Instant> Write for Deadline<S, N> {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         self.remaining()?;
         self.socket.write(buffer)
@@ -260,19 +272,25 @@ impl Write for Deadline {
 /// `deadline`. Each gets an equal share of the time left, the last all of
 /// it, so an address that drops packets can't starve a working one.
 fn connect(addresses: &[SocketAddr], deadline: Instant) -> Result<TcpStream, ClockError> {
-    first(addresses, deadline, TcpStream::connect_timeout)
+    first(
+        addresses,
+        deadline,
+        Instant::now,
+        TcpStream::connect_timeout,
+    )
 }
 
 /// The first of `addresses` that `attempt` succeeds with, given each its
-/// share of the time left before `deadline`.
+/// share of the time left before `deadline`, as `now` reads the time.
 fn first<T>(
     addresses: &[SocketAddr],
     deadline: Instant,
+    now: impl Fn() -> Instant,
     mut attempt: impl FnMut(&SocketAddr, Duration) -> io::Result<T>,
 ) -> Result<T, ClockError> {
     let mut failed = ClockError::NoServers;
     for (at, address) in addresses.iter().enumerate() {
-        let left = deadline.saturating_duration_since(Instant::now());
+        let left = deadline.saturating_duration_since(now());
         if left.is_zero() {
             break;
         }
@@ -294,12 +312,16 @@ pub(crate) fn exchange(
     // A name that can't be valid fails before it costs a lookup.
     let name =
         ServerName::try_from(host.to_owned()).map_err(|_| NtsError::HostName(host.to_owned()))?;
-    let started = Instant::now();
-    let deadline = started + KE_DEADLINE;
+    let deadline = Instant::now() + KE_DEADLINE;
     let addresses = lookups.resolve_by(&format!("{host}:{KE_PORT}"), deadline)?;
     let socket = connect(&addresses, deadline)?;
     let connection = ClientConnection::new(tls.clone(), name).map_err(NtsError::Tls)?;
-    let mut stream = StreamOwned::new(connection, Deadline { socket, started });
+    let timed = Deadline {
+        socket,
+        until: deadline,
+        now: Instant::now,
+    };
+    let mut stream = StreamOwned::new(connection, timed);
     let negotiated = negotiate(&mut stream).map_err(tls_failure)?;
     let export = |direction| {
         exported(
@@ -552,6 +574,8 @@ pub fn fuzz_verify(data: &[u8]) {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::{Cell, RefCell};
+
     use super::*;
 
     fn cipher(byte: u8) -> Aes128SivAead {
@@ -895,20 +919,101 @@ mod tests {
             "192.0.2.2:4460".parse().unwrap(),
         ];
         let mut given = Vec::new();
+        let now = Instant::now();
         let failed = first(
             &addresses,
-            Instant::now() + Duration::from_secs(10),
+            now + Duration::from_secs(10),
+            || now,
             |_, share| {
                 given.push(share);
                 Err::<(), _>(io::ErrorKind::ConnectionRefused.into())
             },
         );
         assert!(failed.is_err());
-        let secs: Vec<_> = given
+        assert_eq!(given, [Duration::from_secs(5), Duration::from_secs(10)]);
+        // A deadline already passed tries no address.
+        let late = first(&addresses, now, || now, |_, _| Ok(()));
+        assert!(matches!(late, Err(ClockError::NoServers)));
+    }
+
+    /// A stream on a clock that moves a second with every read, write and
+    /// flush, noting each timeout it is given.
+    struct Trickle {
+        start: Instant,
+        passed: Cell<Duration>,
+        timeouts: RefCell<Vec<Duration>>,
+    }
+
+    impl Trickle {
+        fn now(&self) -> Instant {
+            self.start + self.passed.get()
+        }
+
+        fn tick(&self) {
+            self.passed.set(self.passed.get() + Duration::from_secs(1));
+        }
+    }
+
+    impl Timeouts for &Trickle {
+        fn set_timeouts(&self, timeout: Duration) -> io::Result<()> {
+            self.timeouts.borrow_mut().push(timeout);
+            Ok(())
+        }
+    }
+
+    impl Read for &Trickle {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            self.tick();
+            buffer[0] = 7;
+            Ok(1)
+        }
+    }
+
+    impl Write for &Trickle {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            self.tick();
+            Ok(1)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.tick();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_key_exchange_that_trickles_gives_up_at_its_deadline() {
+        let trickle = Trickle {
+            start: Instant::now(),
+            passed: Cell::new(Duration::ZERO),
+            timeouts: RefCell::default(),
+        };
+        let mut timed = Deadline {
+            socket: &trickle,
+            until: trickle.start + KE_DEADLINE,
+            now: || trickle.now(),
+        };
+        // A byte a second: each step gets only the time left, so the steps
+        // stop at the deadline however quickly each one came.
+        let mut byte = [0];
+        assert_eq!(timed.read(&mut byte).unwrap(), 1);
+        assert_eq!(byte, [7]);
+        assert_eq!(timed.write(&[1]).unwrap(), 1);
+        timed.flush().unwrap();
+        assert_eq!(timed.read(&mut byte).unwrap(), 1);
+        timed.flush().unwrap();
+        let seconds: Vec<_> = trickle
+            .timeouts
+            .borrow()
             .iter()
-            .map(|share| share.as_secs_f64().round())
+            .map(Duration::as_secs)
             .collect();
-        assert_eq!(secs, [5.0, 10.0]);
+        assert_eq!(seconds, [5, 4, 3, 2, 1]);
+        let timed_out = |failed: io::Error| failed.kind() == io::ErrorKind::TimedOut;
+        assert!(timed_out(timed.read(&mut byte).unwrap_err()));
+        assert!(timed_out(timed.write(&[1]).unwrap_err()));
+        assert!(timed_out(timed.flush().unwrap_err()));
+        assert_eq!(trickle.timeouts.borrow().len(), 5);
     }
 
     #[test]

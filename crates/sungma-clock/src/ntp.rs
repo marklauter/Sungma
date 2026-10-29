@@ -466,21 +466,40 @@ impl Answer {
     }
 }
 
-/// A UDP socket connected to `server`, reading until `deadline`.
-fn connected(server: SocketAddr, deadline: Instant) -> Result<UdpSocket, ClockError> {
+/// A connected socket that [`ask`] sends a request on and reads replies
+/// from.
+trait Datagrams {
+    fn send(&self, packet: &[u8]) -> io::Result<usize>;
+
+    /// Reads one datagram into `reply`, waiting at most `wait`.
+    fn recv_within(&self, reply: &mut [u8], wait: Duration) -> io::Result<usize>;
+}
+
+impl Datagrams for UdpSocket {
+    fn send(&self, packet: &[u8]) -> io::Result<usize> {
+        UdpSocket::send(self, packet)
+    }
+
+    fn recv_within(&self, reply: &mut [u8], wait: Duration) -> io::Result<usize> {
+        self.set_read_timeout(Some(wait))?;
+        self.recv(reply)
+    }
+}
+
+/// A UDP socket connected to `server`.
+fn connected(server: SocketAddr) -> io::Result<UdpSocket> {
     let local: SocketAddr = match server {
         SocketAddr::V4(_) => (Ipv4Addr::UNSPECIFIED, 0).into(),
         SocketAddr::V6(_) => (Ipv6Addr::UNSPECIFIED, 0).into(),
     };
     let socket = UdpSocket::bind(local)?;
     socket.connect(server)?;
-    socket.set_read_timeout(Some(left(deadline)?))?;
     Ok(socket)
 }
 
-/// The time left until `deadline`, or a timeout once none is.
-fn left(deadline: Instant) -> io::Result<Duration> {
-    let left = deadline.saturating_duration_since(Instant::now());
+/// The time left from `now` until `deadline`, or a timeout once none is.
+fn left(deadline: Instant, now: Instant) -> io::Result<Duration> {
+    let left = deadline.saturating_duration_since(now);
     if left.is_zero() {
         return Err(io::Error::new(
             io::ErrorKind::TimedOut,
@@ -490,24 +509,28 @@ fn left(deadline: Instant) -> io::Result<Duration> {
     Ok(left)
 }
 
-/// Sends `packet` to each of `addresses` in turn, until one answers in a
-/// way `accept` takes, all by `deadline`. Each address gets an equal share
-/// of the time left, the last all of it, so a silent address can't starve
-/// a working one; one that refuses gives way at once. Packets `accept`
-/// passes over, such as a late reply to an earlier request, are skipped.
-fn ask<R>(
+/// Sends `packet` to each of `addresses` in turn, on the socket `connect`
+/// gives, until one answers in a way `accept` takes, all by `deadline` as
+/// `now` reads the time. Each address gets an equal share of the time
+/// left, the last all of it, so a silent address can't starve a working
+/// one; one that refuses gives way at once. Packets `accept` passes over,
+/// such as a late reply to an earlier request, are skipped.
+fn ask<S: Datagrams, R>(
     addresses: &[SocketAddr],
     deadline: Instant,
+    now: impl Fn() -> Instant,
+    mut connect: impl FnMut(SocketAddr) -> io::Result<S>,
     mut packet: impl FnMut() -> Vec<u8>,
     mut accept: impl FnMut(&[u8]) -> Option<Result<R, ClockError>>,
 ) -> Result<R, ClockError> {
     let mut failed = ClockError::NoServers;
     'addresses: for (at, &address) in addresses.iter().enumerate() {
-        let until = Instant::now() + share(left(deadline)?, addresses.len() - at);
-        let socket = match connected(address, until) {
+        let started = now();
+        let until = started + share(left(deadline, started)?, addresses.len() - at);
+        let socket = match connect(address) {
             Ok(socket) => socket,
             Err(error) => {
-                failed = error;
+                failed = error.into();
                 continue;
             }
         };
@@ -516,16 +539,15 @@ fn ask<R>(
             continue;
         }
         loop {
-            let wait = match left(until) {
+            let wait = match left(until, now()) {
                 Ok(wait) => wait,
                 Err(error) => {
                     failed = error.into();
                     continue 'addresses;
                 }
             };
-            socket.set_read_timeout(Some(wait))?;
             let mut reply = [0; REPLY];
-            match socket.recv(&mut reply) {
+            match socket.recv_within(&mut reply, wait) {
                 Ok(length) => {
                     if let Some(result) = accept(&reply[..length]) {
                         return result;
@@ -554,10 +576,17 @@ fn query(server: &str, lookups: &Lookups, time: &impl TimeSource) -> Result<Answ
         sent.set(time.wall());
         request(sent.get()).to_vec()
     };
-    ask(&addresses, deadline, packet, |reply| {
-        let measured = answer(reply, sent.get(), time.wall());
-        Some(measured.map(|answer| answer.at(time.monotonic())))
-    })
+    ask(
+        &addresses,
+        deadline,
+        Instant::now,
+        connected,
+        packet,
+        |reply| {
+            let measured = answer(reply, sent.get(), time.wall());
+            Some(measured.map(|answer| answer.at(time.monotonic())))
+        },
+    )
 }
 
 /// Asks an NTS server, running a key exchange first when its association
@@ -598,6 +627,8 @@ fn ask_nts(
     let result = ask(
         &addresses,
         deadline,
+        Instant::now,
+        connected,
         || packet.clone(),
         |reply| {
             if let Some(header) = association.verify(reply, &unique) {
@@ -755,6 +786,8 @@ fn intersect(samples: &[Sample]) -> Result<Sample, ClockError> {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
     use proptest::{collection::vec, prelude::*};
 
     use super::*;
@@ -991,6 +1024,195 @@ mod tests {
         assert_eq!(share(second, 4), Duration::from_millis(250));
         assert_eq!(share(second, 1), second);
         assert_eq!(share(second, 0), second);
+    }
+
+    /// How a simulated address treats a request, by its port.
+    const SILENT: u16 = 1;
+    const REFUSES: u16 = 2;
+    const ANSWERS: u16 = 3;
+    const UNREACHABLE: u16 = 4;
+    const UNSENDABLE: u16 = 5;
+
+    /// Addresses [`ask`] reaches by their port, on a clock that moves only
+    /// while an address keeps it waiting. It notes each wait it is given.
+    struct Simulation {
+        start: Instant,
+        passed: Cell<Duration>,
+        waits: RefCell<Vec<(u16, Duration)>>,
+    }
+
+    impl Simulation {
+        fn new() -> Self {
+            Self {
+                start: Instant::now(),
+                passed: Cell::new(Duration::ZERO),
+                waits: RefCell::default(),
+            }
+        }
+
+        fn now(&self) -> Instant {
+            self.start + self.passed.get()
+        }
+
+        fn pass(&self, by: Duration) {
+            self.passed.set(self.passed.get() + by);
+        }
+
+        fn waits(&self) -> Vec<(u16, Duration)> {
+            self.waits.borrow().clone()
+        }
+
+        /// Asks the addresses at `ports`, by a deadline a second from the
+        /// start, for a reply `accept` takes.
+        fn ask(
+            &self,
+            ports: &[u16],
+            accept: impl FnMut(&[u8]) -> Option<Result<u8, ClockError>>,
+        ) -> Result<u8, ClockError> {
+            let addresses: Vec<_> = ports
+                .iter()
+                .map(|&port| SocketAddr::from(([192, 0, 2, 1], port)))
+                .collect();
+            let connect = |address: SocketAddr| {
+                if address.port() == UNREACHABLE {
+                    return Err(io::ErrorKind::NetworkUnreachable.into());
+                }
+                Ok(Simulated {
+                    simulation: self,
+                    port: address.port(),
+                    replies: Cell::new(0),
+                })
+            };
+            let deadline = self.start + Duration::from_secs(1);
+            ask(
+                &addresses,
+                deadline,
+                || self.now(),
+                connect,
+                Vec::new,
+                accept,
+            )
+        }
+    }
+
+    /// A socket to a simulated address.
+    struct Simulated<'s> {
+        simulation: &'s Simulation,
+        port: u16,
+        replies: Cell<u8>,
+    }
+
+    impl Datagrams for Simulated<'_> {
+        fn send(&self, packet: &[u8]) -> io::Result<usize> {
+            if self.port == UNSENDABLE {
+                return Err(io::ErrorKind::BrokenPipe.into());
+            }
+            Ok(packet.len())
+        }
+
+        fn recv_within(&self, reply: &mut [u8], wait: Duration) -> io::Result<usize> {
+            self.simulation.waits.borrow_mut().push((self.port, wait));
+            match self.port {
+                ANSWERS => {
+                    // Each reply takes 100 ms to come, and carries its number.
+                    self.simulation.pass(Duration::from_millis(100));
+                    reply[0] = self.replies.get();
+                    self.replies.set(reply[0] + 1);
+                    Ok(1)
+                }
+                REFUSES => Err(io::ErrorKind::ConnectionRefused.into()),
+                _ => {
+                    self.simulation.pass(wait);
+                    Err(io::ErrorKind::TimedOut.into())
+                }
+            }
+        }
+    }
+
+    fn first(reply: &[u8]) -> Option<Result<u8, ClockError>> {
+        Some(Ok(reply[0]))
+    }
+
+    fn timed_out(asked: Result<u8, ClockError>) -> bool {
+        matches!(asked, Err(ClockError::Io(failed)) if failed.kind() == io::ErrorKind::TimedOut)
+    }
+
+    fn ms(millis: u64) -> Duration {
+        Duration::from_millis(millis)
+    }
+
+    #[test]
+    fn a_silent_address_gives_the_next_its_share_of_the_time() {
+        let simulation = Simulation::new();
+        assert_eq!(simulation.ask(&[SILENT, ANSWERS], first).unwrap(), 0);
+        assert_eq!(simulation.waits(), [(SILENT, ms(500)), (ANSWERS, ms(500))]);
+    }
+
+    #[test]
+    fn the_last_address_waits_out_the_time_left() {
+        let simulation = Simulation::new();
+        assert!(timed_out(simulation.ask(&[SILENT, SILENT, SILENT], first)));
+        let third = Duration::from_nanos(333_333_333);
+        let rest = Duration::from_nanos(333_333_334);
+        assert_eq!(
+            simulation.waits(),
+            [(SILENT, third), (SILENT, third), (SILENT, rest)]
+        );
+    }
+
+    #[test]
+    fn an_address_that_refuses_gives_way_at_once() {
+        let simulation = Simulation::new();
+        assert_eq!(simulation.ask(&[REFUSES, ANSWERS], first).unwrap(), 0);
+        // The refusal took none of the time, so the next has all of it.
+        assert_eq!(
+            simulation.waits(),
+            [(REFUSES, ms(500)), (ANSWERS, ms(1_000))]
+        );
+    }
+
+    #[test]
+    fn an_address_that_cant_be_reached_or_sent_to_gives_way() {
+        let simulation = Simulation::new();
+        let ports = [UNREACHABLE, UNSENDABLE, ANSWERS];
+        assert_eq!(simulation.ask(&ports, first).unwrap(), 0);
+        assert_eq!(simulation.waits(), [(ANSWERS, ms(1_000))]);
+        let failed = Simulation::new().ask(&[UNSENDABLE], first);
+        assert!(
+            matches!(failed, Err(ClockError::Io(failed)) if failed.kind() == io::ErrorKind::BrokenPipe)
+        );
+    }
+
+    #[test]
+    fn a_reply_passed_over_leaves_the_time_left_for_the_next() {
+        let simulation = Simulation::new();
+        let after_the_first = |reply: &[u8]| (reply[0] > 0).then_some(Ok(reply[0]));
+        assert_eq!(simulation.ask(&[ANSWERS], after_the_first).unwrap(), 1);
+        assert_eq!(
+            simulation.waits(),
+            [(ANSWERS, ms(1_000)), (ANSWERS, ms(900))]
+        );
+    }
+
+    #[test]
+    fn replies_passed_over_are_read_until_the_time_is_up() {
+        let simulation = Simulation::new();
+        assert!(timed_out(simulation.ask(&[ANSWERS], |_| None)));
+        let waits: Vec<_> = (1..=10)
+            .rev()
+            .map(|tenths| (ANSWERS, ms(tenths * 100)))
+            .collect();
+        assert_eq!(simulation.waits(), waits);
+    }
+
+    #[test]
+    fn a_passed_deadline_asks_no_address() {
+        let simulation = Simulation::new();
+        simulation.pass(Duration::from_secs(1));
+        assert!(timed_out(simulation.ask(&[ANSWERS], first)));
+        assert!(simulation.waits().is_empty());
+        let none = Simulation::new().ask(&[], first);
+        assert!(matches!(none, Err(ClockError::NoServers)));
     }
 
     #[test]

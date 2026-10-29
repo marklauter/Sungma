@@ -1,6 +1,10 @@
 //! Namespaces are checked whole when declared.
 
-use std::time::{Duration, Instant};
+use std::{
+    cell::Cell,
+    fmt::{self, Display, Formatter},
+    hash::{Hash, Hasher},
+};
 
 use sungma::{
     id::{NamespaceId, RelationId},
@@ -239,11 +243,65 @@ fn a_namespace_built_with_a_relation_twice_is_refused() {
     );
 }
 
-/// Whether work since `start` stayed under a bound that only quadratic
-/// work, or worse, would pass. Only a release build is timed: a debug build
-/// on a slow runner can be ten times slower.
-fn quick(start: Instant) -> bool {
-    cfg!(debug_assertions) || start.elapsed() < Duration::from_secs(5)
+thread_local! {
+    /// The steps [`Counted`] relations have taken on this thread, and the
+    /// most they may take.
+    static STEPS: Cell<(usize, usize)> = const { Cell::new((0, usize::MAX)) };
+}
+
+/// A relation that counts each hash, comparison, clone and display of it as
+/// a step, so a test bounds the work a check does by counting it rather
+/// than timing it.
+#[derive(Debug)]
+struct Counted(usize);
+
+impl Counted {
+    fn step() {
+        let (taken, most) = STEPS.get();
+        assert!(taken < most, "more than {most} steps");
+        STEPS.set((taken + 1, most));
+    }
+}
+
+impl Hash for Counted {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Self::step();
+        self.0.hash(state);
+    }
+}
+
+impl PartialEq for Counted {
+    fn eq(&self, other: &Self) -> bool {
+        Self::step();
+        self.0 == other.0
+    }
+}
+
+impl Eq for Counted {}
+
+impl Clone for Counted {
+    fn clone(&self) -> Self {
+        Self::step();
+        Self(self.0)
+    }
+}
+
+impl Display for Counted {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        Self::step();
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Runs `work` on `relations` relations, failing as soon as it takes more
+/// than 20 steps for each. A check takes about a dozen for each, its hash
+/// maps' probes and growth included; quadratic work, or worse, takes about
+/// one for each pair.
+fn linear<T>(relations: usize, work: impl FnOnce() -> T) -> T {
+    STEPS.set((0, 20 * relations));
+    let result = work();
+    STEPS.set((0, usize::MAX));
+    result
 }
 
 /// A namespace built in code bypasses the document limits, so its checks must
@@ -256,23 +314,21 @@ fn a_long_chain_built_in_code_is_checked_without_a_crash() {
             let rewrite = if i + 1 == count {
                 This
             } else {
-                Computed(i + 1)
+                Computed(Counted(i + 1))
             };
-            (i, rewrite)
+            (Counted(i), rewrite)
         })
         .collect();
-    let start = Instant::now();
-    assert!(Namespace::new(chain).is_ok());
-    assert!(quick(start));
+    assert!(linear(count, || Namespace::new(chain)).is_ok());
 }
 
 #[test]
 fn a_large_cycle_built_in_code_is_one_problem() {
     let count = 100_000;
-    let ring: Vec<_> = (0..count).map(|i| (i, Computed((i + 1) % count))).collect();
-    let start = Instant::now();
-    let problems = Namespace::new(ring).unwrap_err();
-    assert!(quick(start));
+    let ring: Vec<_> = (0..count)
+        .map(|i| (Counted(i), Computed(Counted((i + 1) % count))))
+        .collect();
+    let problems = linear(count, || Namespace::new(ring)).unwrap_err();
     let [
         Problem {
             at: 0,
