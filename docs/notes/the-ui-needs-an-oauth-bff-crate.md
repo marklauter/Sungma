@@ -35,10 +35,17 @@ No Rust crate covers the whole BFF, as Duende's BFF library does for .NET. Sungm
 
 - The crate lives with the other libraries and is held to their bar: its own tests catch its own mutants, as for a library published on crates.io.
 - It's security code. Its tests cover a tampered or missing cookie, an expired token refreshed before a call, a failed refresh signing the user out, a state-changing request without the header, and a stolen authorization code that PKCE refuses.
+- Its tests run against a fake identity provider in its test kit: a small axum app on a random port, serving the endpoints the BFF calls.
+  1. Discovery, `/.well-known/openid-configuration`, pointing at the others.
+  2. The signing keys, the public half of a test key.
+  3. Authorize, which redirects straight back with a code, with no sign-in page.
+  4. Token, which checks the PKCE verifier and trades a code or a refresh token for tokens signed with the test key.
+  5. End session, for sign-out.
+
+  Each test sets how the fake misbehaves: an expired token, a signature from the wrong key, a refused refresh. No identity provider runs outside the tests, so the crate owns its tests and its mutants run without a container.
 - Read and Write check the access token the BFF forwards. That's roadmap item 15, authentication and authorization of Sungma's own callers; see [[check-takes-a-caller-token-and-a-subject-token]].
 
 ## Open
 
-1. **The identity provider for development,** one that runs locally, such as Keycloak, so tests don't need a hosted provider.
-2. **The session store** past one BFF instance: Redis, or the table.
-3. **Templates:** maud or askama.
+1. **The session store** past one BFF instance: Redis, or the table.
+2. **Templates:** maud or askama.
