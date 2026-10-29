@@ -20,7 +20,7 @@ Sungma is a set of Rust services over one table. [c4-containers.excalidraw](c4/c
 - **Audit**: listens for Watch events; the audit log, replay and a UI.
 - **Table**: facts, namespace versions and names, by key.
 
-Check, Read and Write exist today, in one service, `sungma-api`, over HTTP. Read reads by subjectset only. The [roadmap](roadmap.md) lists the rest.
+Check, Read and Write exist today, as the services `sungma-check`, `sungma-read` and `sungma-write`, over HTTP. Read reads by subjectset only. The [roadmap](roadmap.md) lists the rest.
 
 ## Inside a service
 

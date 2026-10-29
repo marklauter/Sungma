@@ -1860,36 +1860,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "sungma-api"
+name = "sungma-check"
 version = "0.1.0"
 dependencies = [
  "axum",
  "http-body-util",
+ "parking_lot",
+ "proptest",
  "serde",
  "serde_json",
  "sungma",
  "sungma-check",
  "sungma-clock",
  "sungma-dynamodb",
- "sungma-lang",
- "sungma-names",
- "sungma-node",
- "sungma-read",
- "sungma-table",
- "sungma-write",
- "thiserror",
- "tokio",
- "tower",
-]
-
-[[package]]
-name = "sungma-check"
-version = "0.1.0"
-dependencies = [
- "parking_lot",
- "proptest",
- "sungma",
- "sungma-clock",
+ "sungma-http",
  "sungma-lang",
  "sungma-names",
  "sungma-node",
@@ -1898,6 +1882,7 @@ dependencies = [
  "sungma-write",
  "thiserror",
  "tokio",
+ "tower",
 ]
 
 [[package]]
@@ -1928,6 +1913,19 @@ dependencies = [
  "sungma-table",
  "sungma-write",
  "tokio",
+]
+
+[[package]]
+name = "sungma-http"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "sungma",
+ "tokio",
+ "tower",
 ]
 
 [[package]]
@@ -1980,15 +1978,24 @@ dependencies = [
 name = "sungma-read"
 version = "0.1.0"
 dependencies = [
+ "axum",
+ "http-body-util",
+ "serde",
+ "serde_json",
  "sungma",
  "sungma-clock",
+ "sungma-dynamodb",
+ "sungma-http",
  "sungma-lang",
  "sungma-names",
+ "sungma-node",
+ "sungma-read",
  "sungma-schema",
  "sungma-table",
  "sungma-write",
  "thiserror",
  "tokio",
+ "tower",
 ]
 
 [[package]]
@@ -2015,19 +2022,27 @@ dependencies = [
 name = "sungma-write"
 version = "0.1.0"
 dependencies = [
+ "axum",
+ "http-body-util",
  "parking_lot",
  "proptest",
+ "serde",
+ "serde_json",
  "sungma",
  "sungma-check",
  "sungma-clock",
+ "sungma-dynamodb",
+ "sungma-http",
  "sungma-lang",
  "sungma-names",
  "sungma-node",
+ "sungma-read",
  "sungma-schema",
  "sungma-table",
  "sungma-write",
  "thiserror",
  "tokio",
+ "tower",
 ]
 
 [[package]]

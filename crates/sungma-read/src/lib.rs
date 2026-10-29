@@ -3,8 +3,13 @@
 //! rule every reader applies: a fact counts only when its namespace's
 //! version at the read declares its relation and the fact was written at
 //! or after the relation's epoch. See `docs/specs/one-timeline.md`.
+//!
+//! The `http` feature adds the Read service's routes, in `http`, and the
+//! `server` feature its binary, `sungma-read`.
 
 pub mod facts;
+#[cfg(feature = "http")]
+pub mod http;
 pub mod namespaces;
 
 use sungma::{revision::Revision, store::StoreError};

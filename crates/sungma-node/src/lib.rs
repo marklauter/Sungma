@@ -30,18 +30,12 @@ use sungma_table::{
 };
 use sungma_write::{
     rows::RowWriter,
-    service::{
-        FactWriteService, FactWriteServiceError, NamespaceWriteService, NamespaceWriteServiceError,
-    },
-    store::NamespaceWrite,
+    service::{self, FactWriteServiceError, NamespaceWriteServiceError},
 };
 use thiserror::Error;
 
 /// How many ids a lease takes at a time.
 const LEASE: NonZeroU32 = NonZeroU32::new(64).unwrap();
-
-/// How many facts a seed writes at a time.
-const SEED_FACTS: usize = 24;
 
 /// How many namespace versions Check keeps parsed.
 const VERSIONS: usize = 1024;
@@ -73,10 +67,54 @@ pub enum SeedError {
     Fact(#[from] FactWriteServiceError),
 }
 
+impl From<service::SeedError> for SeedError {
+    fn from(error: service::SeedError) -> Self {
+        match error {
+            service::SeedError::Namespace(error) => Self::Namespace(error),
+            service::SeedError::Fact(error) => Self::Fact(error),
+        }
+    }
+}
+
 pub type Names<E> = ReadingDictionary<NameRows<E>>;
 pub type Interner<E, S> = LeasingInterner<NameRows<E>, NameRowWriter<E, E, S>>;
 pub type Writer<E, C> = RowWriter<E, E, C, NameRows<E>, Print>;
 pub type CheckReader<E> = RowReader<E, NameRows<E>, Parse>;
+
+/// Names read eventually, for a read that resolves names.
+pub fn names<E: Clone>(table: &E) -> Names<E> {
+    ReadingDictionary(NameRows::new(table.clone(), Consistency::Eventual))
+}
+
+/// Names read strongly that mints new ones from `sequence`, for a write.
+pub fn interner<E: Clone, S>(table: &E, sequence: S) -> Interner<E, S> {
+    LeasingInterner::new(
+        NameRows::new(table.clone(), Consistency::Strong),
+        NameRowWriter::new(table.clone(), table.clone(), sequence),
+        LEASE,
+    )
+}
+
+/// The writer, stamping writes from `clock`.
+pub fn writer<E: Clone, C>(table: &E, clock: C) -> Writer<E, C> {
+    RowWriter::new(
+        table.clone(),
+        table.clone(),
+        clock,
+        NameRows::new(table.clone(), Consistency::Strong),
+        print as Print,
+    )
+}
+
+/// Check's facts and buffered namespace versions.
+pub fn check_reader<E: Clone>(table: &E) -> CheckReader<E> {
+    RowReader::new(
+        table.clone(),
+        NameRows::new(table.clone(), Consistency::Eventual),
+        parse as Parse,
+        VERSIONS,
+    )
+}
 
 /// The contexts over the table `E`, minting ids from the sequence `S`, and
 /// stamping writes from the clock `C`.
@@ -118,27 +156,11 @@ where
     E: ItemReader + ItemWriter + Clone,
 {
     pub fn new(table: E, sequence: S, clock: C) -> Self {
-        let names = |consistency| NameRows::new(table.clone(), consistency);
         Self {
-            names: ReadingDictionary(names(Consistency::Eventual)),
-            interner: LeasingInterner::new(
-                names(Consistency::Strong),
-                NameRowWriter::new(table.clone(), table.clone(), sequence),
-                LEASE,
-            ),
-            writer: RowWriter::new(
-                table.clone(),
-                table.clone(),
-                clock,
-                names(Consistency::Strong),
-                print as Print,
-            ),
-            check: RowReader::new(
-                table.clone(),
-                names(Consistency::Eventual),
-                parse as Parse,
-                VERSIONS,
-            ),
+            names: names(&table),
+            interner: interner(&table, sequence),
+            writer: writer(&table, clock),
+            check: check_reader(&table),
             table,
         }
     }
@@ -174,33 +196,20 @@ where
     S: Sequence + Send + Sync,
     C: Clock + Sync,
 {
-    /// Creates each namespace in the documents, then adds the facts in the
-    /// fact document, through the write services, as a caller would, in as
-    /// many writes as the facts take. Every document is parsed before
-    /// anything is written. Meant for an empty store: creating a namespace
-    /// that has a version is refused.
+    /// Seeds the namespace documents and the fact document; see
+    /// [`service::seed`]. Every document is parsed before anything is
+    /// written.
     pub async fn seed(&self, namespaces: &[&str], facts: &str) -> Result<(), SeedError> {
         let documents = namespaces
             .iter()
             .map(|document| namespace::parse(document).map_err(namespace::Refusal))
             .collect::<Result<Vec<_>, _>>()?;
         let facts = fact::parse(facts)?;
-        let writer = NamespaceWriteService::new(&self.interner, &self.writer);
-        for document in documents {
-            writer
-                .write(
-                    &document.namespace,
-                    NamespaceWrite::Create(document.relations),
-                )
-                .await?;
-        }
-        // A new fact takes two rows and may name two namespaces, so this
-        // many fit one write whatever they are.
-        for facts in facts.chunks(SEED_FACTS) {
-            FactWriteService::new(&self.interner, &self.writer)
-                .write(facts, &[])
-                .await?;
-        }
+        let namespaces = documents
+            .into_iter()
+            .map(|document| (document.namespace, document.relations))
+            .collect();
+        service::seed(&self.interner, &self.writer, namespaces, &facts).await?;
         Ok(())
     }
 }

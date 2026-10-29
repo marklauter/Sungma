@@ -6,6 +6,9 @@
 //! The [`Decision`] is what replay needs. The [`AuditRecord`] wraps it with
 //! what only the edge knows: who asked, when, the names they sent, and the
 //! zookie, alongside the revision the decision was made at.
+//!
+//! The `http` feature adds the Check service's route, in `http`, and the
+//! `server` feature its binary, `sungma-check`.
 
 use std::{
     future::Future,
@@ -34,6 +37,8 @@ use sungma_names::{
 
 pub mod closure;
 pub mod decision;
+#[cfg(feature = "http")]
+pub mod http;
 pub mod replay;
 pub mod rows;
 pub mod store;

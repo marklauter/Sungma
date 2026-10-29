@@ -1,6 +1,18 @@
-//! `POST /namespaces/write` and `POST /namespaces/read`.
+//! The Write service's routes, `POST /facts/write` and
+//! `POST /namespaces/write`. See `sungma-http` for what every route
+//! shares.
 //!
-//! A write is one of:
+//! A fact write takes the write request in `docs/specs/fact-documents.md`:
+//!
+//! ```json
+//! { "add": [ { "namespace": "file", "resource": "readme", "relation": "owner",
+//!              "subject": { "identity": "alice" } } ],
+//!   "retire": [] }
+//! ```
+//!
+//! and gives the zookie of its revision.
+//!
+//! A namespace write is one of:
 //!
 //! ```json
 //! { "create": { "file": { "owner": "this" } } }
@@ -13,36 +25,116 @@
 //! version is refused with the zookie of the latest version as `latest`,
 //! `null` when there's none, so the caller can read it and try again.
 //!
-//! A read, `{ "namespace": "file" }` with an optional `zookie`, gives the
-//! version's document, the zookie of the version as `version`, and the
-//! zookie it read at.
+//! Beyond the statuses every route shares:
+//!
+//! - 409: a namespace write whose `based_on` isn't the latest version.
+//! - 413: a fact write past what one write holds.
+//! - 422: a refused write. A refused namespace document is 422 whatever
+//!   its problems, names included, so it lists them all in one reply.
+//! - 502: the store or the clock failed.
+//! - 500: one of Sungma's limits, such as running out of ids.
 
 use std::sync::Arc;
 
 use axum::{
-    Json,
+    Json, Router,
     extract::{State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
+    routing::post,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use sungma::{name::NamespaceName, revision::Revision};
-use sungma_lang::namespace::{self, Refusal};
-use sungma_names::store::InternError;
-use sungma_read::namespaces::NamespaceReadService;
-use sungma_write::{
-    service::{NamespaceWriteService, NamespaceWriteServiceError},
-    store::{NamespaceWrite, NamespaceWriteError},
+use sungma_http::{Refused, Requests, Zookie, accept, failure};
+use sungma_lang::{
+    fact::WriteRequest,
+    namespace::{self, Refusal},
 };
+use sungma_names::store::{InternError, Interner};
 
 use crate::{
-    AppState, Ids, Items, Refused, Stamps, Written, Zookie, accept, failure, read_failure,
+    service::{
+        FactWriteService, FactWriteServiceError, NamespaceWriteService, NamespaceWriteServiceError,
+    },
+    store::{FactWriter, NamespaceWrite, NamespaceWriteError, NamespaceWriter},
 };
+
+/// What every write writes through, shared across them: the interner, and
+/// the writer.
+pub struct AppState<I, W> {
+    interner: I,
+    writer: W,
+    requests: Requests,
+}
+
+impl<I, W> AppState<I, W> {
+    pub fn new(interner: I, writer: W) -> Self {
+        Self {
+            interner,
+            writer,
+            requests: Requests::default(),
+        }
+    }
+}
+
+pub fn router<I, W>(state: Arc<AppState<I, W>>) -> Router
+where
+    I: Interner + Send + Sync + 'static,
+    W: FactWriter + NamespaceWriter + Send + Sync + 'static,
+{
+    Router::new()
+        .route("/facts/write", post(facts::<I, W>))
+        .route("/namespaces/write", post(namespaces::<I, W>))
+        .with_state(state)
+}
+
+/// A reply that gives only the zookie of a write.
+#[derive(Serialize)]
+struct Written {
+    request_id: String,
+    zookie: Zookie,
+}
+
+async fn facts<I, W>(
+    State(state): State<Arc<AppState<I, W>>>,
+    headers: HeaderMap,
+    body: Result<Json<WriteRequest>, JsonRejection>,
+) -> Response
+where
+    I: Interner + Sync,
+    W: FactWriter + Sync,
+{
+    let request_id = state.requests.id(&headers);
+    let request = match accept(body) {
+        Ok(request) => request,
+        Err(refused) => return refused.reply(&request_id),
+    };
+    let service = FactWriteService::new(&state.interner, &state.writer);
+    match service.write(&request.add, &request.retire).await {
+        Ok(revision) => Json(Written {
+            request_id,
+            zookie: revision.into(),
+        })
+        .into_response(),
+        Err(error) => {
+            let status = match error {
+                FactWriteServiceError::Unknown(_) | FactWriteServiceError::Undeclared(_) => {
+                    StatusCode::UNPROCESSABLE_ENTITY
+                }
+                FactWriteServiceError::TooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
+                FactWriteServiceError::Clock(_) | FactWriteServiceError::Store(_) => {
+                    StatusCode::BAD_GATEWAY
+                }
+            };
+            failure(status, &request_id, error)
+        }
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WriteBody {
+struct NamespacesBody {
     create: Option<Box<RawValue>>,
     new_version: Option<Box<RawValue>>,
     retire: Option<String>,
@@ -56,7 +148,7 @@ enum Write {
     Retire(NamespaceName, Revision),
 }
 
-impl WriteBody {
+impl NamespacesBody {
     fn into_write(self) -> Result<Write, String> {
         match (self.create, self.new_version, self.retire, self.based_on) {
             (Some(document), None, None, None) => Ok(Write::Create(document)),
@@ -79,12 +171,16 @@ struct Conflict {
     latest: Option<Zookie>,
 }
 
-pub(crate) async fn write<E: Items, S: Ids, C: Stamps>(
-    State(state): State<Arc<AppState<E, S, C>>>,
+async fn namespaces<I, W>(
+    State(state): State<Arc<AppState<I, W>>>,
     headers: HeaderMap,
-    body: Result<Json<WriteBody>, JsonRejection>,
-) -> Response {
-    let request_id = state.context(&headers).request_id;
+    body: Result<Json<NamespacesBody>, JsonRejection>,
+) -> Response
+where
+    I: Interner + Sync,
+    W: NamespaceWriter + Sync,
+{
+    let request_id = state.requests.id(&headers);
     let write = match accept(body).and_then(|body| body.into_write().map_err(Refused::malformed)) {
         Ok(write) => write,
         Err(refused) => return refused.reply(&request_id),
@@ -117,7 +213,7 @@ pub(crate) async fn write<E: Items, S: Ids, C: Stamps>(
             Err(refused) => return refused.reply(&request_id),
         },
     };
-    let service = NamespaceWriteService::new(state.node.interner(), state.node.writer());
+    let service = NamespaceWriteService::new(&state.interner, &state.writer);
     match service.write(&name, write).await {
         Ok(revision) => Json(Written {
             request_id,
@@ -152,66 +248,5 @@ fn status(error: &NamespaceWriteServiceError) -> StatusCode {
         | Write(NamespaceWriteError::Clock(_) | NamespaceWriteError::Store(_)) => {
             StatusCode::BAD_GATEWAY
         }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ReadBody {
-    #[serde(deserialize_with = "crate::named")]
-    namespace: NamespaceName,
-    zookie: Option<Zookie>,
-}
-
-#[derive(Serialize)]
-struct ReadReply {
-    request_id: String,
-    /// The stored document as it is.
-    document: Box<RawValue>,
-    version: Zookie,
-    zookie: Zookie,
-}
-
-pub(crate) async fn read<E: Items, S: Ids, C: Stamps>(
-    State(state): State<Arc<AppState<E, S, C>>>,
-    headers: HeaderMap,
-    body: Result<Json<ReadBody>, JsonRejection>,
-) -> Response {
-    let request_id = state.context(&headers).request_id;
-    let body = match accept(body) {
-        Ok(body) => body,
-        Err(refused) => return refused.reply(&request_id),
-    };
-    let node = &state.node;
-    let service = NamespaceReadService::new(node.names(), node.table());
-    let read = match service
-        .read(&body.namespace, body.zookie.map(Revision::from))
-        .await
-    {
-        Ok(read) => read,
-        Err(error) => return read_failure(&request_id, error),
-    };
-    let Some(version) = read.version else {
-        let error = format!(
-            "namespace '{}' has no version at revision {}",
-            body.namespace, read.revision.0
-        );
-        return failure(StatusCode::NOT_FOUND, &request_id, error);
-    };
-    // The store gives the text it stored; a store whose text isn't JSON
-    // has failed.
-    match RawValue::from_string(version.document) {
-        Ok(document) => Json(ReadReply {
-            request_id,
-            document,
-            version: version.revision.into(),
-            zookie: read.revision.into(),
-        })
-        .into_response(),
-        Err(error) => failure(
-            StatusCode::BAD_GATEWAY,
-            &request_id,
-            format!("the stored document isn't JSON: {error}"),
-        ),
     }
 }
