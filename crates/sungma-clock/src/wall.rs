@@ -588,7 +588,7 @@ mod tests {
             .expect("the wait ends")
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_wait_sleeps_again_when_the_bound_grows_during_a_sleep() {
         let clock = Scripted::new(&[Ok((10, 20)), Ok((12, 30)), Ok((15, 40)), Ok((99, 99))]);
         assert_eq!(waited(&clock, 14).await, Ok(()));
@@ -596,21 +596,21 @@ mod tests {
         assert_eq!(clock.now().unwrap().settled, Revision(99));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_wait_on_a_stamp_equal_to_settled_sleeps() {
         let clock = Scripted::new(&[Ok((14, 20)), Ok((15, 20)), Ok((0, 0))]);
         assert_eq!(waited(&clock, 14).await, Ok(()));
         assert_eq!(clock.left(), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_wait_on_a_passed_stamp_reads_once() {
         let clock = Scripted::new(&[Ok((15, 20)), Ok((0, 0))]);
         assert_eq!(waited(&clock, 14).await, Ok(()));
         assert_eq!(clock.left(), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_fault_during_a_wait_ends_it() {
         let clock = Scripted::new(&[Ok((10, 20)), Err(ClockFault::Drifted)]);
         assert_eq!(waited(&clock, 14).await, Err(ClockFault::Drifted));

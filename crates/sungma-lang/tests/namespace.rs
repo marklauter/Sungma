@@ -1,6 +1,8 @@
 //! Namespace documents: parsed, checked whole, and printed back.
 
-use std::time::{Duration, Instant};
+mod allocations;
+
+use allocations::linear;
 
 use proptest::{collection::vec, prelude::*};
 use sungma::{
@@ -895,24 +897,10 @@ proptest! {
 
 // Hostile input.
 
-/// Runs `work`, failing if it takes longer than a bound that only
-/// quadratic work, or worse, would pass. Only a release build is timed: a
-/// debug build on a slow runner can be ten times slower.
-fn within<T>(work: impl FnOnce() -> T) -> T {
-    let start = Instant::now();
-    let result = work();
-    let elapsed = start.elapsed();
-    assert!(
-        cfg!(debug_assertions) || elapsed < Duration::from_secs(5),
-        "took {elapsed:?}"
-    );
-    result
-}
-
 #[test]
-fn the_longest_chain_of_relations_is_checked_quickly() {
+fn the_longest_chain_of_relations_is_checked_in_linear_allocation() {
     let chain = namespace_of(MAX_RELATIONS, |i| format!("r{}", i + 1));
-    let errors = within(|| refused(&chain));
+    let errors = linear(&chain, 100, || refused(&chain));
     assert_eq!(errors.len(), 1);
     assert_eq!(errors[0].relation.as_deref(), Some("r499"));
 }
@@ -923,7 +911,7 @@ fn the_largest_set_of_relations_reaching_each_other_is_one_cycle() {
     let ring = namespace_of(count, |i| {
         format!("r{} | r{}", (i + 1) % count, (i + 7) % count)
     });
-    let error = within(|| only(&ring));
+    let error = linear(&ring, 100, || only(&ring));
     let ErrorKind::Namespace(NamespaceError::RewriteCycle { path, .. }) = error.kind else {
         panic!("expected a cycle, got {error}");
     };
@@ -932,11 +920,11 @@ fn the_largest_set_of_relations_reaching_each_other_is_one_cycle() {
 }
 
 #[test]
-fn far_more_relations_than_the_limit_are_refused_quickly() {
+fn far_more_relations_than_the_limit_are_refused_in_linear_allocation() {
     let count = 200_000;
     let many = namespace_of(count, |_| "this".to_owned());
     assert!(many.len() <= MAX_DOCUMENT_BYTES);
-    let error = within(|| only(&many));
+    let error = linear(&many, 16, || only(&many));
     assert!(matches!(error.kind, ErrorKind::TooManyRelations(200_000)));
 }
 
