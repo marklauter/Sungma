@@ -104,6 +104,15 @@ impl Lookups {
         deadline: Instant,
     ) -> Result<Vec<SocketAddr>, ClockError> {
         let lookup = self.start(server)?;
+        Self::wait(&lookup, server, deadline)
+    }
+
+    /// What `lookup` of `server` finds, giving up at `deadline`.
+    fn wait(
+        lookup: &Lookup,
+        server: &str,
+        deadline: Instant,
+    ) -> Result<Vec<SocketAddr>, ClockError> {
         let mut found = lookup.found.lock();
         let left = deadline.saturating_duration_since(Instant::now());
         lookup
@@ -367,7 +376,10 @@ mod tests {
         // A caller waiting on the running lookup gets what it finds.
         drop(release);
         let later = Instant::now() + Duration::from_secs(10);
-        assert_eq!(hung.resolve_by("hung.test:123", later).unwrap(), [address]);
+        assert_eq!(
+            Lookups::wait(&first, "hung.test:123", later).unwrap(),
+            [address]
+        );
         assert!(settled(&hung));
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
@@ -402,7 +414,7 @@ mod tests {
         assert_eq!(threads(&hung, name), 3);
         drop(release);
         let later = Instant::now() + Duration::from_secs(10);
-        assert_eq!(hung.resolve_by(name, later).unwrap(), [address]);
+        assert_eq!(Lookups::wait(&third, name, later).unwrap(), [address]);
         assert!(settled(&hung));
         assert_eq!(calls.load(Ordering::SeqCst), 3);
     }
