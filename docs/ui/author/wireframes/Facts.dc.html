@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Graph</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+:root{color-scheme:dark}
+a{color:#79b0ff}a:hover{color:#a5c8ff}
+</style>
+</helmet>
+<div style="min-height: 1000px; background: #0d1117; color: #e6edf3; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; font-size: 15px">
+<header style="background: #161b22; border-bottom: 1px solid #30363d">
+<div style="max-width: 1200px; margin: 0 auto; padding: 8px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px">
+<div style="position: relative; display: flex; align-items: center; gap: 8px">
+<button type="button" aria-label="Open the Author menu" aria-haspopup="menu" aria-expanded="false" style="min-width: 44px; min-height: 44px; background: transparent; color: #e6edf3; border: 1px solid transparent; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center"><svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="4" height="4" rx="1"></rect><rect x="8" y="2" width="4" height="4" rx="1"></rect><rect x="14" y="2" width="4" height="4" rx="1"></rect><rect x="2" y="8" width="4" height="4" rx="1"></rect><rect x="8" y="8" width="4" height="4" rx="1"></rect><rect x="14" y="8" width="4" height="4" rx="1"></rect><rect x="2" y="14" width="4" height="4" rx="1"></rect><rect x="8" y="14" width="4" height="4" rx="1"></rect><rect x="14" y="14" width="4" height="4" rx="1"></rect></svg></button>
+<a href="Main.dc.html" style="font-weight: 700; font-size: 18px; color: #e6edf3; text-decoration: none">Sungma Author</a>
+<span style="color: #9da7b3; font-size: 16px">/ Graph</span>
+</div>
+<form role="search" style="flex: 1 1 260px; min-width: 0; display: flex">
+<label for="q" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Search everything</label>
+<input id="q" type="search" placeholder="Search namespaces, subjectsets, identities" style="flex: 1 1 auto; min-width: 0; min-height: 44px; padding: 0 12px; background: #0d1117; border: 1px solid #484f58; border-radius: 6px; font: inherit">
+</form>
+<span style="color: #9da7b3; font-size: 14px">Head <code style="font-family: ui-monospace, 'Cascadia Code', monospace; color: #e6edf3">1043</code></span>
+<button type="button" aria-haspopup="menu" aria-expanded="false" style="min-height: 44px; padding: 0 12px; background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; font: inherit; display: inline-flex; align-items: center; gap: 6px">mark <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4.5l3 3 3-3"></path></svg></button>
+</div>
+</header>
+<main style="max-width: 1200px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 16px">
+<form style="display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px">
+<div style="flex: 3 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px">
+<label for="set" style="font-weight: 600; font-size: 14px">Subjectset</label>
+<input id="set" value="group:eng#member" style="min-height: 44px; padding: 0 12px; background: #161b22; border: 1px solid #484f58; border-radius: 6px; font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 15px; font-weight: 600">
+</div>
+<div style="flex: 1 1 140px; min-width: 0; display: flex; flex-direction: column; gap: 6px">
+<label for="rev" style="font-weight: 600; font-size: 14px">At revision</label>
+<input id="rev" placeholder="Latest" style="min-height: 44px; padding: 0 12px; background: #161b22; border: 1px solid #484f58; border-radius: 6px; font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 14px">
+</div>
+<button type="button" style="min-height: 44px; padding: 0 20px; background: #161b22; color: #e6edf3; border: 1px solid #484f58; border-radius: 6px; font: inherit">Open</button>
+</form>
+<div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start">
+<section aria-label="Subjects" style="flex: 999 1 560px; min-width: 0; background: #161b22; border: 1px solid #30363d; border-radius: 8px; overflow-x: auto">
+<div style="padding: 12px 16px; border-bottom: 1px solid #30363d; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px">
+<div style="flex: 2 1 220px; min-width: 0; display: flex; flex-direction: column; gap: 6px">
+<label for="add" style="font-weight: 600; font-size: 14px">Add a subject</label>
+<input id="add" placeholder="identity, or namespace:id#relation" style="min-height: 44px; padding: 0 12px; border: 1px solid #484f58; border-radius: 6px; font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 14px">
+</div>
+<button type="button" style="min-height: 44px; padding: 0 16px; background: #161b22; color: #79b0ff; border: 1px solid #79b0ff; border-radius: 6px; font: inherit; font-weight: 600">Stage</button>
+<button type="button" style="min-height: 44px; padding: 0 16px; background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; font: inherit">Paste a list</button>
+</div>
+<table style="width: 100%; border-collapse: collapse">
+<thead>
+<tr style="text-align: left; color: #9da7b3; font-size: 13px">
+<th style="padding: 10px 16px; border-bottom: 1px solid #30363d; font-weight: 600">Subject</th>
+<th style="padding: 10px 16px; border-bottom: 1px solid #30363d; font-weight: 600">Kind</th>
+<th style="padding: 10px 16px; border-bottom: 1px solid #30363d; font-weight: 600">Written at</th>
+<th style="padding: 10px 16px; border-bottom: 1px solid #30363d; font-weight: 600"><span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Actions</span></th>
+</tr>
+</thead>
+<tbody>
+<tr style="background: #1b2a41">
+<td style="padding: 6px 16px; border-bottom: 1px solid #21262d; font-family: ui-monospace, 'Cascadia Code', monospace">frank</td>
+<td style="padding: 6px 16px; border-bottom: 1px solid #21262d">Identity</td>
+<td style="padding: 6px 16px; border-bottom: 1px solid #21262d; color: #79b0ff; font-weight: 600">Staged to add</td>
+<td style="padding: 6px 16px; border-bottom: 1px solid #21262d; text-align: right"><button type="button" style="min-height: 44px; padding: 0 12px; background: transparent; color: #79b0ff; border: 0; font: inherit">Unstage</button></td>
+</tr>
+<tr>
+<td style="padding: 6px 16px; border-bottom: 1px solid #21262d; font-family: ui-monospace, 'Cascadia Code', monospace">alice</td>
+<td style="padding: 6px 16px; border-bottom: 1px solid #21262d">Identity</td>
+<td style="padding: 6px 16px; border-bottom: 1px solid #21262d; font-family: ui-monospace, 'Cascadia Code', monospace">1001</td>
+<td style="padding: 6px 16px; border-bottom: 1px solid #21262d; text-align: right"><button type="button" style="min-height: 44px; padding: 0 12px; background: transparent; color: #79b0ff; border: 0; font: inherit">Retire</button></td>
+</tr>
+<tr style="background: #3a1d1d">
+<td style="padding: 6px 16px; border-bottom: 1px solid #21262d; font-family: ui-monospace, 'Cascadia Code', monospace; text-decoration: line-through">bob</td>
+<td style="padding: 6px 16px; border-bottom: 1px solid #21262d">Identity</td>
+<td style="padding: 6px 16px; border-bottom: 1px solid #21262d; color: #ff7b72; font-weight: 600">Staged to retire</td>
+<td style="padding: 6px 16px; border-bottom: 1px solid #21262d; text-align: right"><button type="button" style="min-height: 44px; padding: 0 12px; background: transparent; color: #79b0ff; border: 0; font: inherit">Unstage</button></td>
+</tr>
+<tr>
+<td style="padding: 6px 16px; border-bottom: 1px solid #21262d; font-family: ui-monospace, 'Cascadia Code', monospace">grace</td>
+<td style="padding: 6px 16px; border-bottom: 1px solid #21262d">Identity</td>
+<td style="padding: 6px 16px; border-bottom: 1px solid #21262d; font-family: ui-monospace, 'Cascadia Code', monospace">1039</td>
+<td style="padding: 6px 16px; border-bottom: 1px solid #21262d; text-align: right"><button type="button" style="min-height: 44px; padding: 0 12px; background: transparent; color: #79b0ff; border: 0; font: inherit">Retire</button></td>
+</tr>
+<tr>
+<td style="padding: 6px 16px; font-family: ui-monospace, 'Cascadia Code', monospace"><a href="Facts.dc.html">group:platform#member</a></td>
+<td style="padding: 6px 16px">Subjectset</td>
+<td style="padding: 6px 16px; font-family: ui-monospace, 'Cascadia Code', monospace">1020</td>
+<td style="padding: 6px 16px; text-align: right"><button type="button" style="min-height: 44px; padding: 0 12px; background: transparent; color: #79b0ff; border: 0; font: inherit">Retire</button></td>
+</tr>
+</tbody>
+</table>
+<div style="padding: 10px 16px; border-top: 1px solid #30363d; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; color: #9da7b3; font-size: 14px">
+<span>Showing 4 of 33 subjects, read at <code style="font-family: ui-monospace, 'Cascadia Code', monospace; color: #e6edf3">1043</code></span>
+<label style="display: flex; gap: 8px; align-items: center">Filter <input type="search" style="min-height: 36px; padding: 0 10px; border: 1px solid #484f58; border-radius: 6px; font: inherit"></label>
+</div>
+</section>
+<aside aria-label="Pending changes" style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+<section style="background: #161b22; border: 2px solid #79b0ff; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 17px">Pending changes <span style="color: #9da7b3; font-weight: 400">(2)</span></h2>
+<ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 14px">
+<li style="display: flex; flex-direction: column; gap: 2px"><span style="color: #79b0ff; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; font-weight: 600">Add</span>frank to group:eng#member</li>
+<li style="display: flex; flex-direction: column; gap: 2px"><span style="color: #ff7b72; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; font-weight: 600">Retire</span>bob from group:eng#member</li>
+</ul>
+<p style="margin: 0; color: #9da7b3; font-size: 14px">Changes stay staged as you open other subjectsets. They all land at one revision, or none do.</p>
+<div style="display: flex; flex-wrap: wrap; gap: 10px">
+<button type="button" style="flex: 1 1 auto; min-height: 44px; padding: 0 18px; background: #2563c7; color: #ffffff; border: 0; border-radius: 6px; font: inherit; font-weight: 600">Write 2 changes</button>
+<button type="button" style="min-height: 44px; padding: 0 16px; background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; font: inherit">Discard</button>
+</div>
+</section>
+<section aria-label="Tools" style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 12px">
+<div style="display: flex; gap: 4px; border-bottom: 1px solid #30363d">
+<button type="button" aria-pressed="true" style="min-height: 44px; padding: 0 14px; background: transparent; border: 0; border-bottom: 2px solid #79b0ff; color: #79b0ff; font: inherit; font-weight: 600">Check</button>
+<button type="button" aria-pressed="false" style="min-height: 44px; padding: 0 14px; background: transparent; border: 0; border-bottom: 2px solid transparent; color: #e6edf3; font: inherit">Expand</button>
+</div>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<label for="tsub" style="font-weight: 600; font-size: 14px">Is this subject</label>
+<input id="tsub" value="frank" style="min-height: 44px; padding: 0 12px; border: 1px solid #484f58; border-radius: 6px; font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 14px">
+</div>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<label for="tset" style="font-weight: 600; font-size: 14px">in this subjectset?</label>
+<input id="tset" value="file:design.md#viewer" style="min-height: 44px; padding: 0 12px; border: 1px solid #484f58; border-radius: 6px; font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 14px">
+</div>
+<button type="button" style="min-height: 44px; background: #161b22; color: #79b0ff; border: 1px solid #79b0ff; border-radius: 6px; font: inherit; font-weight: 600">Check</button>
+<div style="border: 1px solid #30363d; background: #0d1117; border-radius: 6px; padding: 12px; display: flex; flex-direction: column; gap: 4px">
+<span style="font-weight: 600">Not at <code style="font-family: ui-monospace, 'Cascadia Code', monospace">1043</code></span>
+<span style="color: #9da7b3; font-size: 14px">Check reads what's written. Write your pending changes, then check again.</span>
+<a href="Check.dc.html" style="font-size: 14px">Open the full check</a>
+</div>
+</section>
+<section style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<h2 style="margin: 0; font-size: 17px">Last write</h2>
+<span style="color: #56d364; font-weight: 600">Written at revision <code style="font-family: ui-monospace, 'Cascadia Code', monospace">1043</code></span>
+<a href="Check.dc.html" style="font-size: 14px">Check at this revision</a>
+</section>
+</aside>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1000}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

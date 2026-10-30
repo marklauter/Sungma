@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign in</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+:root{color-scheme:dark}
+a{color:#79b0ff}a:hover{color:#a5c8ff}
+</style>
+</helmet>
+<div style="min-height: 800px; background: #0d1117; color: #e6edf3; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; font-size: 15px; display: flex; flex-direction: column">
+<main style="flex: 1 1 auto; display: flex; align-items: center; justify-content: center; padding: 48px 16px">
+<div style="width: 100%; max-width: 400px; display: flex; flex-direction: column; align-items: center; gap: 32px">
+<img src="/_blob/9634bced67e0ba189f3f2c334c6412e3" alt="Sungma" style="width: 280px; max-width: 100%; height: auto">
+<section aria-labelledby="signin-title" style="width: 100%; box-sizing: border-box; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 32px; display: flex; flex-direction: column; gap: 20px">
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h1 id="signin-title" style="margin: 0; font-size: 22px; font-weight: 600">Sign in to Author</h1>
+<p style="margin: 0; color: #9da7b3; line-height: 1.5">Administer your organization's access.</p>
+</div>
+<a href="Main.dc.html" style="display: flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 20px; background: #2563c7; color: #ffffff; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 16px">Sign in with [ORG IDP]</a>
+<p style="margin: 0; color: #9da7b3; font-size: 14px; line-height: 1.5">You'll sign in on your organization's page, then come back here. Author never sees your password.</p>
+</section>
+</div>
+</main>
+<footer style="padding: 16px 24px; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 24px; color: #9da7b3; font-size: 14px">
+<a href="Status.dc.html">System status</a>
+<span>Author 0.1.0</span>
+</footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

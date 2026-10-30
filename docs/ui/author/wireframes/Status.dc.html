@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>System status</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+:root{color-scheme:dark}
+a{color:#79b0ff}a:hover{color:#a5c8ff}
+</style>
+</helmet>
+<div style="min-height: 1000px; background: #0d1117; color: #e6edf3; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; font-size: 15px">
+<header style="background: #161b22; border-bottom: 1px solid #30363d">
+<div style="max-width: 1360px; margin: 0 auto; padding: 8px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px">
+<div style="position: relative; display: flex; align-items: center; gap: 8px">
+<button type="button" aria-label="Open the Author menu" aria-haspopup="menu" aria-expanded="false" style="min-width: 44px; min-height: 44px; background: transparent; color: #e6edf3; border: 1px solid transparent; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center"><svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="4" height="4" rx="1"></rect><rect x="8" y="2" width="4" height="4" rx="1"></rect><rect x="14" y="2" width="4" height="4" rx="1"></rect><rect x="2" y="8" width="4" height="4" rx="1"></rect><rect x="8" y="8" width="4" height="4" rx="1"></rect><rect x="14" y="8" width="4" height="4" rx="1"></rect><rect x="2" y="14" width="4" height="4" rx="1"></rect><rect x="8" y="14" width="4" height="4" rx="1"></rect><rect x="14" y="14" width="4" height="4" rx="1"></rect></svg></button>
+<a href="Main.dc.html" style="font-weight: 700; font-size: 18px; color: #e6edf3; text-decoration: none">Sungma Author</a>
+<span style="color: #9da7b3; font-size: 16px">/ System status</span>
+</div>
+<form role="search" style="flex: 1 1 260px; min-width: 0; display: flex">
+<label for="q" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Search everything</label>
+<input id="q" type="search" placeholder="Search people, groups, resources, namespaces" style="flex: 1 1 auto; min-width: 0; min-height: 44px; padding: 0 12px; background: #0d1117; border: 1px solid #484f58; border-radius: 6px; font: inherit">
+</form>
+<span style="color: #9da7b3; font-size: 14px">Head <code style="font-family: ui-monospace, 'Cascadia Code', monospace; color: #e6edf3">1043</code></span>
+<button type="button" aria-haspopup="menu" aria-expanded="false" style="min-height: 44px; padding: 0 12px; background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; font: inherit; display: inline-flex; align-items: center; gap: 6px">mark <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4.5l3 3 3-3"></path></svg></button>
+</div>
+</header>
+<main style="max-width: 1360px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 20px">
+<div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px">
+<div style="display: flex; align-items: center; gap: 12px">
+<svg width="28" height="28" viewBox="0 0 22 22" fill="none" stroke="#56d364" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="9"></circle><path d="M7 11.5l2.8 2.8L15 9"></path></svg>
+<h1 style="margin: 0; font-size: 24px">All services are serving</h1>
+</div>
+<span style="color: #9da7b3; font-size: 14px">Checked a minute ago</span>
+</div>
+<section aria-label="The last 24 hours" style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 12px; overflow-x: auto">
+<div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px">
+<h2 style="margin: 0; font-size: 17px">The last 24 hours</h2>
+<span style="display: flex; flex-wrap: wrap; gap: 16px; color: #9da7b3; font-size: 13px">
+<span style="display: inline-flex; align-items: center; gap: 6px"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#56d364" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5l2.5 2.5L11 4.5"></path></svg>Serving</span>
+<span style="display: inline-flex; align-items: center; gap: 6px"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#e3b341" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 3v5"></path><path d="M7 11h.01"></path></svg>Degraded</span>
+<span style="display: inline-flex; align-items: center; gap: 6px"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#ff7b72" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3.5 3.5l7 7M10.5 3.5l-7 7"></path></svg>Down</span>
+</span>
+</div>
+<div style="min-width: 960px; display: flex; flex-direction: column">
+<div style="display: grid; grid-template-columns: 160px 96px repeat(24, minmax(0, 1fr)); align-items: center; color: #9da7b3; font-size: 12px; border-bottom: 1px solid #30363d; padding-bottom: 6px">
+<span style="font-weight: 600; font-size: 13px">Service</span>
+<span style="font-weight: 600; font-size: 13px">Version</span>
+<sc-for list="{{hours}}" as="hour" hint-placeholder-count="24">
+<span style="text-align: center">{{hour}}</span>
+</sc-for>
+</div>
+<sc-for list="{{services}}" as="service" hint-placeholder-count="6">
+<div style="display: grid; grid-template-columns: 160px 96px repeat(24, minmax(0, 1fr)); align-items: center; min-height: 40px; border-bottom: 1px solid #21262d">
+<span style="font-weight: 600">{{service.name}}</span>
+<code style="font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 13px; color: #9da7b3">{{service.version}}</code>
+<sc-for list="{{service.cells}}" as="cell" hint-placeholder-count="24">
+<span role="img" aria-label="{{cell.label}}" style="display: flex; justify-content: center">
+<sc-if value="{{cell.ok}}" hint-placeholder-val="{{ true }}"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#56d364" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5l2.5 2.5L11 4.5"></path></svg></sc-if>
+<sc-if value="{{cell.warn}}" hint-placeholder-val="{{ false }}"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#e3b341" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 3v5"></path><path d="M7 11h.01"></path></svg></sc-if>
+<sc-if value="{{cell.down}}" hint-placeholder-val="{{ false }}"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#ff7b72" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3.5 3.5l7 7M10.5 3.5l-7 7"></path></svg></sc-if>
+</span>
+</sc-for>
+</div>
+</sc-for>
+</div>
+</section>
+<div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start">
+<section aria-label="Status feed" style="flex: 999 1 560px; min-width: 0; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<h2 style="margin: 0; font-size: 17px">Status feed</h2>
+<ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column">
+<li style="padding: 12px 0; border-bottom: 1px solid #21262d; display: flex; flex-direction: column; gap: 4px">
+<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px"><span style="font-weight: 600">Write 0.1.0 deployed</span><span style="color: #9da7b3; font-size: 14px">Today, 09:12</span></div>
+<span style="font-size: 14px">Namespace writes refuse a version based on a stale one.</span>
+</li>
+<li style="padding: 12px 0; border-bottom: 1px solid #21262d; display: flex; flex-direction: column; gap: 4px">
+<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px"><span style="font-weight: 600; color: #ff7b72">Write was down for 40 minutes</span><span style="color: #9da7b3; font-size: 14px">Today, 03:05</span></div>
+<span style="font-size: 14px">The table refused writes while its capacity scaled. Checks and reads went on; Check fell behind and caught up by 04:20.</span>
+</li>
+<li style="padding: 12px 0; display: flex; flex-direction: column; gap: 4px">
+<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px"><span style="font-weight: 600">Scheduled maintenance</span><span style="color: #9da7b3; font-size: 14px">[DATE]</span></div>
+<span style="font-size: 14px">Writes pause for [DURATION]. Checks and reads go on.</span>
+</li>
+</ol>
+</section>
+<aside aria-label="Deployed versions" style="flex: 1 1 300px; min-width: 0; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<h2 style="margin: 0; font-size: 17px">Deployed versions</h2>
+<dl style="margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px">
+<dt>Author</dt><dd style="margin: 0; font-family: ui-monospace, 'Cascadia Code', monospace">0.1.0</dd>
+<dt>Check</dt><dd style="margin: 0; font-family: ui-monospace, 'Cascadia Code', monospace">0.1.0</dd>
+<dt>Read</dt><dd style="margin: 0; font-family: ui-monospace, 'Cascadia Code', monospace">0.1.0</dd>
+<dt>Write</dt><dd style="margin: 0; font-family: ui-monospace, 'Cascadia Code', monospace">0.1.0</dd>
+</dl>
+</aside>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1000}}'>
+class Component extends DCLogic {
+renderVals() {
+const hours = [];
+for (let i = 0; i < 24; i++) {
+hours.push(String((15 + i) % 24).padStart(2, '0'));
+}
+// Column 12 is 03:00, the hour Write was down.
+const row = (name, version, at) => ({
+name,
+version,
+cells: hours.map((hour, i) => {
+const state = at(i);
+const word = state === 'down' ? 'down' : state === 'warn' ? 'degraded' : 'serving';
+return {
+ok: state === 'ok',
+warn: state === 'warn',
+down: state === 'down',
+label: name + ' at ' + hour + ':00, ' + word,
+};
+}),
+});
+const always = () => 'ok';
+return {
+hours,
+services: [
+row('Check', '0.1.0', (i) => (i === 12 || i === 13 ? 'warn' : 'ok')),
+row('Read', '0.1.0', always),
+row('Write', '0.1.0', (i) => (i === 12 ? 'down' : 'ok')),
+row('Author', '0.1.0', always),
+row('Table', 'DynamoDB', (i) => (i === 12 ? 'warn' : 'ok')),
+row('Sign-in', '[ORG IDP]', always),
+],
+};
+}
+}
+</script>
+</body>
+</html>

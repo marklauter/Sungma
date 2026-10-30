@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Check</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+:root{color-scheme:dark}
+a{color:#79b0ff}a:hover{color:#a5c8ff}
+</style>
+</helmet>
+<div style="min-height: 800px; background: #0d1117; color: #e6edf3; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; font-size: 15px">
+<header style="background: #161b22; border-bottom: 1px solid #30363d">
+<div style="max-width: 1200px; margin: 0 auto; padding: 8px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px">
+<div style="position: relative; display: flex; align-items: center; gap: 8px">
+<button type="button" aria-label="Open the Author menu" aria-haspopup="menu" aria-expanded="false" style="min-width: 44px; min-height: 44px; background: transparent; color: #e6edf3; border: 1px solid transparent; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center"><svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="4" height="4" rx="1"></rect><rect x="8" y="2" width="4" height="4" rx="1"></rect><rect x="14" y="2" width="4" height="4" rx="1"></rect><rect x="2" y="8" width="4" height="4" rx="1"></rect><rect x="8" y="8" width="4" height="4" rx="1"></rect><rect x="14" y="8" width="4" height="4" rx="1"></rect><rect x="2" y="14" width="4" height="4" rx="1"></rect><rect x="8" y="14" width="4" height="4" rx="1"></rect><rect x="14" y="14" width="4" height="4" rx="1"></rect></svg></button>
+<a href="Main.dc.html" style="font-weight: 700; font-size: 18px; color: #e6edf3; text-decoration: none">Sungma Author</a>
+<span style="color: #9da7b3; font-size: 16px">/ Check</span>
+</div>
+<form role="search" style="flex: 1 1 260px; min-width: 0; display: flex">
+<label for="q" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Search everything</label>
+<input id="q" type="search" placeholder="Search namespaces, subjectsets, identities" style="flex: 1 1 auto; min-width: 0; min-height: 44px; padding: 0 12px; background: #0d1117; border: 1px solid #484f58; border-radius: 6px; font: inherit">
+</form>
+<span style="color: #9da7b3; font-size: 14px">Head <code style="font-family: ui-monospace, 'Cascadia Code', monospace; color: #e6edf3">1043</code></span>
+<button type="button" aria-haspopup="menu" aria-expanded="false" style="min-height: 44px; padding: 0 12px; background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; font: inherit; display: inline-flex; align-items: center; gap: 6px">mark <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4.5l3 3 3-3"></path></svg></button>
+</div>
+</header>
+<main style="max-width: 1200px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 20px">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<a href="Facts.dc.html" style="font-size: 14px">Graph</a>
+<h1 style="margin: 0; font-size: 24px">Check</h1>
+</div>
+<form style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px">
+<div style="flex: 3 1 280px; min-width: 0; display: flex; flex-direction: column; gap: 6px">
+<label for="set" style="font-weight: 600">Subjectset</label>
+<input id="set" value="file:design.md#viewer" style="min-height: 44px; padding: 0 12px; border: 1px solid #484f58; border-radius: 6px; font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 14px">
+</div>
+<fieldset style="flex: 0 1 auto; margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: 6px">
+<legend style="font-weight: 600; padding: 0; margin-bottom: 6px">Subject is</legend>
+<div style="display: flex; gap: 16px; min-height: 44px; align-items: center">
+<label style="display: flex; gap: 6px; align-items: center"><input type="radio" name="kind" checked> Identity</label>
+<label style="display: flex; gap: 6px; align-items: center"><input type="radio" name="kind"> Subjectset</label>
+</div>
+</fieldset>
+<div style="flex: 2 1 200px; min-width: 0; display: flex; flex-direction: column; gap: 6px">
+<label for="subject" style="font-weight: 600">Subject</label>
+<input id="subject" value="alice" style="min-height: 44px; padding: 0 12px; border: 1px solid #484f58; border-radius: 6px; font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 14px">
+</div>
+<div style="flex: 1 1 140px; min-width: 0; display: flex; flex-direction: column; gap: 6px">
+<label for="zookie" style="font-weight: 600">At least revision</label>
+<input id="zookie" placeholder="Any recent" style="min-height: 44px; padding: 0 12px; border: 1px solid #484f58; border-radius: 6px; font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 14px">
+</div>
+<button type="button" style="min-height: 44px; padding: 0 22px; background: #2563c7; color: #ffffff; border: 0; border-radius: 6px; font: inherit; font-weight: 600">Check</button>
+</form>
+<section aria-label="Verdict" style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 16px">
+<div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px">
+<div style="display: flex; align-items: center; gap: 10px">
+<svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#56d364" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="9"></circle><path d="M7 11.5l2.8 2.8L15 9"></path></svg>
+<h2 style="margin: 0; font-size: 20px; color: #56d364">Allowed</h2>
+</div>
+<span style="color: #9da7b3; font-size: 14px">Decided at revision <code style="font-family: ui-monospace, 'Cascadia Code', monospace; color: #e6edf3">1043</code></span>
+</div>
+<p style="margin: 0"><code style="font-family: ui-monospace, 'Cascadia Code', monospace">alice</code> is a viewer of <code style="font-family: ui-monospace, 'Cascadia Code', monospace">file:design.md</code>, by these facts:</p>
+<ol style="margin: 0; padding-left: 24px; display: flex; flex-direction: column; gap: 8px; font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 14px">
+<li><a href="Facts.dc.html">group:eng#member</a> holds alice</li>
+<li><a href="Facts.dc.html">folder:root#viewer</a> holds group:eng#member</li>
+<li><a href="Facts.dc.html">folder:specs#parent</a> holds folder:root</li>
+<li><a href="Facts.dc.html">file:design.md#parent</a> holds folder:specs</li>
+</ol>
+<p style="margin: 0; color: #9da7b3; font-size: 14px">Read up the parent chain: the file's parent is specs, specs' parent is root, root's viewers include eng's members. No fact bans alice.</p>
+</section>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

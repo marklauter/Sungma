@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Expand</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+:root{color-scheme:dark}
+a{color:#79b0ff}a:hover{color:#a5c8ff}
+</style>
+</helmet>
+<div style="min-height: 1000px; background: #0d1117; color: #e6edf3; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; font-size: 15px">
+<header style="background: #161b22; border-bottom: 1px solid #30363d">
+<div style="max-width: 1200px; margin: 0 auto; padding: 8px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px">
+<div style="position: relative; display: flex; align-items: center; gap: 8px">
+<button type="button" aria-label="Open the Author menu" aria-haspopup="menu" aria-expanded="false" style="min-width: 44px; min-height: 44px; background: transparent; color: #e6edf3; border: 1px solid transparent; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center"><svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="4" height="4" rx="1"></rect><rect x="8" y="2" width="4" height="4" rx="1"></rect><rect x="14" y="2" width="4" height="4" rx="1"></rect><rect x="2" y="8" width="4" height="4" rx="1"></rect><rect x="8" y="8" width="4" height="4" rx="1"></rect><rect x="14" y="8" width="4" height="4" rx="1"></rect><rect x="2" y="14" width="4" height="4" rx="1"></rect><rect x="8" y="14" width="4" height="4" rx="1"></rect><rect x="14" y="14" width="4" height="4" rx="1"></rect></svg></button>
+<a href="Main.dc.html" style="font-weight: 700; font-size: 18px; color: #e6edf3; text-decoration: none">Sungma Author</a>
+<span style="color: #9da7b3; font-size: 16px">/ Expand</span>
+</div>
+<form role="search" style="flex: 1 1 260px; min-width: 0; display: flex">
+<label for="q" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Search everything</label>
+<input id="q" type="search" placeholder="Search namespaces, subjectsets, identities" style="flex: 1 1 auto; min-width: 0; min-height: 44px; padding: 0 12px; background: #0d1117; border: 1px solid #484f58; border-radius: 6px; font: inherit">
+</form>
+<span style="color: #9da7b3; font-size: 14px">Head <code style="font-family: ui-monospace, 'Cascadia Code', monospace; color: #e6edf3">1043</code></span>
+<button type="button" aria-haspopup="menu" aria-expanded="false" style="min-height: 44px; padding: 0 12px; background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; font: inherit; display: inline-flex; align-items: center; gap: 6px">mark <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4.5l3 3 3-3"></path></svg></button>
+</div>
+</header>
+<main style="max-width: 1200px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 20px">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<a href="Facts.dc.html" style="font-size: 14px">Graph</a>
+<h1 style="margin: 0; font-size: 24px">Expand</h1>
+<span style="color: #9da7b3; font-size: 14px">Who is in a subjectset, and why, through every rewrite and nested group.</span>
+</div>
+<form style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px">
+<div style="flex: 3 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px">
+<label for="set" style="font-weight: 600">Subjectset</label>
+<input id="set" value="file:design.md#viewer" style="min-height: 44px; padding: 0 12px; border: 1px solid #484f58; border-radius: 6px; font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 14px">
+</div>
+<div style="flex: 1 1 160px; min-width: 0; display: flex; flex-direction: column; gap: 6px">
+<label for="rev" style="font-weight: 600">At least revision</label>
+<input id="rev" placeholder="Any recent" style="min-height: 44px; padding: 0 12px; border: 1px solid #484f58; border-radius: 6px; font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 14px">
+</div>
+<button type="button" style="min-height: 44px; padding: 0 22px; background: #2563c7; color: #ffffff; border: 0; border-radius: 6px; font: inherit; font-weight: 600">Expand</button>
+</form>
+<div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start">
+<section aria-label="Tree" style="flex: 999 1 560px; min-width: 0; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 12px; overflow-x: auto">
+<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px">
+<h2 style="margin: 0; font-size: 17px">Tree</h2>
+<span style="color: #9da7b3; font-size: 14px">Expanded at <code style="font-family: ui-monospace, 'Cascadia Code', monospace; color: #e6edf3">1043</code></span>
+</div>
+<ul style="margin: 0; padding-left: 0; list-style: none; font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 14px; line-height: 1.9">
+<li><strong>file:design.md#viewer</strong> <span style="color: #9da7b3">all of these, but not banned</span>
+<ul style="margin: 0; padding-left: 24px; list-style: none; border-left: 1px solid #30363d">
+<li>this <span style="color: #9da7b3">no subjects stored</span></li>
+<li>editor
+<ul style="margin: 0; padding-left: 24px; list-style: none; border-left: 1px solid #30363d">
+<li>owner: <span style="color: #56d364; font-weight: 600">carol</span></li>
+</ul>
+</li>
+<li>parent → <a href="Facts.dc.html">folder:specs</a> → viewer <span style="color: #9da7b3">but not banned</span>
+<ul style="margin: 0; padding-left: 24px; list-style: none; border-left: 1px solid #30363d">
+<li>parent → <a href="Facts.dc.html">folder:root</a> → viewer
+<ul style="margin: 0; padding-left: 24px; list-style: none; border-left: 1px solid #30363d">
+<li>this: <span style="color: #56d364; font-weight: 600">erin</span>, <a href="Facts.dc.html">group:eng#member</a>
+<ul style="margin: 0; padding-left: 24px; list-style: none; border-left: 1px solid #30363d">
+<li><span style="color: #56d364; font-weight: 600">alice</span>, <span style="color: #56d364; font-weight: 600">bob</span></li>
+</ul>
+</li>
+</ul>
+</li>
+<li>banned at folder:specs: <span style="color: #ff7b72; font-weight: 600">erin</span></li>
+</ul>
+</li>
+<li>banned: <span style="color: #ff7b72; font-weight: 600">bob</span></li>
+</ul>
+</li>
+</ul>
+</section>
+<aside aria-label="Result" style="flex: 1 1 320px; min-width: 0; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 17px">Viewers <span style="color: #9da7b3; font-weight: 400">(2)</span></h2>
+<ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; font-family: ui-monospace, 'Cascadia Code', monospace">
+<li style="display: flex; justify-content: space-between; gap: 8px">alice <a href="Check.dc.html" style="font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; font-size: 14px">Why</a></li>
+<li style="display: flex; justify-content: space-between; gap: 8px">carol <a href="Check.dc.html" style="font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; font-size: 14px">Why</a></li>
+</ul>
+<h2 style="margin: 8px 0 0; font-size: 17px">Left out <span style="color: #9da7b3; font-weight: 400">(2)</span></h2>
+<ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; font-size: 14px">
+<li><code style="font-family: ui-monospace, 'Cascadia Code', monospace">bob</code>, banned from the file</li>
+<li><code style="font-family: ui-monospace, 'Cascadia Code', monospace">erin</code>, banned from folder:specs</li>
+</ul>
+</aside>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1000}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

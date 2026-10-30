@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Namespace editor</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+:root{color-scheme:dark}
+a{color:#79b0ff}a:hover{color:#a5c8ff}
+</style>
+</helmet>
+<div style="min-height: 800px; background: #0d1117; color: #e6edf3; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; font-size: 15px">
+<header style="background: #161b22; border-bottom: 1px solid #30363d">
+<div style="max-width: 1200px; margin: 0 auto; padding: 8px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px">
+<div style="position: relative; display: flex; align-items: center; gap: 8px">
+<button type="button" aria-label="Open the Author menu" aria-haspopup="menu" aria-expanded="false" style="min-width: 44px; min-height: 44px; background: transparent; color: #e6edf3; border: 1px solid transparent; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center"><svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="4" height="4" rx="1"></rect><rect x="8" y="2" width="4" height="4" rx="1"></rect><rect x="14" y="2" width="4" height="4" rx="1"></rect><rect x="2" y="8" width="4" height="4" rx="1"></rect><rect x="8" y="8" width="4" height="4" rx="1"></rect><rect x="14" y="8" width="4" height="4" rx="1"></rect><rect x="2" y="14" width="4" height="4" rx="1"></rect><rect x="8" y="14" width="4" height="4" rx="1"></rect><rect x="14" y="14" width="4" height="4" rx="1"></rect></svg></button>
+<a href="Main.dc.html" style="font-weight: 700; font-size: 18px; color: #e6edf3; text-decoration: none">Sungma Author</a>
+<span style="color: #9da7b3; font-size: 16px">/ Namespace editor</span>
+</div>
+<form role="search" style="flex: 1 1 260px; min-width: 0; display: flex">
+<label for="q" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Search everything</label>
+<input id="q" type="search" placeholder="Search namespaces, subjectsets, identities" style="flex: 1 1 auto; min-width: 0; min-height: 44px; padding: 0 12px; background: #0d1117; border: 1px solid #484f58; border-radius: 6px; font: inherit">
+</form>
+<span style="color: #9da7b3; font-size: 14px">Head <code style="font-family: ui-monospace, 'Cascadia Code', monospace; color: #e6edf3">1043</code></span>
+<button type="button" aria-haspopup="menu" aria-expanded="false" style="min-height: 44px; padding: 0 12px; background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; font: inherit; display: inline-flex; align-items: center; gap: 6px">mark <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4.5l3 3 3-3"></path></svg></button>
+</div>
+</header>
+<main style="max-width: 1200px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 20px">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<a href="Namespaces.dc.html" style="font-size: 14px">Namespaces</a>
+<h1 style="margin: 0; font-size: 24px">Edit <code style="font-family: ui-monospace, 'Cascadia Code', monospace">file</code></h1>
+<span style="color: #9da7b3; font-size: 14px">Based on version <code style="font-family: ui-monospace, 'Cascadia Code', monospace; color: #e6edf3">1031</code>. The write is refused if a newer version lands first.</span>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start">
+<section aria-label="Document" style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 8px">
+<label for="doc" style="font-weight: 600">Namespace document</label>
+<textarea id="doc" spellcheck="false" style="min-height: 360px; padding: 16px; background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 8px; font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 14px; line-height: 1.6; resize: vertical">{
+  "file": {
+    "auditor": "this &amp; viewer",
+    "banned": "this",
+    "editor": "this | owner",
+    "owner": "this",
+    "parent": "this",
+    "viewer": "(this | editr | (parent, viewer)) ! banned"
+  }
+}</textarea>
+<div style="display: flex; flex-wrap: wrap; gap: 12px">
+<button type="button" disabled style="min-height: 44px; padding: 0 18px; background: #2a3b57; color: #ffffff; border: 0; border-radius: 6px; font: inherit; font-weight: 600">Write version</button>
+<a href="Namespaces.dc.html" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 18px; background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; text-decoration: none">Cancel</a>
+<button type="button" style="min-height: 44px; padding: 0 18px; margin-left: auto; background: #161b22; color: #ff7b72; border: 1px solid #ff7b72; border-radius: 6px; font: inherit">Retire namespace</button>
+</div>
+</section>
+<aside aria-label="Problems" style="flex: 1 1 320px; min-width: 0; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 17px">Problems <span style="color: #9da7b3; font-weight: 400">(1)</span></h2>
+<ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px">
+<li style="border: 1px solid #6e2b2b; background: #3a1d1d; border-radius: 6px; padding: 12px; display: flex; flex-direction: column; gap: 4px">
+<span style="color: #ff7b72; font-weight: 600">Line 8, column 24</span>
+<span><code style="font-family: ui-monospace, 'Cascadia Code', monospace">viewer</code> names <code style="font-family: ui-monospace, 'Cascadia Code', monospace">editr</code>, which this namespace doesn't declare.</span>
+</li>
+</ul>
+<h2 style="margin: 8px 0 0; font-size: 17px">Relations</h2>
+<ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; color: #9da7b3">
+<li><code style="font-family: ui-monospace, 'Cascadia Code', monospace; color: #e6edf3">auditor</code> unchanged</li>
+<li><code style="font-family: ui-monospace, 'Cascadia Code', monospace; color: #e6edf3">viewer</code> changed</li>
+<li>4 others unchanged</li>
+</ul>
+</aside>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>
