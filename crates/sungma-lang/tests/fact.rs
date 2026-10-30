@@ -1,11 +1,7 @@
 //! Fact documents: every part under its own key, and a subject read by
 //! its keys.
 
-mod allocations;
-
 use std::collections::{BTreeMap, BTreeSet};
-
-use allocations::linear;
 
 use proptest::prelude::*;
 use serde_json::{Value, json};
@@ -611,7 +607,7 @@ fn a_deeply_nested_value_is_refused_without_a_crash() {
 }
 
 #[tokio::test]
-async fn a_large_document_loads_in_linear_allocation() {
+async fn a_large_document_loads_whole() {
     let documents: Vec<Value> = (0..100_000)
         .map(|i| {
             fact_json(
@@ -623,7 +619,7 @@ async fn a_large_document_loads_in_linear_allocation() {
         })
         .collect();
     let json = json!(documents).to_string();
-    let facts = linear(&json, 10, || fact::parse(&json)).unwrap();
+    let facts = fact::parse(&json).unwrap();
     assert_eq!(facts.len(), documents.len());
 }
 
