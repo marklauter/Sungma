@@ -15,7 +15,7 @@ divan = "0.1.21"
 getrandom = "0.4.3"
 http-body-util = "0.1.5"
 libc = "0.2.190"
-parking_lot = "0.12.3"
+parking_lot = "0.13.0"
 proptest = "1.11.0"
 rcgen = "0.14.10"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
