@@ -47,11 +47,13 @@ Single tenancy removes Rauthy's biggest gap. Rauthy has no realms, and Sungma ne
 
 ### Users and groups reach Sungma through SCIM
 
-Sungma implements a SCIM v2 endpoint, and Rauthy pushes user and group changes to it. The endpoint is the anti-corruption layer: it turns SCIM resources into tuples such as `group:eng#member@user:<sub>` and refreshes the display projection.
+Sungma implements a SCIM v2 endpoint, and Rauthy pushes user and group changes to it. Sungma learns about users and groups only through this endpoint. It doesn't read them from Rauthy's API, so it stays independent of the IdP, and development uses the same path as production. Rauthy's admin API is for seeding test users, not for feeding Sungma. The endpoint is the anti-corruption layer: it turns SCIM resources into tuples such as `group:eng#member@user:<sub>` and refreshes the display projection.
 
 Rauthy's event stream doesn't carry group or role changes. Its events cover security and operations: invalid logins, brute force, new users, email changes, password resets, JWKS rotation and health. Sungma may subscribe for side signals, such as ending sessions after `UserPasswordReset`. The stream is SSE without a documented resume cursor, so a consumer reconnects and fills gaps from `/auth/v1/events`.
 
 Watch is separate. It streams Sungma's own tuple changelog, ordered by its timeline, and never depends on Rauthy's delivery.
+
+In development, Rauthy runs in a container, so the SCIM base URL has to name the host as the container sees it, such as `host.containers.internal`. `localhost` would point back at Rauthy's own container.
 
 ### Federated identities
 
