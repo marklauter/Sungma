@@ -53,6 +53,21 @@ A saved view stores its question, its answer, and the revision it was answered a
 
 A query language comes later, if people ask questions that combine reads, such as everyone in eng who can view payroll but isn't in finance. That is joins and set operations across reads: a language of Sungma's own, or one like Cypher or Gremlin, with a parser, a planner and limits on cost. Either way, a question can only ask what Sungma's indexes can answer: today a read by subjectset, and later by subject and by resource.
 
+## Generated views
+
+Someone asks a question in plain words, such as everyone in eng who can view payroll but isn't in finance, and an assistant answers it with a view drawn for that question. This could stand in for the query language: the assistant combines the reads, and no one learns a grammar.
+
+1. **Sungma's reads as tools.** An MCP server in front of Check, Expand and Read, built on `rmcp`, the official Rust MCP SDK. Author's assistant uses it, and so can outside assistants such as Copilot or Claude.
+2. **A model that can call tools.** Author's back end calls the Claude API with those tools. There's no official Rust SDK, so it's `reqwest` and serde types. The model picks the reads and returns a view spec.
+3. **A view spec.** JSON naming components from a fixed set: a table, a tree for an expand, a list of facts, and the trail behind a check. Author validates it against a schema and refuses anything outside the set. Google's A2UI is a published format of this kind to adopt or copy.
+4. **Rendering.** Author's own server-side templates, such as Askama or Maud, render each component, and HTMX swaps the view in. The model never writes HTML, and no generated code reaches the browser.
+5. **Outside assistants.** MCP Apps, the MCP extension for UI, can show Author's components inside Copilot's or Claude's chat.
+
+Two rules keep it safe:
+
+- **Generated views only read.** Access changes go through the pending batch, so every write is one a person reviewed on a known screen.
+- **A generated view saves its calls and its revision**, like a saved view, so an auditor can replay it even though no one designed that screen.
+
 ## Favorites
 
 Pinned items are favorites, reachable from every page, not only from Home.
