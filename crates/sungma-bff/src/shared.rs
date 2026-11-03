@@ -3,40 +3,41 @@ use std::{collections::HashMap, future::Future, sync::Arc};
 use parking_lot::Mutex;
 use tokio::sync::watch;
 
-/// Refreshes running or still fresh, by the refresh token each one spends.
-/// Requests that find a token about to expire at once share one refresh:
-/// an identity provider that rotates refresh tokens accepts each only
-/// once, and refuses the rest.
-pub(crate) struct Refreshes<T> {
+/// Work done once for every request that asks for it at the same time,
+/// such as a refresh or a fetch of the signing keys, and its result
+/// shared until a time, by key. A refresh is keyed by the refresh token it
+/// spends: an identity provider that rotates refresh tokens accepts each
+/// only once, and refuses the rest.
+pub(crate) struct Shared<T> {
     entries: Arc<Mutex<HashMap<String, Entry<T>>>>,
 }
 
 enum Entry<T> {
-    /// A refresh running in a task of its own. Its result arrives on the
+    /// Work running in a task of its own. Its result arrives on the
     /// channel.
     Running(watch::Receiver<Option<T>>),
-    /// A refresh's result, shared until `until`, in nanoseconds since the
+    /// The work's result, shared until `until`, in nanoseconds since the
     /// Unix epoch.
     Done { value: T, until: u64 },
 }
 
-impl<T: Clone + Send + Sync + 'static> Refreshes<T> {
+impl<T: Clone + Send + Sync + 'static> Shared<T> {
     pub fn new() -> Self {
         Self {
             entries: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    /// The result of refreshing `refresh` at `now`: a result still shared,
-    /// the result of a refresh already running, or of a new one that
-    /// `start` makes. A new refresh runs in a task of its own, so it lands
-    /// even if every request waiting on it goes away, and every waiting
-    /// request gets its result.
+    /// The result of the work under `key` at `now`: a result still shared,
+    /// the result of work already running, or of new work that `start`
+    /// makes. New work runs in a task of its own, so it lands even if every
+    /// request waiting on it goes away, and every waiting request gets its
+    /// result.
     ///
     /// `start`'s future yields the result and when it stops being shared,
     /// or `None` to give it only to the requests already waiting. `None`
     /// comes back if the task ended without a result.
-    pub async fn run<F>(&self, refresh: &str, now: u64, start: impl FnOnce() -> F) -> Option<T>
+    pub async fn run<F>(&self, key: &str, now: u64, start: impl FnOnce() -> F) -> Option<T>
     where
         F: Future<Output = (T, Option<u64>)> + Send + 'static,
     {
@@ -48,17 +49,17 @@ impl<T: Clone + Send + Sync + 'static> Refreshes<T> {
                 // running; dropping it lets the next request start over.
                 Entry::Running(result) => result.has_changed().is_ok(),
             });
-            match entries.get(refresh) {
+            match entries.get(key) {
                 Some(Entry::Done { value, .. }) => return Some(value.clone()),
                 Some(Entry::Running(result)) => result.clone(),
                 None => {
                     let (sender, result) = watch::channel(None);
-                    entries.insert(refresh.to_owned(), Entry::Running(result.clone()));
+                    entries.insert(key.to_owned(), Entry::Running(result.clone()));
                     let entries = Arc::clone(&self.entries);
-                    let key = refresh.to_owned();
-                    let refreshing = start();
+                    let key = key.to_owned();
+                    let working = start();
                     tokio::spawn(async move {
-                        let (value, until) = refreshing.await;
+                        let (value, until) = working.await;
                         match until {
                             Some(until) => {
                                 let done = Entry::Done {
@@ -93,9 +94,9 @@ mod tests {
 
     use super::*;
 
-    /// Refreshes whose `start` counts its calls and waits for `go`.
+    /// Shared whose `start` counts its calls and waits for `go`.
     struct Counted {
-        refreshes: Refreshes<u32>,
+        shared: Shared<u32>,
         started: Arc<AtomicUsize>,
         go: Arc<Notify>,
     }
@@ -103,13 +104,13 @@ mod tests {
     impl Counted {
         fn new() -> Self {
             Self {
-                refreshes: Refreshes::new(),
+                shared: Shared::new(),
                 started: Arc::new(AtomicUsize::new(0)),
                 go: Arc::new(Notify::new()),
             }
         }
 
-        /// Refreshes `key` at `now`; a new refresh waits for `go` when
+        /// Runs `key` at `now`; new work waits for `go` when
         /// `wait`, and yields `value`, shared until `until`.
         async fn run(
             &self,
@@ -121,7 +122,7 @@ mod tests {
         ) -> Option<u32> {
             let started = Arc::clone(&self.started);
             let go = Arc::clone(&self.go);
-            self.refreshes
+            self.shared
                 .run(key, now, move || async move {
                     started.fetch_add(1, Ordering::SeqCst);
                     if wait {
@@ -185,10 +186,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_refresh_whose_task_ends_without_a_result_starts_over() {
-        let refreshes = Refreshes::<u32>::new();
-        let failed = refreshes.run("r1", 0, fail).await;
+        let shared = Shared::<u32>::new();
+        let failed = shared.run("r1", 0, fail).await;
         assert_eq!(failed, None);
-        let again = refreshes.run("r1", 0, || async { (2, Some(10)) }).await;
+        let again = shared.run("r1", 0, || async { (2, Some(10)) }).await;
         assert_eq!(again, Some(2));
     }
 }

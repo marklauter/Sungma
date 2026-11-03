@@ -20,11 +20,13 @@ use crate::{
 
 /// Starts a sign-in: keeps a fresh state, nonce and PKCE verifier in the
 /// session, beside the sign-ins already in progress, and sends the
-/// browser to the identity provider.
+/// browser to the identity provider by `HX-Redirect`. It's a POST, so the
+/// header check keeps a cross-site page from starting sign-ins that push
+/// a real one out.
 pub(crate) async fn login(
     State(bff): State<Arc<Bff>>,
     session: Session,
-) -> Result<Redirect, Error> {
+) -> Result<Response, Error> {
     let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
     let mut request = bff
         .client
@@ -47,7 +49,7 @@ pub(crate) async fn login(
     let excess = pending.len().saturating_sub(MAX_PENDING);
     pending.drain(..excess);
     session.insert(PENDING, pending).await?;
-    Ok(Redirect::to(url.as_str()))
+    Ok(([("hx-redirect", url.to_string())], StatusCode::OK).into_response())
 }
 
 /// What the identity provider sends back to the callback.
@@ -84,7 +86,6 @@ pub(crate) async fn callback(
     let response = bff
         .client
         .exchange_code(AuthorizationCode::new(code))
-        .map_err(|error| Error::Token(error.to_string()))?
         .set_pkce_verifier(PkceCodeVerifier::new(sign_in.verifier))
         .request_async(&bff.http)
         .await
@@ -124,6 +125,9 @@ pub(crate) async fn logout(
     session: Session,
 ) -> Result<Response, Error> {
     let signed_in: Option<SignedIn> = session::read(&session, SIGNED_IN).await?;
+    if let Some(id) = session.id() {
+        bff.signed_out.add(id.to_string(), bff.time.wall());
+    }
     session.flush().await?;
     let target = match &bff.end_session {
         Some(endpoint) => {

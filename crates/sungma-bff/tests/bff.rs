@@ -59,8 +59,25 @@ fn app(bff: &Arc<Bff>, store: MemoryStore) -> Router {
         .route("/me", get(|user: User| async move { format!("{user:?}") }))
         .route("/token", get(token))
         .route("/corrupt", get(corrupt))
+        .route("/session", get(peek).put(put))
         .route("/change", post(|| async { "changed" }));
     bff.wrap(routes, store)
+}
+
+/// The signed-in person as the session stores them.
+async fn peek(session: Session) -> axum::Json<serde_json::Value> {
+    let stored = session.get("sungma.bff.signed_in").await.unwrap();
+    axum::Json(stored.unwrap_or_default())
+}
+
+/// Stores `stored` as the signed-in person, as a request that read the
+/// session before another saved it would.
+async fn put(session: Session, axum::Json(stored): axum::Json<serde_json::Value>) -> StatusCode {
+    session
+        .insert("sungma.bff.signed_in", stored)
+        .await
+        .unwrap();
+    StatusCode::OK
 }
 
 /// Stores a signed-in person in a shape the BFF doesn't read, as an older
@@ -140,9 +157,9 @@ async fn the_user_carries_the_id_token_s_claims() {
 #[tokio::test]
 async fn login_asks_for_a_code_with_pkce_and_the_configured_scopes() {
     let mut s = setup().await;
-    let login = s.browser.get("/auth/login").await;
-    assert_eq!(login.status(), StatusCode::SEE_OTHER);
-    let url = Url::parse(&location(&login)).unwrap();
+    let login = s.browser.post("/auth/login", true).await;
+    assert_eq!(login.status(), StatusCode::OK);
+    let url = Url::parse(&header(&login, "hx-redirect").unwrap()).unwrap();
     assert_eq!(
         format!("{}{}", url.origin().ascii_serialization(), url.path()),
         format!("{}/authorize", s.idp.issuer())
@@ -663,7 +680,8 @@ async fn an_origin_with_a_trailing_slash_makes_the_same_urls() {
     config.origin = format!("{ORIGIN}/");
     let bff = Bff::discover(config, s.time.clone()).await.unwrap();
     let mut browser = Browser::new(app(&bff, MemoryStore::default()));
-    let login = Url::parse(&location(&browser.get("/auth/login").await)).unwrap();
+    let login = browser.post("/auth/login", true).await;
+    let login = Url::parse(&header(&login, "hx-redirect").unwrap()).unwrap();
     let redirect = login
         .query_pairs()
         .find(|(key, _)| key == "redirect_uri")
@@ -791,11 +809,16 @@ fn fetch(app: &Router, cookie: &str, uri: &str) -> impl Future<Output = Response
     async move { tower::ServiceExt::oneshot(app, request).await.unwrap() }
 }
 
-/// Yields until `done` holds.
+/// Yields until `done` holds, failing after many yields rather than
+/// waiting forever when it never will.
 async fn until(done: impl Fn() -> bool) {
-    while !done() {
+    for _ in 0..100_000 {
+        if done() {
+            return;
+        }
         tokio::task::yield_now().await;
     }
+    panic!("never came to pass");
 }
 
 #[tokio::test]
@@ -936,4 +959,98 @@ async fn a_refreshed_id_token_that_fails_a_check_besides_its_signature_keeps_the
         .find(|(key, _)| key == "id_token_hint")
         .map(|(_, value)| value.into_owned());
     assert_eq!(hint, signed_in_with);
+}
+
+#[tokio::test]
+async fn a_refresh_that_lands_after_sign_out_doesn_t_sign_the_person_back_in() {
+    let mut s = setup().await;
+    s.browser.sign_in().await;
+    let cookie = s.browser.cookie().unwrap().to_owned();
+    s.idp.behave(|b| b.hold_refresh = true);
+    s.time.advance(Duration::from_secs(300));
+    let refreshing = fetch(&s.app, &cookie, "/token");
+    let idp = &s.idp;
+    let mut browser = Browser::new(s.app.clone());
+    browser.set_cookie(Some(cookie.clone()));
+    let (_, ()) = tokio::join!(refreshing, async {
+        until(|| idp.token_requests() == 2).await;
+        // The person signs out while the refresh is out.
+        let logout = browser.post("/auth/logout", true).await;
+        assert_eq!(logout.status(), StatusCode::OK);
+        idp.release();
+    });
+    let mut stale = Browser::new(s.app.clone());
+    stale.set_cookie(Some(cookie));
+    assert!(!signed_in(&mut stale).await);
+}
+
+#[tokio::test]
+async fn a_refresh_without_an_expiry_is_shared_with_requests_that_read_the_session_before_it() {
+    let mut s = setup().await;
+    s.browser.sign_in().await;
+    let before = text(s.browser.get("/session").await).await;
+    s.idp.behave(|b| b.access_token_lifetime = None);
+    s.time.advance(Duration::from_secs(300));
+    let refreshed = text(s.browser.get("/token").await).await;
+    assert_eq!(s.idp.token_requests(), 2);
+    // A request that read the session before the refresh saved it still
+    // holds the spent refresh token.
+    let request = Request::put("/session")
+        .header("hx-request", "true")
+        .header("content-type", "application/json")
+        .body(Body::from(before))
+        .unwrap();
+    s.browser.send(request).await;
+    let token = s.browser.get("/token").await;
+    assert_eq!(token.status(), StatusCode::OK);
+    assert_eq!(text(token).await, refreshed);
+    assert_eq!(s.idp.token_requests(), 2);
+}
+
+#[tokio::test]
+async fn discovery_refuses_an_identity_provider_without_a_token_endpoint() {
+    let s = setup().await;
+    s.idp.behave(|b| b.token_endpoint = false);
+    let error = Bff::discover(s.idp.config(), s.time.clone()).await.err();
+    assert!(matches!(error, Some(Error::Config(_))), "{error:?}");
+}
+
+#[tokio::test]
+async fn an_identity_provider_that_signs_only_with_a_shared_secret_is_refused() {
+    let s = setup().await;
+    s.idp.behave(|b| b.hmac = true);
+    let error = Bff::discover(s.idp.config(), s.time.clone()).await.err();
+    assert!(matches!(error, Some(Error::Config(_))), "{error:?}");
+}
+
+#[tokio::test]
+async fn an_id_token_signed_with_a_shared_secret_is_refused() {
+    let mut s = setup().await;
+    s.idp.behave(|b| b.hmac = true);
+    assert_eq!(s.browser.sign_in().await.status(), StatusCode::BAD_REQUEST);
+    assert!(!signed_in(&mut s.browser).await);
+}
+
+#[tokio::test]
+async fn sign_in_starts_from_an_htmx_post() {
+    let mut s = setup().await;
+    assert_eq!(
+        s.browser.get("/auth/login").await.status(),
+        StatusCode::METHOD_NOT_ALLOWED
+    );
+    assert_eq!(
+        s.browser.post("/auth/login", false).await.status(),
+        StatusCode::FORBIDDEN
+    );
+    let login = s.browser.post("/auth/login", true).await;
+    assert_eq!(login.status(), StatusCode::OK);
+    let authorize = Url::parse(&header(&login, "hx-redirect").unwrap()).unwrap();
+    assert_eq!(
+        format!(
+            "{}{}",
+            authorize.origin().ascii_serialization(),
+            authorize.path()
+        ),
+        format!("{}/authorize", s.idp.issuer())
+    );
 }

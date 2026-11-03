@@ -25,7 +25,7 @@ use openidconnect::{
     IssuerUrl, JsonWebKeyId, LocalizedClaim, Nonce, PkceCodeChallenge, PkceCodeVerifier,
     PrivateSigningKey, StandardClaims, SubjectIdentifier,
     core::{
-        CoreEdDsaPrivateSigningKey, CoreIdToken, CoreIdTokenClaims, CoreJsonWebKeySet,
+        CoreEdDsaPrivateSigningKey, CoreHmacKey, CoreIdToken, CoreIdTokenClaims, CoreJsonWebKeySet,
         CoreJwsSigningAlgorithm,
     },
     reqwest,
@@ -95,6 +95,11 @@ pub struct Behavior {
     /// Spend the refresh token, then hold the answer until the test calls
     /// [`FakeIdp::release`].
     pub hold_refresh: bool,
+    /// Name a token endpoint in discovery.
+    pub token_endpoint: bool,
+    /// Sign ID tokens with HS256 under the client secret, and say so in
+    /// discovery, instead of with the signing key.
+    pub hmac: bool,
 }
 
 impl Default for Behavior {
@@ -117,6 +122,8 @@ impl Default for Behavior {
             id_token_on_refresh: false,
             rotate_refresh: true,
             hold_refresh: false,
+            token_endpoint: true,
+            hmac: false,
         }
     }
 }
@@ -256,18 +263,22 @@ fn signing_key(kid: &str) -> CoreEdDsaPrivateSigningKey {
 
 async fn discovery(State(fake): State<Arc<Fake>>) -> Json<serde_json::Value> {
     let issuer = &fake.issuer;
+    let behavior = fake.behavior.lock().clone();
+    let alg = if behavior.hmac { "HS256" } else { "EdDSA" };
     let mut metadata = json!({
         "issuer": issuer,
         "authorization_endpoint": format!("{issuer}/authorize"),
-        "token_endpoint": format!("{issuer}/token"),
         "jwks_uri": format!("{issuer}/jwks"),
         "response_types_supported": ["code"],
         "subject_types_supported": ["public"],
-        "id_token_signing_alg_values_supported": ["EdDSA"],
+        "id_token_signing_alg_values_supported": [alg],
         "token_endpoint_auth_methods_supported": ["client_secret_basic"],
         "code_challenge_methods_supported": ["S256"],
     });
-    if fake.behavior.lock().end_session {
+    if behavior.token_endpoint {
+        metadata["token_endpoint"] = json!(format!("{issuer}/token"));
+    }
+    if behavior.end_session {
         metadata["end_session_endpoint"] = json!(format!("{issuer}/end_session"));
     }
     Json(metadata)
@@ -469,13 +480,24 @@ fn id_token(
     } else {
         access.clone()
     };
-    let token = CoreIdToken::new(
-        claims,
-        key,
-        CoreJwsSigningAlgorithm::EdDsa,
-        Some(&hashed),
-        None,
-    )
+    let token = if behavior.hmac {
+        let secret = CoreHmacKey::new(CLIENT_SECRET);
+        CoreIdToken::new(
+            claims,
+            &secret,
+            CoreJwsSigningAlgorithm::HmacSha256,
+            None,
+            None,
+        )
+    } else {
+        CoreIdToken::new(
+            claims,
+            key,
+            CoreJwsSigningAlgorithm::EdDsa,
+            Some(&hashed),
+            None,
+        )
+    }
     .expect("a signed ID token")
     .to_string();
     *fake.last_id_token.lock() = Some(token.clone());
@@ -555,8 +577,13 @@ impl Browser {
     /// provider, returning the callback path and query the identity
     /// provider sends the browser back to.
     pub async fn start_sign_in(&mut self) -> String {
-        let login = self.get("/auth/login").await;
-        let authorize = location(&login);
+        let login = self.post("/auth/login", true).await;
+        let authorize = login
+            .headers()
+            .get("hx-redirect")
+            .and_then(|v| v.to_str().ok())
+            .expect("an HX-Redirect to the identity provider")
+            .to_owned();
         let back = self
             .http
             .get(authorize)

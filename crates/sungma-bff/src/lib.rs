@@ -9,7 +9,8 @@
 //!
 //! [`Bff::wrap`] adds the BFF's routes and layers to an app:
 //!
-//! - `GET /auth/login` sends the browser to the identity provider.
+//! - `POST /auth/login` sends the browser to the identity provider, by
+//!   `HX-Redirect`.
 //! - `GET /auth/callback` takes it back, trades the code for tokens and
 //!   checks the ID token.
 //! - `POST /auth/logout` ends the session and sends the browser to the
@@ -22,9 +23,10 @@
 mod bff;
 mod error;
 mod header;
-mod refreshes;
 mod routes;
 mod session;
+mod shared;
+mod signed_out;
 #[cfg(feature = "testkit")]
 pub mod testkit;
 

@@ -21,10 +21,10 @@ use sungma_clock::TimeSource;
 use tower_sessions::{Session, SessionManagerLayer, SessionStore, cookie::SameSite};
 
 use crate::{
-    Error, User, header,
-    refreshes::Refreshes,
-    routes,
+    Error, User, header, routes,
     session::{self, SIGNED_IN, SignedIn, Tokens},
+    shared::Shared,
+    signed_out::SignedOut,
 };
 
 /// An access token is refreshed this long before it expires, or halfway
@@ -36,17 +36,21 @@ const SKEW: Duration = Duration::from_secs(60);
 /// most this often.
 const REFETCH: Duration = Duration::from_secs(60);
 
+/// A refresh whose access token has no expiry is shared this long, with
+/// requests that read the session before the refresh saved it.
+const GRACE: Duration = Duration::from_secs(60);
+
 /// The session cookie's name.
 const COOKIE: &str = "sungma";
 
-/// The OIDC client discovery builds: an authorization endpoint, and a
-/// token endpoint if the identity provider names one.
+/// The OIDC client discovery builds: an authorization endpoint and a
+/// token endpoint.
 pub(crate) type Client = CoreClient<
     EndpointSet,
     EndpointNotSet,
     EndpointNotSet,
     EndpointNotSet,
-    EndpointMaybeSet,
+    EndpointSet,
     EndpointMaybeSet,
 >;
 
@@ -79,7 +83,8 @@ pub struct Bff {
     pub(crate) end_session: Option<EndSessionUrl>,
     pub(crate) post_logout: PostLogoutRedirectUrl,
     sign_in_page: String,
-    refreshes: Refreshes<Result<SignedIn, Failure>>,
+    refreshes: Shared<Result<SignedIn, Failure>>,
+    pub(crate) signed_out: SignedOut,
     id_tokens: IdTokens,
 }
 
@@ -87,17 +92,13 @@ pub struct Bff {
 /// identity provider rotates them.
 struct IdTokens {
     issuer: IssuerUrl,
-    secret: ClientSecret,
+    /// The algorithms the identity provider signs with, less those that
+    /// sign with a shared secret or not at all: an ID token must be signed
+    /// with a key only the identity provider holds.
     algs: Vec<CoreJwsSigningAlgorithm>,
     keys_url: JsonWebKeySetUrl,
-    keys: Mutex<Keys>,
-}
-
-struct Keys {
-    set: CoreJsonWebKeySet,
-    /// When the keys were last fetched again, in nanoseconds since the
-    /// Unix epoch.
-    refetched: Option<u64>,
+    keys: Mutex<Arc<CoreJsonWebKeySet>>,
+    fetches: Shared<Arc<CoreJsonWebKeySet>>,
 }
 
 /// Why a refresh failed. A refresh's result is shared among the requests
@@ -151,22 +152,33 @@ impl Bff {
             .await
             .map_err(|error| Error::Discovery(error.to_string()))?;
         let end_session = metadata.additional_metadata().end_session_endpoint.clone();
-        let secret = ClientSecret::new(config.client_secret);
+        let token_url = metadata.token_endpoint().cloned().ok_or_else(|| {
+            Error::Config("the identity provider names no token endpoint".to_owned())
+        })?;
+        let algs: Vec<_> = metadata
+            .id_token_signing_alg_values_supported()
+            .iter()
+            .filter(|alg| !shared_secret(alg))
+            .cloned()
+            .collect();
+        if algs.is_empty() {
+            return Err(Error::Config(
+                "the identity provider signs ID tokens with no private key".to_owned(),
+            ));
+        }
         let id_tokens = IdTokens {
             issuer: metadata.issuer().clone(),
-            secret: secret.clone(),
-            algs: metadata.id_token_signing_alg_values_supported().clone(),
+            algs,
             keys_url: metadata.jwks_uri().clone(),
-            keys: Mutex::new(Keys {
-                set: metadata.jwks().clone(),
-                refetched: None,
-            }),
+            keys: Mutex::new(Arc::new(metadata.jwks().clone())),
+            fetches: Shared::new(),
         };
         let client = CoreClient::from_provider_metadata(
             metadata,
             ClientId::new(config.client_id),
-            Some(secret),
+            Some(ClientSecret::new(config.client_secret)),
         )
+        .set_token_uri(token_url)
         .set_redirect_uri(redirect);
         Ok(Arc::new(Self {
             client,
@@ -176,7 +188,8 @@ impl Bff {
             end_session,
             post_logout,
             sign_in_page: config.sign_in_page,
-            refreshes: Refreshes::new(),
+            refreshes: Shared::new(),
+            signed_out: SignedOut::new(),
             id_tokens,
         }))
     }
@@ -184,6 +197,9 @@ impl Bff {
     /// Adds the BFF's routes to `app`, and its layers around both: the
     /// session, the BFF itself for the [`User`](crate::User) extractor,
     /// and the header check. `store` keeps the sessions.
+    ///
+    /// The layers cover the routes `app` holds when it is wrapped, and no
+    /// route added after, so wrap the app last.
     pub fn wrap<S: SessionStore + Clone>(self: &Arc<Self>, app: Router, store: S) -> Router {
         let sessions = SessionManagerLayer::new(store)
             .with_name(COOKIE)
@@ -194,7 +210,7 @@ impl Bff {
             // cookie to find the sign-in it finishes.
             .with_same_site(SameSite::Lax);
         let auth = Router::new()
-            .route("/auth/login", get(routes::login))
+            .route("/auth/login", post(routes::login))
             .route("/auth/callback", get(routes::callback))
             .route("/auth/logout", post(routes::logout))
             .with_state(Arc::clone(self));
@@ -230,15 +246,25 @@ impl Bff {
             .refreshes
             .run(&refresh, now, move || async move {
                 let refreshed = bff.refresh(spent, &signed_in).await;
-                // Shared until it is due for a refresh of its own.
-                let until = refreshed
-                    .as_ref()
-                    .ok()
-                    .and_then(|refreshed| refreshed.tokens.refresh_at);
+                // Shared until it is due for a refresh of its own, and a
+                // while when it never is. A failure isn't shared past the
+                // requests waiting on it.
+                let until = refreshed.as_ref().ok().map(|refreshed| {
+                    refreshed
+                        .tokens
+                        .refresh_at
+                        .unwrap_or_else(|| now.saturating_add(nanos(GRACE)))
+                });
                 (refreshed, until)
             })
             .await
             .unwrap_or_else(|| Err(Failure::Unavailable("the refresh ended".to_owned())));
+        // The person may have signed out while the refresh was out;
+        // saving the session would sign them back in.
+        let id = session.id().map(|id| id.to_string()).unwrap_or_default();
+        if self.signed_out.contains(&id, self.time.wall()) {
+            return Err(Error::SignedOut);
+        }
         match refreshed {
             Ok(refreshed) => {
                 session.insert(SIGNED_IN, &refreshed).await?;
@@ -257,11 +283,14 @@ impl Bff {
     /// fails another check leaves the old ID token in place, since the
     /// identity provider has spent `refresh` and the new tokens are the
     /// only good ones.
-    async fn refresh(&self, refresh: String, old: &SignedIn) -> Result<SignedIn, Failure> {
+    async fn refresh(
+        self: &Arc<Self>,
+        refresh: String,
+        old: &SignedIn,
+    ) -> Result<SignedIn, Failure> {
         let response = self
             .client
             .exchange_refresh_token(&RefreshToken::new(refresh.clone()))
-            .map_err(|error| Failure::Unavailable(error.to_string()))?
             .request_async(&self.http)
             .await
             .map_err(|error| match error {
@@ -304,43 +333,44 @@ impl Bff {
     /// Checks an ID token and returns its claims: its signature, issuer,
     /// audience and expiry, its nonce by `nonce`, and that `access` is the
     /// access token it was issued with, not another person's swapped in.
-    /// A key id the signing keys don't hold fetches them again, at most
-    /// once a [`REFETCH`], as the identity provider may have rotated them.
+    /// A key id the signing keys don't hold fetches them again, as the
+    /// identity provider may have rotated them: once for all the requests
+    /// that need it at the same time, and at most once a [`REFETCH`].
     pub(crate) async fn claims(
-        &self,
+        self: &Arc<Self>,
         id_token: &CoreIdToken,
         access: &AccessToken,
         nonce: impl NonceVerifier + Copy,
     ) -> Result<CoreIdTokenClaims, Check> {
-        let keys = self.id_tokens.keys.lock().set.clone();
-        match self.check(id_token, access, nonce, keys) {
-            Err(Check::NoKey) => match self.refetch_keys().await {
-                Some(keys) => self.check(id_token, access, nonce, keys),
-                None => Err(Check::NoKey),
-            },
+        let keys = Arc::clone(&self.id_tokens.keys.lock());
+        match self.check(id_token, access, nonce, &keys) {
+            Err(Check::NoKey) => {
+                let keys = self.fetch_keys().await;
+                self.check(id_token, access, nonce, &keys)
+            }
             checked => checked,
         }
     }
 
-    /// The signing keys, fetched again, or `None` if they were fetched
-    /// less than a [`REFETCH`] ago or can't be.
-    async fn refetch_keys(&self) -> Option<CoreJsonWebKeySet> {
+    /// The signing keys, fetched again unless they were less than a
+    /// [`REFETCH`] ago, in which case that fetch's keys. A fetch that fails
+    /// leaves the keys as they were.
+    async fn fetch_keys(self: &Arc<Self>) -> Arc<CoreJsonWebKeySet> {
         let now = self.time.wall();
-        {
-            let mut keys = self.id_tokens.keys.lock();
-            if keys
-                .refetched
-                .is_some_and(|at| now < at.saturating_add(nanos(REFETCH)))
-            {
-                return None;
-            }
-            keys.refetched = Some(now);
-        }
-        let set = CoreJsonWebKeySet::fetch_async(&self.id_tokens.keys_url, &self.http)
+        let bff = Arc::clone(self);
+        self.id_tokens
+            .fetches
+            .run("keys", now, move || async move {
+                let fetched =
+                    CoreJsonWebKeySet::fetch_async(&bff.id_tokens.keys_url, &bff.http).await;
+                if let Ok(keys) = fetched {
+                    *bff.id_tokens.keys.lock() = Arc::new(keys);
+                }
+                let keys = Arc::clone(&bff.id_tokens.keys.lock());
+                (keys, Some(now.saturating_add(nanos(REFETCH))))
+            })
             .await
-            .ok()?;
-        self.id_tokens.keys.lock().set = set.clone();
-        Some(set)
+            .unwrap_or_else(|| Arc::clone(&self.id_tokens.keys.lock()))
     }
 
     fn check(
@@ -348,7 +378,7 @@ impl Bff {
         id_token: &CoreIdToken,
         access: &AccessToken,
         nonce: impl NonceVerifier,
-        keys: CoreJsonWebKeySet,
+        keys: &CoreJsonWebKeySet,
     ) -> Result<CoreIdTokenClaims, Check> {
         let verifier = self.verifier(keys);
         let claims = id_token
@@ -391,21 +421,33 @@ impl Bff {
         })
     }
 
-    /// An ID token verifier for `keys`, on the BFF's clock.
-    fn verifier(&self, keys: CoreJsonWebKeySet) -> CoreIdTokenVerifier<'static> {
+    /// An ID token verifier for `keys`, on the BFF's clock. It holds no
+    /// client secret, so it can't check a signature made with one.
+    fn verifier(&self, keys: &CoreJsonWebKeySet) -> CoreIdTokenVerifier<'static> {
         let time = Arc::clone(&self.time);
-        CoreIdTokenVerifier::new_confidential_client(
+        // The verifier takes the keys by value.
+        CoreIdTokenVerifier::new_public_client(
             self.client.client_id().clone(),
-            self.id_tokens.secret.clone(),
             self.id_tokens.issuer.clone(),
-            keys,
+            keys.clone(),
         )
         .set_allowed_algs(self.id_tokens.algs.clone())
         .set_time_fn(move || utc(time.wall()))
     }
 }
 
-fn nanos(duration: Duration) -> u64 {
+/// Whether `alg` signs with a secret the client shares, or not at all.
+fn shared_secret(alg: &CoreJwsSigningAlgorithm) -> bool {
+    matches!(
+        alg,
+        CoreJwsSigningAlgorithm::HmacSha256
+            | CoreJwsSigningAlgorithm::HmacSha384
+            | CoreJwsSigningAlgorithm::HmacSha512
+            | CoreJwsSigningAlgorithm::None
+    )
+}
+
+pub(crate) fn nanos(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
 
