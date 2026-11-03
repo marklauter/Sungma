@@ -24,6 +24,8 @@ const START: u64 = 1_800_000_000_000_000_000;
 struct Setup {
     idp: FakeIdp,
     time: Arc<ManualTime>,
+    store: MemoryStore,
+    app: Router,
     browser: Browser,
 }
 
@@ -39,17 +41,34 @@ async fn setup_with(before_discovery: impl FnOnce(&FakeIdp)) -> Setup {
     let idp = FakeIdp::start(time.clone()).await;
     before_discovery(&idp);
     let bff = Bff::discover(idp.config(), time.clone()).await.unwrap();
-    let browser = Browser::new(app(&bff));
-    Setup { idp, time, browser }
+    let store = MemoryStore::default();
+    let app = app(&bff, store.clone());
+    let browser = Browser::new(app.clone());
+    Setup {
+        idp,
+        time,
+        store,
+        app,
+        browser,
+    }
 }
 
-fn app(bff: &Arc<Bff>) -> Router {
+fn app(bff: &Arc<Bff>, store: MemoryStore) -> Router {
     let routes = Router::new()
         .route("/", get(|user: User| async move { user.subject }))
         .route("/me", get(|user: User| async move { format!("{user:?}") }))
         .route("/token", get(token))
+        .route("/corrupt", get(corrupt))
         .route("/change", post(|| async { "changed" }));
-    bff.wrap(routes, MemoryStore::default())
+    bff.wrap(routes, store)
+}
+
+/// Stores a signed-in person in a shape the BFF doesn't read, as an older
+/// or newer release would have.
+async fn corrupt(session: Session) -> StatusCode {
+    let other = serde_json::json!({ "user": "alice" });
+    session.insert("sungma.bff.signed_in", other).await.unwrap();
+    StatusCode::OK
 }
 
 async fn token(Extension(bff): Extension<Arc<Bff>>, session: Session) -> Result<String, Error> {
@@ -204,7 +223,13 @@ async fn a_callback_with_another_state_is_refused() {
         StatusCode::BAD_REQUEST
     );
     assert!(!signed_in(&mut s.browser).await);
-    // The sign-in is spent: the real callback is refused too.
+    // A forged callback doesn't spend the real sign-in.
+    assert_eq!(
+        s.browser.get(&callback).await.status(),
+        StatusCode::SEE_OTHER
+    );
+    assert!(signed_in(&mut s.browser).await);
+    // A finished sign-in is spent.
     assert_eq!(
         s.browser.get(&callback).await.status(),
         StatusCode::BAD_REQUEST
@@ -243,9 +268,10 @@ async fn a_stolen_code_is_refused_by_pkce() {
     // The thief starts a sign-in of their own, so the state matches, and
     // swaps in the victim's code; their verifier doesn't match its
     // challenge.
-    let mut thief = Browser::new(app(&Bff::discover(s.idp.config(), s.time.clone())
-        .await
-        .unwrap()));
+    let mut thief = Browser::new(app(
+        &Bff::discover(s.idp.config(), s.time.clone()).await.unwrap(),
+        MemoryStore::default(),
+    ));
     let own = thief.start_sign_in().await;
     let swapped = with_param(&own, "code", Some(&code));
     assert_eq!(thief.get(&swapped).await.status(), StatusCode::BAD_REQUEST);
@@ -266,7 +292,7 @@ async fn a_wrong_client_secret_is_refused() {
     let mut config = s.idp.config();
     config.client_secret = "wrong".to_owned();
     let bff = Bff::discover(config, s.time.clone()).await.unwrap();
-    s.browser = Browser::new(app(&bff));
+    s.browser = Browser::new(app(&bff, MemoryStore::default()));
     assert_eq!(s.browser.sign_in().await.status(), StatusCode::BAD_REQUEST);
     assert!(!signed_in(&mut s.browser).await);
 }
@@ -524,4 +550,232 @@ async fn the_bff_names_its_sign_in_page() {
     let s = setup().await;
     let bff = Bff::discover(s.idp.config(), s.time.clone()).await.unwrap();
     assert_eq!(bff.sign_in_page(), "/signin");
+}
+
+#[tokio::test]
+async fn concurrent_requests_share_one_refresh() {
+    let mut s = setup().await;
+    s.browser.sign_in().await;
+    s.time.advance(Duration::from_secs(300));
+    // Three fragments of one page ask for the token at once. The fake
+    // spends a refresh token on first use, as Rauthy does.
+    let cookie = format!("sungma={}", s.browser.cookie().unwrap());
+    let request = || {
+        let app = s.app.clone();
+        let request = Request::get("/token")
+            .header("cookie", &cookie)
+            .body(Body::empty())
+            .unwrap();
+        async move { tower::ServiceExt::oneshot(app, request).await.unwrap() }
+    };
+    let (a, b, c) = tokio::join!(request(), request(), request());
+    assert_eq!([a.status(), b.status(), c.status()], [StatusCode::OK; 3]);
+    let (a, b, c) = (text(a).await, text(b).await, text(c).await);
+    assert_eq!((&a, &b), (&c, &c));
+    assert_eq!(s.idp.token_requests(), 2);
+    assert!(signed_in(&mut s.browser).await);
+}
+
+#[tokio::test]
+async fn an_identity_provider_that_is_down_doesn_t_sign_the_person_out() {
+    let mut s = setup().await;
+    s.browser.sign_in().await;
+    s.idp.behave(|b| b.refresh_server_error = true);
+    s.time.advance(Duration::from_secs(300));
+    assert_eq!(
+        s.browser.get("/token").await.status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert!(signed_in(&mut s.browser).await);
+    // Back up, the refresh token still works.
+    s.idp.behave(|b| b.refresh_server_error = false);
+    assert_eq!(s.browser.get("/token").await.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_refresh_that_never_answers_times_out() {
+    let mut s = setup().await;
+    s.browser.sign_in().await;
+    // A second BFF on the same sessions, with a short timeout. The timeout
+    // bounds only a call that never answers, so it can't race one that
+    // does.
+    let mut config = s.idp.config();
+    config.timeout = Duration::from_millis(200);
+    let impatient = Bff::discover(config, s.time.clone()).await.unwrap();
+    let mut browser = Browser::new(app(&impatient, s.store.clone()));
+    browser.set_cookie(s.browser.cookie().map(str::to_owned));
+    s.idp.behave(|b| b.hang_refresh = true);
+    s.time.advance(Duration::from_secs(300));
+    // Without a timeout the call waits forever; the guard turns that into
+    // a failure.
+    let token = tokio::time::timeout(Duration::from_secs(30), browser.get("/token"))
+        .await
+        .expect("the refresh timed out");
+    assert_eq!(token.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn two_sign_ins_in_one_session_both_finish() {
+    let mut s = setup().await;
+    let first = s.browser.start_sign_in().await;
+    let second = s.browser.start_sign_in().await;
+    assert_eq!(s.browser.get(&first).await.status(), StatusCode::SEE_OTHER);
+    assert_eq!(s.browser.get(&second).await.status(), StatusCode::SEE_OTHER);
+    assert!(signed_in(&mut s.browser).await);
+}
+
+#[tokio::test]
+async fn a_session_in_a_shape_the_bff_no_longer_reads_is_signed_out() {
+    let mut s = setup().await;
+    s.browser.sign_in().await;
+    s.browser.get("/corrupt").await;
+    let home = s.browser.get("/").await;
+    assert_eq!(home.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&home), "/signin");
+    s.browser.sign_in().await;
+    s.browser.get("/corrupt").await;
+    assert_eq!(
+        s.browser.get("/token").await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    s.browser.sign_in().await;
+    s.browser.get("/corrupt").await;
+    let logout = s.browser.post("/auth/logout", true).await;
+    assert_eq!(logout.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_request_whose_htmx_header_is_false_gets_a_plain_redirect() {
+    let mut s = setup().await;
+    let request = Request::get("/")
+        .header("hx-request", "false")
+        .body(Body::empty())
+        .unwrap();
+    let home = s.browser.send(request).await;
+    assert_eq!(home.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&home), "/signin");
+}
+
+#[tokio::test]
+async fn an_origin_with_a_trailing_slash_makes_the_same_urls() {
+    let s = setup().await;
+    let mut config = s.idp.config();
+    config.origin = format!("{ORIGIN}/");
+    let bff = Bff::discover(config, s.time.clone()).await.unwrap();
+    let mut browser = Browser::new(app(&bff, MemoryStore::default()));
+    let login = Url::parse(&location(&browser.get("/auth/login").await)).unwrap();
+    let redirect = login
+        .query_pairs()
+        .find(|(key, _)| key == "redirect_uri")
+        .unwrap()
+        .1
+        .into_owned();
+    assert_eq!(redirect, "http://localhost:8090/auth/callback");
+    let logout = browser.post("/auth/logout", true).await;
+    let target = Url::parse(&header(&logout, "hx-redirect").unwrap()).unwrap();
+    let back = target
+        .query_pairs()
+        .find(|(key, _)| key == "post_logout_redirect_uri")
+        .unwrap()
+        .1
+        .into_owned();
+    assert_eq!(back, "http://localhost:8090/");
+}
+
+#[tokio::test]
+async fn a_short_lived_access_token_is_refreshed_halfway_through_its_life() {
+    let mut s = setup().await;
+    s.idp.behave(|b| b.access_token_lifetime = Some(60));
+    s.browser.sign_in().await;
+    let first = text(s.browser.get("/token").await).await;
+    s.time.advance(Duration::from_secs(29));
+    assert_eq!(text(s.browser.get("/token").await).await, first);
+    assert_eq!(s.idp.token_requests(), 1);
+    s.time.advance(Duration::from_secs(1));
+    assert_ne!(text(s.browser.get("/token").await).await, first);
+    assert_eq!(s.idp.token_requests(), 2);
+}
+
+#[tokio::test]
+async fn sign_out_hints_with_the_id_token_from_the_last_refresh() {
+    let mut s = setup().await;
+    s.browser.sign_in().await;
+    s.idp.behave(|b| b.id_token_on_refresh = true);
+    s.time.advance(Duration::from_secs(300));
+    assert_eq!(s.browser.get("/token").await.status(), StatusCode::OK);
+    let logout = s.browser.post("/auth/logout", true).await;
+    let target = Url::parse(&header(&logout, "hx-redirect").unwrap()).unwrap();
+    let hint = target
+        .query_pairs()
+        .find(|(key, _)| key == "id_token_hint")
+        .unwrap()
+        .1
+        .into_owned();
+    assert_eq!(Some(hint), s.idp.last_id_token());
+}
+
+#[tokio::test]
+async fn a_refreshed_id_token_for_someone_else_signs_the_person_out() {
+    let mut s = setup().await;
+    s.browser.sign_in().await;
+    s.idp.behave(|b| {
+        b.id_token_on_refresh = true;
+        b.subject = "mallory".to_owned();
+    });
+    s.time.advance(Duration::from_secs(300));
+    assert_eq!(
+        s.browser.get("/token").await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert!(!signed_in(&mut s.browser).await);
+}
+
+#[tokio::test]
+async fn a_refreshed_id_token_with_a_bad_signature_signs_the_person_out() {
+    let mut s = setup().await;
+    s.browser.sign_in().await;
+    s.idp.behave(|b| {
+        b.id_token_on_refresh = true;
+        b.wrong_key = true;
+    });
+    s.time.advance(Duration::from_secs(300));
+    assert_eq!(
+        s.browser.get("/token").await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert!(!signed_in(&mut s.browser).await);
+}
+
+#[tokio::test]
+async fn a_session_keeps_the_three_newest_sign_ins() {
+    let mut s = setup().await;
+    let oldest = s.browser.start_sign_in().await;
+    let second = s.browser.start_sign_in().await;
+    s.browser.start_sign_in().await;
+    s.browser.start_sign_in().await;
+    assert_eq!(
+        s.browser.get(&oldest).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(s.browser.get(&second).await.status(), StatusCode::SEE_OTHER);
+}
+
+#[tokio::test]
+async fn a_refresh_refused_for_the_client_doesn_t_sign_the_person_out() {
+    let mut s = setup().await;
+    s.browser.sign_in().await;
+    // A second BFF on the same sessions, with a secret the identity
+    // provider doesn't know: it answers invalid_client, which says the BFF
+    // is misconfigured, not that the person's grant is gone.
+    let mut config = s.idp.config();
+    config.client_secret = "wrong".to_owned();
+    let misconfigured = Bff::discover(config, s.time.clone()).await.unwrap();
+    let mut browser = Browser::new(app(&misconfigured, s.store.clone()));
+    browser.set_cookie(s.browser.cookie().map(str::to_owned));
+    s.time.advance(Duration::from_secs(300));
+    assert_eq!(
+        browser.get("/token").await.status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(s.browser.get("/token").await.status(), StatusCode::OK);
 }

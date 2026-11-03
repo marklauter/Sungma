@@ -22,6 +22,7 @@
 mod bff;
 mod error;
 mod header;
+mod refreshes;
 mod routes;
 mod session;
 #[cfg(feature = "testkit")]

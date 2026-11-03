@@ -81,6 +81,13 @@ pub struct Behavior {
     pub no_id_token: bool,
     /// Name an end-session endpoint in discovery.
     pub end_session: bool,
+    /// Answer every refresh with a 500 and no OAuth error, as a provider
+    /// that's down does.
+    pub refresh_server_error: bool,
+    /// Never answer a refresh.
+    pub hang_refresh: bool,
+    /// Issue a new ID token with each refresh.
+    pub id_token_on_refresh: bool,
 }
 
 impl Default for Behavior {
@@ -98,6 +105,9 @@ impl Default for Behavior {
             wrong_access_hash: false,
             no_id_token: false,
             end_session: true,
+            refresh_server_error: false,
+            hang_refresh: false,
+            id_token_on_refresh: false,
         }
     }
 }
@@ -120,6 +130,7 @@ struct Fake {
     refresh_tokens: Mutex<HashSet<String>>,
     issued: AtomicUsize,
     token_requests: AtomicUsize,
+    last_id_token: Mutex<Option<String>>,
 }
 
 /// A fake identity provider on a random local port, serving discovery,
@@ -147,6 +158,7 @@ impl FakeIdp {
             refresh_tokens: Mutex::new(HashSet::new()),
             issued: AtomicUsize::new(0),
             token_requests: AtomicUsize::new(0),
+            last_id_token: Mutex::new(None),
         });
         let app = Router::new()
             .route("/.well-known/openid-configuration", get(discovery))
@@ -173,12 +185,18 @@ impl FakeIdp {
             origin: ORIGIN.to_owned(),
             scopes: vec!["profile".to_owned(), "email".to_owned()],
             sign_in_page: "/signin".to_owned(),
+            timeout: std::time::Duration::from_secs(30),
         }
     }
 
     /// Changes how the fake behaves from now on.
     pub fn behave(&self, change: impl FnOnce(&mut Behavior)) {
         change(&mut self.fake.behavior.lock());
+    }
+
+    /// The last ID token the fake issued.
+    pub fn last_id_token(&self) -> Option<String> {
+        self.fake.last_id_token.lock().clone()
     }
 
     /// How many requests the token endpoint has had.
@@ -286,7 +304,16 @@ async fn token(
     }
     match request.grant_type.as_str() {
         "authorization_code" => exchange_code(&fake, request),
-        "refresh_token" => exchange_refresh(&fake, request),
+        "refresh_token" => {
+            let behavior = fake.behavior.lock().clone();
+            if behavior.hang_refresh {
+                std::future::pending::<()>().await;
+            }
+            if behavior.refresh_server_error {
+                return (StatusCode::INTERNAL_SERVER_ERROR, "down").into_response();
+            }
+            exchange_refresh(&fake, request)
+        }
         _ => refuse("unsupported_grant_type"),
     }
 }
@@ -309,7 +336,7 @@ fn exchange_code(fake: &Fake, request: TokenRequest) -> Response<Body> {
     let access = fake.access_token();
     let mut body = tokens(fake, &behavior, &access);
     if !behavior.no_id_token {
-        body["id_token"] = json!(id_token(fake, &behavior, grant.nonce, &access).to_string());
+        body["id_token"] = json!(id_token(fake, &behavior, Some(grant.nonce), &access));
     }
     Json(body).into_response()
 }
@@ -323,7 +350,11 @@ fn exchange_refresh(fake: &Fake, request: TokenRequest) -> Response<Body> {
         return refuse("invalid_grant");
     }
     let access = fake.access_token();
-    Json(tokens(fake, &behavior, &access)).into_response()
+    let mut body = tokens(fake, &behavior, &access);
+    if behavior.id_token_on_refresh {
+        body["id_token"] = json!(id_token(fake, &behavior, None, &access));
+    }
+    Json(body).into_response()
 }
 
 impl Fake {
@@ -349,7 +380,14 @@ fn tokens(fake: &Fake, behavior: &Behavior, access: &AccessToken) -> serde_json:
     body
 }
 
-fn id_token(fake: &Fake, behavior: &Behavior, nonce: String, access: &AccessToken) -> CoreIdToken {
+/// A signed ID token, which the fake also keeps as its last. A refresh
+/// issues one without a nonce.
+fn id_token(
+    fake: &Fake,
+    behavior: &Behavior,
+    nonce: Option<String>,
+    access: &AccessToken,
+) -> String {
     let now = DateTime::from_timestamp_nanos(i64::try_from(fake.time.wall()).unwrap_or(i64::MAX));
     let audience = behavior
         .audience
@@ -369,7 +407,7 @@ fn id_token(fake: &Fake, behavior: &Behavior, nonce: String, access: &AccessToke
         standard,
         EmptyAdditionalClaims {},
     )
-    .set_nonce(Some(Nonce::new(behavior.nonce.clone().unwrap_or(nonce))));
+    .set_nonce(behavior.nonce.clone().or(nonce).map(Nonce::new));
     let key = if behavior.wrong_key {
         &fake.wrong_key
     } else {
@@ -380,7 +418,7 @@ fn id_token(fake: &Fake, behavior: &Behavior, nonce: String, access: &AccessToke
     } else {
         access.clone()
     };
-    CoreIdToken::new(
+    let token = CoreIdToken::new(
         claims,
         key,
         CoreJwsSigningAlgorithm::EdDsa,
@@ -388,6 +426,9 @@ fn id_token(fake: &Fake, behavior: &Behavior, nonce: String, access: &AccessToke
         None,
     )
     .expect("a signed ID token")
+    .to_string();
+    *fake.last_id_token.lock() = Some(token.clone());
+    token
 }
 
 fn refuse(error: &str) -> Response<Body> {

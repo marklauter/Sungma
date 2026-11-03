@@ -6,22 +6,28 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use openidconnect::{
-    AccessToken, ClientId, ClientSecret, EndSessionUrl, EndpointMaybeSet, EndpointNotSet,
-    EndpointSet, IssuerUrl, OAuth2TokenResponse, PostLogoutRedirectUrl, ProviderMetadataWithLogout,
-    RedirectUrl, RefreshToken, Scope,
-    core::{CoreClient, CoreIdTokenVerifier},
+    AccessToken, AccessTokenHash, ClientId, ClientSecret, EndSessionUrl, EndpointMaybeSet,
+    EndpointNotSet, EndpointSet, IssuerUrl, Nonce, NonceVerifier, OAuth2TokenResponse,
+    PostLogoutRedirectUrl, ProviderMetadataWithLogout, RedirectUrl, RefreshToken,
+    RequestTokenError, Scope, TokenResponse,
+    core::{
+        CoreClient, CoreErrorResponseType, CoreIdToken, CoreIdTokenClaims, CoreIdTokenVerifier,
+    },
     reqwest,
 };
 use sungma_clock::TimeSource;
 use tower_sessions::{Session, SessionManagerLayer, SessionStore, cookie::SameSite};
 
 use crate::{
-    Error, header, routes,
-    session::{SIGNED_IN, SignedIn},
+    Error, User, header,
+    refreshes::Refreshes,
+    routes,
+    session::{self, SIGNED_IN, SignedIn, Tokens},
 };
 
-/// An access token this close to expiring is refreshed before it's
-/// handed out, so it doesn't expire on its way to Sungma.
+/// An access token is refreshed this long before it expires, or halfway
+/// through its life if that comes first, so it doesn't expire on its way
+/// to Sungma.
 const SKEW: Duration = Duration::from_secs(60);
 
 /// The session cookie's name.
@@ -54,6 +60,8 @@ pub struct Config {
     pub scopes: Vec<String>,
     /// Where a person who isn't signed in is sent, such as `/signin`.
     pub sign_in_page: String,
+    /// How long a call to the identity provider may take.
+    pub timeout: Duration,
 }
 
 /// An OAuth backend-for-frontend for one identity provider.
@@ -65,6 +73,7 @@ pub struct Bff {
     pub(crate) end_session: Option<EndSessionUrl>,
     pub(crate) post_logout: PostLogoutRedirectUrl,
     sign_in_page: String,
+    refreshes: Refreshes<SignedIn>,
 }
 
 impl Bff {
@@ -75,13 +84,16 @@ impl Bff {
         // not followed: the BFF talks only to the URLs discovery gave it.
         let http = reqwest::ClientBuilder::new()
             .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(config.timeout)
+            .timeout(config.timeout)
             .build()
             .map_err(|error| Error::Config(error.to_string()))?;
         let issuer =
             IssuerUrl::new(config.issuer).map_err(|error| Error::Config(error.to_string()))?;
-        let redirect = RedirectUrl::new(format!("{}/auth/callback", config.origin))
+        let origin = config.origin.trim_end_matches('/');
+        let redirect = RedirectUrl::new(format!("{origin}/auth/callback"))
             .map_err(|error| Error::Config(error.to_string()))?;
-        let post_logout = PostLogoutRedirectUrl::new(format!("{}/", config.origin))
+        let post_logout = PostLogoutRedirectUrl::new(format!("{origin}/"))
             .map_err(|error| Error::Config(error.to_string()))?;
         let metadata = ProviderMetadataWithLogout::discover_async(issuer, &http)
             .await
@@ -101,6 +113,7 @@ impl Bff {
             end_session,
             post_logout,
             sign_in_page: config.sign_in_page,
+            refreshes: Refreshes::new(),
         }))
     }
 
@@ -128,46 +141,114 @@ impl Bff {
     }
 
     /// The signed-in person's access token, for a call to Sungma's APIs.
-    /// A token about to expire is refreshed first. A session with no
-    /// sign-in, or whose refresh fails, is ended, and the call gets
-    /// [`Error::SignedOut`].
+    /// A token about to expire is refreshed first, once for all the
+    /// requests that find it so at the same time.
+    ///
+    /// A session with no sign-in, or whose refresh the identity provider
+    /// refuses, is ended, and the call gets [`Error::SignedOut`]. An
+    /// identity provider that can't be reached, or answers with anything
+    /// but a refusal, gets [`Error::Unavailable`], and the session stays.
     pub async fn access_token(&self, session: &Session) -> Result<AccessToken, Error> {
-        let mut signed_in: SignedIn = session.get(SIGNED_IN).await?.ok_or(Error::SignedOut)?;
+        let Some(signed_in) = session::read::<SignedIn>(session, SIGNED_IN).await? else {
+            return Err(Error::SignedOut);
+        };
         let now = self.time.wall();
-        let fresh = signed_in
-            .tokens
-            .expires_at
-            .is_none_or(|at| now < at.saturating_sub(nanos(SKEW)));
-        if fresh {
+        if signed_in.tokens.refresh_at.is_none_or(|at| now < at) {
             return Ok(AccessToken::new(signed_in.tokens.access));
         }
         let Some(refresh) = signed_in.tokens.refresh.clone() else {
             session.flush().await?;
             return Err(Error::SignedOut);
         };
-        let Ok(response) = self.refresh(refresh).await else {
-            session.flush().await?;
-            return Err(Error::SignedOut);
-        };
-        signed_in.tokens.access = response.access_token().secret().clone();
-        signed_in.tokens.expires_at = self.expires_at(response.expires_in());
-        if let Some(refresh) = response.refresh_token() {
-            signed_in.tokens.refresh = Some(refresh.secret().clone());
+        let cell = self.refreshes.cell(&refresh, now);
+        match cell
+            .get_or_try_init(|| self.refresh(refresh, &signed_in))
+            .await
+        {
+            Ok(refreshed) => {
+                session.insert(SIGNED_IN, refreshed).await?;
+                Ok(AccessToken::new(refreshed.tokens.access.clone()))
+            }
+            Err(Error::SignedOut) => {
+                session.flush().await?;
+                Err(Error::SignedOut)
+            }
+            Err(error) => Err(error),
         }
-        session.insert(SIGNED_IN, &signed_in).await?;
-        Ok(response.access_token().clone())
     }
 
-    async fn refresh(
-        &self,
-        refresh: String,
-    ) -> Result<openidconnect::core::CoreTokenResponse, Error> {
-        self.client
-            .exchange_refresh_token(&RefreshToken::new(refresh))
-            .map_err(|error| Error::Token(error.to_string()))?
+    /// Trades `refresh` for new tokens. An ID token that comes back must
+    /// pass the same checks as at sign-in, and name the same person.
+    async fn refresh(&self, refresh: String, old: &SignedIn) -> Result<SignedIn, Error> {
+        let response = self
+            .client
+            .exchange_refresh_token(&RefreshToken::new(refresh.clone()))
+            .map_err(|error| Error::Unavailable(error.to_string()))?
             .request_async(&self.http)
             .await
-            .map_err(|error| Error::Token(error.to_string()))
+            .map_err(|error| match error {
+                RequestTokenError::ServerResponse(response)
+                    if *response.error() == CoreErrorResponseType::InvalidGrant =>
+                {
+                    Error::SignedOut
+                }
+                error => Error::Unavailable(error.to_string()),
+            })?;
+        let mut user = old.user.clone();
+        let mut id_token = old.tokens.id_token.clone();
+        if let Some(token) = response.id_token() {
+            // A refresh's ID token carries no nonce of this sign-in's.
+            let no_nonce = |_: Option<&Nonce>| Ok(());
+            let claims = self
+                .claims(token, response.access_token(), no_nonce)
+                .map_err(|_| Error::SignedOut)?;
+            if claims.subject().as_str() != old.user.subject {
+                return Err(Error::SignedOut);
+            }
+            user = User::from_claims(claims);
+            id_token = token.to_string();
+        }
+        Ok(SignedIn {
+            user,
+            tokens: Tokens {
+                access: response.access_token().secret().clone(),
+                refresh: Some(
+                    response
+                        .refresh_token()
+                        .map_or(refresh, |refresh| refresh.secret().clone()),
+                ),
+                refresh_at: self.refresh_at(response.expires_in()),
+                id_token,
+            },
+        })
+    }
+
+    /// Checks an ID token and returns its claims: its signature, issuer,
+    /// audience and expiry, its nonce by `nonce`, and that `access` is the
+    /// access token it was issued with, not another person's swapped in.
+    pub(crate) fn claims<'t>(
+        &self,
+        id_token: &'t CoreIdToken,
+        access: &AccessToken,
+        nonce: impl NonceVerifier,
+    ) -> Result<&'t CoreIdTokenClaims, Error> {
+        let refused = |error: &dyn std::fmt::Display| Error::IdToken(error.to_string());
+        let verifier = self.verifier();
+        let claims = id_token
+            .claims(&verifier, nonce)
+            .map_err(|error| refused(&error))?;
+        if let Some(expected) = claims.access_token_hash() {
+            let alg = id_token.signing_alg().map_err(|error| refused(&error))?;
+            let key = id_token
+                .signing_key(&verifier)
+                .map_err(|error| refused(&error))?;
+            let actual =
+                AccessTokenHash::from_token(access, alg, key).map_err(|error| refused(&error))?;
+            if actual != *expected {
+                return Err(refused(&"the access token's hash doesn't match"));
+            }
+        }
+        Ok(claims)
     }
 
     /// Where a person who isn't signed in is sent.
@@ -175,13 +256,17 @@ impl Bff {
         &self.sign_in_page
     }
 
-    /// When a token that lasts `lifetime` from now expires.
-    pub(crate) fn expires_at(&self, lifetime: Option<Duration>) -> Option<u64> {
-        lifetime.map(|lifetime| self.time.wall().saturating_add(nanos(lifetime)))
+    /// When to refresh a token that lasts `lifetime` from now: [`SKEW`]
+    /// before it expires, or halfway through its life if that comes first.
+    pub(crate) fn refresh_at(&self, lifetime: Option<Duration>) -> Option<u64> {
+        lifetime.map(|lifetime| {
+            let early = SKEW.min(lifetime / 2);
+            self.time.wall().saturating_add(nanos(lifetime - early))
+        })
     }
 
     /// The ID token verifier, on the BFF's clock.
-    pub(crate) fn verifier(&self) -> CoreIdTokenVerifier<'_> {
+    fn verifier(&self) -> CoreIdTokenVerifier<'_> {
         let time = Arc::clone(&self.time);
         self.client
             .id_token_verifier()

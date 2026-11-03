@@ -6,8 +6,8 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use openidconnect::{
-    AccessTokenHash, AuthorizationCode, CsrfToken, LogoutRequest, Nonce, OAuth2TokenResponse,
-    PkceCodeChallenge, PkceCodeVerifier, TokenResponse,
+    AuthorizationCode, CsrfToken, LogoutRequest, Nonce, OAuth2TokenResponse, PkceCodeChallenge,
+    PkceCodeVerifier, TokenResponse,
     core::{CoreAuthenticationFlow, CoreIdToken},
 };
 use serde::Deserialize;
@@ -15,11 +15,12 @@ use tower_sessions::Session;
 
 use crate::{
     Bff, Error, User,
-    session::{PENDING, Pending, SIGNED_IN, SignedIn, Tokens},
+    session::{self, MAX_PENDING, PENDING, Pending, SIGNED_IN, SignedIn, Tokens},
 };
 
 /// Starts a sign-in: keeps a fresh state, nonce and PKCE verifier in the
-/// session, and sends the browser to the identity provider.
+/// session, beside the sign-ins already in progress, and sends the
+/// browser to the identity provider.
 pub(crate) async fn login(
     State(bff): State<Arc<Bff>>,
     session: Session,
@@ -37,11 +38,14 @@ pub(crate) async fn login(
         request = request.add_scope(scope.clone());
     }
     let (url, state, nonce) = request.url();
-    let pending = Pending {
+    let mut pending: Vec<Pending> = session::read(&session, PENDING).await?.unwrap_or_default();
+    pending.push(Pending {
         state: state.into_secret(),
         nonce: nonce.secret().clone(),
         verifier: verifier.into_secret(),
-    };
+    });
+    let excess = pending.len().saturating_sub(MAX_PENDING);
+    pending.drain(..excess);
     session.insert(PENDING, pending).await?;
     Ok(Redirect::to(url.as_str()))
 }
@@ -54,19 +58,25 @@ pub(crate) struct Callback {
     error: Option<String>,
 }
 
-/// Finishes a sign-in: checks the state, trades the code and the PKCE
-/// verifier for tokens, checks the ID token, and keeps the person and
-/// their tokens in a session with a new id.
+/// Finishes a sign-in: finds it by its state, trades the code and the
+/// PKCE verifier for tokens, checks the ID token, and keeps the person
+/// and their tokens in a session with a new id.
 pub(crate) async fn callback(
     State(bff): State<Arc<Bff>>,
     session: Session,
     Query(callback): Query<Callback>,
 ) -> Result<Redirect, Error> {
+    let mut pending: Vec<Pending> = session::read(&session, PENDING)
+        .await?
+        .ok_or(Error::NoSignIn)?;
+    // A callback whose state matches no sign-in leaves them all in place.
+    let found = pending
+        .iter()
+        .position(|sign_in| callback.state.as_deref() == Some(sign_in.state.as_str()))
+        .ok_or(Error::StateMismatch)?;
     // Taken, not read: a sign-in's state and verifier are good once.
-    let pending: Pending = session.remove(PENDING).await?.ok_or(Error::NoSignIn)?;
-    if callback.state.as_deref() != Some(pending.state.as_str()) {
-        return Err(Error::StateMismatch);
-    }
+    let sign_in = pending.remove(found);
+    session.insert(PENDING, pending).await?;
     if let Some(error) = callback.error {
         return Err(Error::Refused(error));
     }
@@ -75,34 +85,18 @@ pub(crate) async fn callback(
         .client
         .exchange_code(AuthorizationCode::new(code))
         .map_err(|error| Error::Token(error.to_string()))?
-        .set_pkce_verifier(PkceCodeVerifier::new(pending.verifier))
+        .set_pkce_verifier(PkceCodeVerifier::new(sign_in.verifier))
         .request_async(&bff.http)
         .await
         .map_err(|error| Error::Token(error.to_string()))?;
     let id_token = response
         .id_token()
         .ok_or_else(|| Error::IdToken("missing".to_owned()))?;
-    let verifier = bff.verifier();
-    let claims = id_token
-        .claims(&verifier, &Nonce::new(pending.nonce))
-        .map_err(|error| Error::IdToken(error.to_string()))?;
-    // The access token must be the one the ID token was issued with, not
-    // another person's swapped in.
-    if let Some(expected) = claims.access_token_hash() {
-        let signing_alg = id_token
-            .signing_alg()
-            .map_err(|error| Error::IdToken(error.to_string()))?;
-        let signing_key = id_token
-            .signing_key(&verifier)
-            .map_err(|error| Error::IdToken(error.to_string()))?;
-        let actual = AccessTokenHash::from_token(response.access_token(), signing_alg, signing_key)
-            .map_err(|error| Error::IdToken(error.to_string()))?;
-        if actual != *expected {
-            return Err(Error::IdToken(
-                "the access token's hash doesn't match".to_owned(),
-            ));
-        }
-    }
+    let claims = bff.claims(
+        id_token,
+        response.access_token(),
+        &Nonce::new(sign_in.nonce),
+    )?;
     let signed_in = SignedIn {
         user: User::from_claims(claims),
         tokens: Tokens {
@@ -110,7 +104,7 @@ pub(crate) async fn callback(
             refresh: response
                 .refresh_token()
                 .map(|refresh| refresh.secret().clone()),
-            expires_at: bff.expires_at(response.expires_in()),
+            refresh_at: bff.refresh_at(response.expires_in()),
             id_token: id_token.to_string(),
         },
     };
@@ -126,7 +120,7 @@ pub(crate) async fn logout(
     State(bff): State<Arc<Bff>>,
     session: Session,
 ) -> Result<Response, Error> {
-    let signed_in: Option<SignedIn> = session.get(SIGNED_IN).await?;
+    let signed_in: Option<SignedIn> = session::read(&session, SIGNED_IN).await?;
     session.flush().await?;
     let target = match &bff.end_session {
         Some(endpoint) => {

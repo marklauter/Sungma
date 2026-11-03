@@ -24,6 +24,8 @@ pub enum Error {
     IdToken(String),
     #[error("not signed in")]
     SignedOut,
+    #[error("the identity provider is unavailable: {0}")]
+    Unavailable(String),
     #[error("session store: {0}")]
     Session(#[from] tower_sessions::session::Error),
 }
@@ -37,6 +39,7 @@ impl IntoResponse for Error {
                 StatusCode::INTERNAL_SERVER_ERROR.into_response()
             }
             Self::SignedOut => StatusCode::UNAUTHORIZED.into_response(),
+            Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
             Self::NoSignIn
             | Self::StateMismatch
             | Self::Refused(_)
@@ -77,6 +80,14 @@ mod tests {
         ] {
             assert_eq!(status(error), StatusCode::INTERNAL_SERVER_ERROR);
         }
+    }
+
+    #[test]
+    fn an_identity_provider_that_can_t_answer_is_unavailable() {
+        assert_eq!(
+            status(Error::Unavailable("timed out".to_owned())),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
     }
 
     #[test]
