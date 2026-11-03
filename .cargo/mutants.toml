@@ -23,6 +23,7 @@ exclude_globs = [
     "crates/sungma-write/src/testkit/**",
     "crates/sungma-table/src/testkit.rs",
     "crates/sungma-node/src/testkit.rs",
+    "crates/sungma-bff/src/testkit.rs",
 ]
 
 # Mutants no test should catch.
