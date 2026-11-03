@@ -88,6 +88,13 @@ pub struct Behavior {
     pub hang_refresh: bool,
     /// Issue a new ID token with each refresh.
     pub id_token_on_refresh: bool,
+    /// Spend a refresh token on use, as Rauthy does. Off, a refresh token
+    /// stays good, and the fake issues no new one unless `refresh_tokens`
+    /// is set.
+    pub rotate_refresh: bool,
+    /// Spend the refresh token, then hold the answer until the test calls
+    /// [`FakeIdp::release`].
+    pub hold_refresh: bool,
 }
 
 impl Default for Behavior {
@@ -108,6 +115,8 @@ impl Default for Behavior {
             refresh_server_error: false,
             hang_refresh: false,
             id_token_on_refresh: false,
+            rotate_refresh: true,
+            hold_refresh: false,
         }
     }
 }
@@ -122,8 +131,8 @@ struct Grant {
 
 struct Fake {
     issuer: String,
-    key: CoreEdDsaPrivateSigningKey,
-    wrong_key: CoreEdDsaPrivateSigningKey,
+    keys: Mutex<Keys>,
+    release: tokio::sync::Notify,
     time: Arc<dyn TimeSource>,
     behavior: Mutex<Behavior>,
     grants: Mutex<HashMap<String, Grant>>,
@@ -150,8 +159,8 @@ impl FakeIdp {
         let issuer = format!("http://{}", listener.local_addr().expect("an address"));
         let fake = Arc::new(Fake {
             issuer,
-            key: signing_key(),
-            wrong_key: signing_key(),
+            keys: Mutex::new(Keys::new(0)),
+            release: tokio::sync::Notify::new(),
             time,
             behavior: Mutex::new(Behavior::default()),
             grants: Mutex::new(HashMap::new()),
@@ -199,18 +208,49 @@ impl FakeIdp {
         self.fake.last_id_token.lock().clone()
     }
 
+    /// Rolls to a new signing key under a new key id. The key set serves
+    /// only the new key from now on.
+    pub fn rotate_key(&self) {
+        let mut keys = self.fake.keys.lock();
+        *keys = Keys::new(keys.generation + 1);
+    }
+
+    /// Answers the refresh held by [`Behavior::hold_refresh`].
+    pub fn release(&self) {
+        self.fake.release.notify_one();
+    }
+
     /// How many requests the token endpoint has had.
     pub fn token_requests(&self) -> usize {
         self.fake.token_requests.load(Ordering::SeqCst)
     }
 }
 
-/// A fresh Ed25519 key under the key id `test`.
-fn signing_key() -> CoreEdDsaPrivateSigningKey {
+/// The fake's signing key, and a key the key set doesn't hold under the
+/// same key id.
+struct Keys {
+    generation: u32,
+    current: CoreEdDsaPrivateSigningKey,
+    wrong: CoreEdDsaPrivateSigningKey,
+}
+
+impl Keys {
+    fn new(generation: u32) -> Self {
+        let kid = format!("test-{generation}");
+        Self {
+            generation,
+            current: signing_key(&kid),
+            wrong: signing_key(&kid),
+        }
+    }
+}
+
+/// A fresh Ed25519 key under the key id `kid`.
+fn signing_key(kid: &str) -> CoreEdDsaPrivateSigningKey {
     let pem = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
         .expect("an Ed25519 key")
         .serialize_pem();
-    CoreEdDsaPrivateSigningKey::from_ed25519_pem(&pem, Some(JsonWebKeyId::new("test".to_owned())))
+    CoreEdDsaPrivateSigningKey::from_ed25519_pem(&pem, Some(JsonWebKeyId::new(kid.to_owned())))
         .expect("a PKCS #8 key")
 }
 
@@ -234,7 +274,8 @@ async fn discovery(State(fake): State<Arc<Fake>>) -> Json<serde_json::Value> {
 }
 
 async fn jwks(State(fake): State<Arc<Fake>>) -> Json<CoreJsonWebKeySet> {
-    Json(CoreJsonWebKeySet::new(vec![fake.key.as_verification_key()]))
+    let key = fake.keys.lock().current.as_verification_key();
+    Json(CoreJsonWebKeySet::new(vec![key]))
 }
 
 #[derive(Deserialize)]
@@ -312,7 +353,11 @@ async fn token(
             if behavior.refresh_server_error {
                 return (StatusCode::INTERNAL_SERVER_ERROR, "down").into_response();
             }
-            exchange_refresh(&fake, request)
+            let answer = exchange_refresh(&fake, request);
+            if behavior.hold_refresh {
+                fake.release.notified().await;
+            }
+            answer
         }
         _ => refuse("unsupported_grant_type"),
     }
@@ -343,9 +388,14 @@ fn exchange_code(fake: &Fake, request: TokenRequest) -> Response<Body> {
 
 fn exchange_refresh(fake: &Fake, request: TokenRequest) -> Response<Body> {
     let behavior = fake.behavior.lock().clone();
-    let known = request
-        .refresh_token
-        .is_some_and(|refresh| fake.refresh_tokens.lock().remove(&refresh));
+    let known = request.refresh_token.is_some_and(|refresh| {
+        let mut issued = fake.refresh_tokens.lock();
+        if behavior.rotate_refresh {
+            issued.remove(&refresh)
+        } else {
+            issued.contains(&refresh)
+        }
+    });
     if behavior.refuse_refresh || !known {
         return refuse("invalid_grant");
     }
@@ -408,10 +458,11 @@ fn id_token(
         EmptyAdditionalClaims {},
     )
     .set_nonce(behavior.nonce.clone().or(nonce).map(Nonce::new));
+    let keys = fake.keys.lock();
     let key = if behavior.wrong_key {
-        &fake.wrong_key
+        &keys.wrong
     } else {
-        &fake.key
+        &keys.current
     };
     let hashed = if behavior.wrong_access_hash {
         AccessToken::new("someone-else".to_owned())

@@ -6,15 +6,17 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use openidconnect::{
-    AccessToken, AccessTokenHash, ClientId, ClientSecret, EndSessionUrl, EndpointMaybeSet,
-    EndpointNotSet, EndpointSet, IssuerUrl, Nonce, NonceVerifier, OAuth2TokenResponse,
-    PostLogoutRedirectUrl, ProviderMetadataWithLogout, RedirectUrl, RefreshToken,
-    RequestTokenError, Scope, TokenResponse,
+    AccessToken, AccessTokenHash, ClaimsVerificationError, ClientId, ClientSecret, EndSessionUrl,
+    EndpointMaybeSet, EndpointNotSet, EndpointSet, IssuerUrl, JsonWebKeySetUrl, Nonce,
+    NonceVerifier, OAuth2TokenResponse, PostLogoutRedirectUrl, ProviderMetadataWithLogout,
+    RedirectUrl, RefreshToken, RequestTokenError, Scope, SignatureVerificationError, TokenResponse,
     core::{
         CoreClient, CoreErrorResponseType, CoreIdToken, CoreIdTokenClaims, CoreIdTokenVerifier,
+        CoreJsonWebKeySet, CoreJwsSigningAlgorithm,
     },
     reqwest,
 };
+use parking_lot::Mutex;
 use sungma_clock::TimeSource;
 use tower_sessions::{Session, SessionManagerLayer, SessionStore, cookie::SameSite};
 
@@ -29,6 +31,10 @@ use crate::{
 /// through its life if that comes first, so it doesn't expire on its way
 /// to Sungma.
 const SKEW: Duration = Duration::from_secs(60);
+
+/// The signing keys are fetched again, for a key id they don't hold, at
+/// most this often.
+const REFETCH: Duration = Duration::from_secs(60);
 
 /// The session cookie's name.
 const COOKIE: &str = "sungma";
@@ -73,7 +79,53 @@ pub struct Bff {
     pub(crate) end_session: Option<EndSessionUrl>,
     pub(crate) post_logout: PostLogoutRedirectUrl,
     sign_in_page: String,
-    refreshes: Refreshes<SignedIn>,
+    refreshes: Refreshes<Result<SignedIn, Failure>>,
+    id_tokens: IdTokens,
+}
+
+/// What ID tokens are checked against. The signing keys change when the
+/// identity provider rotates them.
+struct IdTokens {
+    issuer: IssuerUrl,
+    secret: ClientSecret,
+    algs: Vec<CoreJwsSigningAlgorithm>,
+    keys_url: JsonWebKeySetUrl,
+    keys: Mutex<Keys>,
+}
+
+struct Keys {
+    set: CoreJsonWebKeySet,
+    /// When the keys were last fetched again, in nanoseconds since the
+    /// Unix epoch.
+    refetched: Option<u64>,
+}
+
+/// Why a refresh failed. A refresh's result is shared among the requests
+/// waiting on it, so it is cloned, which [`Error`] isn't.
+#[derive(Clone)]
+enum Failure {
+    SignedOut,
+    Unavailable(String),
+}
+
+/// Why an ID token didn't pass.
+pub(crate) enum Check {
+    /// Its signature or its access token's hash doesn't hold: a forgery,
+    /// or a token swapped in.
+    Forged(String),
+    /// No signing key under its key id.
+    NoKey,
+    /// Another check failed, such as its expiry or its audience.
+    Failed(String),
+}
+
+impl Check {
+    pub(crate) fn reason(self) -> String {
+        match self {
+            Self::Forged(reason) | Self::Failed(reason) => reason,
+            Self::NoKey => "no signing key under its key id".to_owned(),
+        }
+    }
 }
 
 impl Bff {
@@ -99,10 +151,21 @@ impl Bff {
             .await
             .map_err(|error| Error::Discovery(error.to_string()))?;
         let end_session = metadata.additional_metadata().end_session_endpoint.clone();
+        let secret = ClientSecret::new(config.client_secret);
+        let id_tokens = IdTokens {
+            issuer: metadata.issuer().clone(),
+            secret: secret.clone(),
+            algs: metadata.id_token_signing_alg_values_supported().clone(),
+            keys_url: metadata.jwks_uri().clone(),
+            keys: Mutex::new(Keys {
+                set: metadata.jwks().clone(),
+                refetched: None,
+            }),
+        };
         let client = CoreClient::from_provider_metadata(
             metadata,
             ClientId::new(config.client_id),
-            Some(ClientSecret::new(config.client_secret)),
+            Some(secret),
         )
         .set_redirect_uri(redirect);
         Ok(Arc::new(Self {
@@ -114,6 +177,7 @@ impl Bff {
             post_logout,
             sign_in_page: config.sign_in_page,
             refreshes: Refreshes::new(),
+            id_tokens,
         }))
     }
 
@@ -148,7 +212,7 @@ impl Bff {
     /// refuses, is ended, and the call gets [`Error::SignedOut`]. An
     /// identity provider that can't be reached, or answers with anything
     /// but a refusal, gets [`Error::Unavailable`], and the session stays.
-    pub async fn access_token(&self, session: &Session) -> Result<AccessToken, Error> {
+    pub async fn access_token(self: &Arc<Self>, session: &Session) -> Result<AccessToken, Error> {
         let Some(signed_in) = session::read::<SignedIn>(session, SIGNED_IN).await? else {
             return Err(Error::SignedOut);
         };
@@ -160,53 +224,67 @@ impl Bff {
             session.flush().await?;
             return Err(Error::SignedOut);
         };
-        let cell = self.refreshes.cell(&refresh, now);
-        match cell
-            .get_or_try_init(|| self.refresh(refresh, &signed_in))
+        let bff = Arc::clone(self);
+        let spent = refresh.clone();
+        let refreshed = self
+            .refreshes
+            .run(&refresh, now, move || async move {
+                let refreshed = bff.refresh(spent, &signed_in).await;
+                // Shared until it is due for a refresh of its own.
+                let until = refreshed
+                    .as_ref()
+                    .ok()
+                    .and_then(|refreshed| refreshed.tokens.refresh_at);
+                (refreshed, until)
+            })
             .await
-        {
+            .unwrap_or_else(|| Err(Failure::Unavailable("the refresh ended".to_owned())));
+        match refreshed {
             Ok(refreshed) => {
-                session.insert(SIGNED_IN, refreshed).await?;
-                Ok(AccessToken::new(refreshed.tokens.access.clone()))
+                session.insert(SIGNED_IN, &refreshed).await?;
+                Ok(AccessToken::new(refreshed.tokens.access))
             }
-            Err(Error::SignedOut) => {
+            Err(Failure::SignedOut) => {
                 session.flush().await?;
                 Err(Error::SignedOut)
             }
-            Err(error) => Err(error),
+            Err(Failure::Unavailable(reason)) => Err(Error::Unavailable(reason)),
         }
     }
 
     /// Trades `refresh` for new tokens. An ID token that comes back must
-    /// pass the same checks as at sign-in, and name the same person.
-    async fn refresh(&self, refresh: String, old: &SignedIn) -> Result<SignedIn, Error> {
+    /// name the same person, and a forged one ends the session; one that
+    /// fails another check leaves the old ID token in place, since the
+    /// identity provider has spent `refresh` and the new tokens are the
+    /// only good ones.
+    async fn refresh(&self, refresh: String, old: &SignedIn) -> Result<SignedIn, Failure> {
         let response = self
             .client
             .exchange_refresh_token(&RefreshToken::new(refresh.clone()))
-            .map_err(|error| Error::Unavailable(error.to_string()))?
+            .map_err(|error| Failure::Unavailable(error.to_string()))?
             .request_async(&self.http)
             .await
             .map_err(|error| match error {
                 RequestTokenError::ServerResponse(response)
                     if *response.error() == CoreErrorResponseType::InvalidGrant =>
                 {
-                    Error::SignedOut
+                    Failure::SignedOut
                 }
-                error => Error::Unavailable(error.to_string()),
+                error => Failure::Unavailable(error.to_string()),
             })?;
         let mut user = old.user.clone();
         let mut id_token = old.tokens.id_token.clone();
         if let Some(token) = response.id_token() {
             // A refresh's ID token carries no nonce of this sign-in's.
             let no_nonce = |_: Option<&Nonce>| Ok(());
-            let claims = self
-                .claims(token, response.access_token(), no_nonce)
-                .map_err(|_| Error::SignedOut)?;
-            if claims.subject().as_str() != old.user.subject {
-                return Err(Error::SignedOut);
+            match self.claims(token, response.access_token(), no_nonce).await {
+                Ok(claims) if claims.subject().as_str() == old.user.subject => {
+                    user = User::from_claims(&claims);
+                    id_token = token.to_string();
+                }
+                Ok(_) | Err(Check::Forged(_)) => return Err(Failure::SignedOut),
+                Err(Check::NoKey | Check::Failed(_)) => {}
             }
-            user = User::from_claims(claims);
-            id_token = token.to_string();
         }
         Ok(SignedIn {
             user,
@@ -226,29 +304,77 @@ impl Bff {
     /// Checks an ID token and returns its claims: its signature, issuer,
     /// audience and expiry, its nonce by `nonce`, and that `access` is the
     /// access token it was issued with, not another person's swapped in.
-    pub(crate) fn claims<'t>(
+    /// A key id the signing keys don't hold fetches them again, at most
+    /// once a [`REFETCH`], as the identity provider may have rotated them.
+    pub(crate) async fn claims(
         &self,
-        id_token: &'t CoreIdToken,
+        id_token: &CoreIdToken,
+        access: &AccessToken,
+        nonce: impl NonceVerifier + Copy,
+    ) -> Result<CoreIdTokenClaims, Check> {
+        let keys = self.id_tokens.keys.lock().set.clone();
+        match self.check(id_token, access, nonce, keys) {
+            Err(Check::NoKey) => match self.refetch_keys().await {
+                Some(keys) => self.check(id_token, access, nonce, keys),
+                None => Err(Check::NoKey),
+            },
+            checked => checked,
+        }
+    }
+
+    /// The signing keys, fetched again, or `None` if they were fetched
+    /// less than a [`REFETCH`] ago or can't be.
+    async fn refetch_keys(&self) -> Option<CoreJsonWebKeySet> {
+        let now = self.time.wall();
+        {
+            let mut keys = self.id_tokens.keys.lock();
+            if keys
+                .refetched
+                .is_some_and(|at| now < at.saturating_add(nanos(REFETCH)))
+            {
+                return None;
+            }
+            keys.refetched = Some(now);
+        }
+        let set = CoreJsonWebKeySet::fetch_async(&self.id_tokens.keys_url, &self.http)
+            .await
+            .ok()?;
+        self.id_tokens.keys.lock().set = set.clone();
+        Some(set)
+    }
+
+    fn check(
+        &self,
+        id_token: &CoreIdToken,
         access: &AccessToken,
         nonce: impl NonceVerifier,
-    ) -> Result<&'t CoreIdTokenClaims, Error> {
-        let refused = |error: &dyn std::fmt::Display| Error::IdToken(error.to_string());
-        let verifier = self.verifier();
+        keys: CoreJsonWebKeySet,
+    ) -> Result<CoreIdTokenClaims, Check> {
+        let verifier = self.verifier(keys);
         let claims = id_token
             .claims(&verifier, nonce)
-            .map_err(|error| refused(&error))?;
+            .map_err(|error| match error {
+                ClaimsVerificationError::SignatureVerification(
+                    SignatureVerificationError::NoMatchingKey,
+                ) => Check::NoKey,
+                ClaimsVerificationError::SignatureVerification(error) => {
+                    Check::Forged(error.to_string())
+                }
+                error => Check::Failed(error.to_string()),
+            })?;
         if let Some(expected) = claims.access_token_hash() {
-            let alg = id_token.signing_alg().map_err(|error| refused(&error))?;
+            let forged = |error: &dyn std::fmt::Display| Check::Forged(error.to_string());
+            let alg = id_token.signing_alg().map_err(|error| forged(&error))?;
             let key = id_token
                 .signing_key(&verifier)
-                .map_err(|error| refused(&error))?;
+                .map_err(|error| forged(&error))?;
             let actual =
-                AccessTokenHash::from_token(access, alg, key).map_err(|error| refused(&error))?;
+                AccessTokenHash::from_token(access, alg, key).map_err(|error| forged(&error))?;
             if actual != *expected {
-                return Err(refused(&"the access token's hash doesn't match"));
+                return Err(forged(&"the access token's hash doesn't match"));
             }
         }
-        Ok(claims)
+        Ok(claims.clone())
     }
 
     /// Where a person who isn't signed in is sent.
@@ -265,12 +391,17 @@ impl Bff {
         })
     }
 
-    /// The ID token verifier, on the BFF's clock.
-    fn verifier(&self) -> CoreIdTokenVerifier<'_> {
+    /// An ID token verifier for `keys`, on the BFF's clock.
+    fn verifier(&self, keys: CoreJsonWebKeySet) -> CoreIdTokenVerifier<'static> {
         let time = Arc::clone(&self.time);
-        self.client
-            .id_token_verifier()
-            .set_time_fn(move || utc(time.wall()))
+        CoreIdTokenVerifier::new_confidential_client(
+            self.client.client_id().clone(),
+            self.id_tokens.secret.clone(),
+            self.id_tokens.issuer.clone(),
+            keys,
+        )
+        .set_allowed_algs(self.id_tokens.algs.clone())
+        .set_time_fn(move || utc(time.wall()))
     }
 }
 
@@ -280,4 +411,19 @@ fn nanos(duration: Duration) -> u64 {
 
 fn utc(nanos: u64) -> DateTime<Utc> {
     DateTime::from_timestamp_nanos(i64::try_from(nanos).unwrap_or(i64::MAX))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_check_gives_its_reason() {
+        assert_eq!(
+            Check::Forged("bad signature".to_owned()).reason(),
+            "bad signature"
+        );
+        assert_eq!(Check::Failed("expired".to_owned()).reason(), "expired");
+        assert_eq!(Check::NoKey.reason(), "no signing key under its key id");
+    }
 }

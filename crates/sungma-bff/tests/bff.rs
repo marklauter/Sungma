@@ -779,3 +779,161 @@ async fn a_refresh_refused_for_the_client_doesn_t_sign_the_person_out() {
     );
     assert_eq!(s.browser.get("/token").await.status(), StatusCode::OK);
 }
+
+/// A GET of `uri` on `app` with the session cookie `cookie`, as one of
+/// several requests a page sends at once.
+fn fetch(app: &Router, cookie: &str, uri: &str) -> impl Future<Output = Response<Body>> {
+    let app = app.clone();
+    let request = Request::get(uri)
+        .header("cookie", format!("sungma={cookie}"))
+        .body(Body::empty())
+        .unwrap();
+    async move { tower::ServiceExt::oneshot(app, request).await.unwrap() }
+}
+
+/// Yields until `done` holds.
+async fn until(done: impl Fn() -> bool) {
+    while !done() {
+        tokio::task::yield_now().await;
+    }
+}
+
+#[tokio::test]
+async fn a_refresh_token_that_stays_good_is_refreshed_again_when_due() {
+    let mut s = setup().await;
+    s.idp.behave(|b| {
+        b.rotate_refresh = false;
+        b.access_token_lifetime = Some(120);
+    });
+    s.browser.sign_in().await;
+    // From now on the fake issues no new refresh token, so the BFF keeps
+    // refreshing with the first.
+    s.idp.behave(|b| b.refresh_tokens = false);
+    let first = text(s.browser.get("/token").await).await;
+    s.time.advance(Duration::from_secs(60));
+    let second = text(s.browser.get("/token").await).await;
+    assert_ne!(second, first);
+    assert_eq!(s.idp.token_requests(), 2);
+    s.time.advance(Duration::from_secs(60));
+    let third = text(s.browser.get("/token").await).await;
+    assert_ne!(third, second);
+    assert_eq!(s.idp.token_requests(), 3);
+}
+
+#[tokio::test]
+async fn a_refresh_whose_caller_goes_away_still_lands() {
+    let mut s = setup().await;
+    s.browser.sign_in().await;
+    s.idp.behave(|b| b.hold_refresh = true);
+    s.time.advance(Duration::from_secs(300));
+    let cookie = s.browser.cookie().unwrap().to_owned();
+    {
+        // The first request waits until the fake has spent the refresh
+        // token, then goes away, as a browser that navigates away does.
+        let first = std::pin::pin!(fetch(&s.app, &cookie, "/token"));
+        let idp = &s.idp;
+        tokio::select! {
+            _ = first => panic!("the fake holds the refresh"),
+            () = until(|| idp.token_requests() == 2) => {}
+        }
+    }
+    s.idp.behave(|b| b.hold_refresh = false);
+    s.idp.release();
+    assert_eq!(s.browser.get("/token").await.status(), StatusCode::OK);
+    assert_eq!(s.idp.token_requests(), 2);
+    assert!(signed_in(&mut s.browser).await);
+}
+
+#[tokio::test]
+async fn requests_waiting_on_a_failing_refresh_share_its_failure() {
+    let mut s = setup().await;
+    s.browser.sign_in().await;
+    let mut config = s.idp.config();
+    config.timeout = Duration::from_millis(200);
+    let impatient = Bff::discover(config, s.time.clone()).await.unwrap();
+    let app = app(&impatient, s.store.clone());
+    s.idp.behave(|b| b.hang_refresh = true);
+    s.time.advance(Duration::from_secs(300));
+    let cookie = s.browser.cookie().unwrap().to_owned();
+    let (a, b, c) = tokio::join!(
+        fetch(&app, &cookie, "/token"),
+        fetch(&app, &cookie, "/token"),
+        fetch(&app, &cookie, "/token"),
+    );
+    assert_eq!(
+        [a.status(), b.status(), c.status()],
+        [StatusCode::SERVICE_UNAVAILABLE; 3]
+    );
+    assert_eq!(s.idp.token_requests(), 2);
+    // A failure isn't kept: the next request tries again.
+    s.idp.behave(|b| b.hang_refresh = false);
+    assert_eq!(
+        fetch(&app, &cookie, "/token").await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(s.idp.token_requests(), 3);
+}
+
+#[tokio::test]
+async fn a_sign_in_after_the_identity_provider_rotates_its_key_finishes() {
+    let mut s = setup().await;
+    s.idp.rotate_key();
+    assert_eq!(s.browser.sign_in().await.status(), StatusCode::SEE_OTHER);
+    assert!(signed_in(&mut s.browser).await);
+}
+
+#[tokio::test]
+async fn a_refresh_after_the_identity_provider_rotates_its_key_checks_the_new_id_token() {
+    let mut s = setup().await;
+    s.browser.sign_in().await;
+    s.idp.rotate_key();
+    s.idp.behave(|b| b.id_token_on_refresh = true);
+    s.time.advance(Duration::from_secs(300));
+    assert_eq!(s.browser.get("/token").await.status(), StatusCode::OK);
+    let logout = s.browser.post("/auth/logout", true).await;
+    let target = Url::parse(&header(&logout, "hx-redirect").unwrap()).unwrap();
+    let hint = target
+        .query_pairs()
+        .find(|(key, _)| key == "id_token_hint")
+        .map(|(_, value)| value.into_owned());
+    assert_eq!(hint, s.idp.last_id_token());
+}
+
+#[tokio::test]
+async fn the_key_set_is_fetched_again_at_most_once_a_minute() {
+    let mut s = setup().await;
+    s.idp.rotate_key();
+    assert_eq!(s.browser.sign_in().await.status(), StatusCode::SEE_OTHER);
+    s.idp.rotate_key();
+    assert_eq!(s.browser.sign_in().await.status(), StatusCode::BAD_REQUEST);
+    s.time.advance(Duration::from_secs(59));
+    assert_eq!(s.browser.sign_in().await.status(), StatusCode::BAD_REQUEST);
+    s.time.advance(Duration::from_secs(1));
+    assert_eq!(s.browser.sign_in().await.status(), StatusCode::SEE_OTHER);
+}
+
+#[tokio::test]
+async fn a_refreshed_id_token_that_fails_a_check_besides_its_signature_keeps_the_new_tokens() {
+    let mut s = setup().await;
+    s.browser.sign_in().await;
+    let first = text(s.browser.get("/token").await).await;
+    let signed_in_with = s.idp.last_id_token();
+    // The identity provider's clock runs behind, so its ID token looks
+    // expired; it has already spent the refresh token.
+    s.idp.behave(|b| {
+        b.id_token_on_refresh = true;
+        b.id_token_lifetime = -1;
+    });
+    s.time.advance(Duration::from_secs(300));
+    let token = s.browser.get("/token").await;
+    assert_eq!(token.status(), StatusCode::OK);
+    assert_ne!(text(token).await, first);
+    assert!(signed_in(&mut s.browser).await);
+    let logout = s.browser.post("/auth/logout", true).await;
+    let target = Url::parse(&header(&logout, "hx-redirect").unwrap()).unwrap();
+    let hint = target
+        .query_pairs()
+        .find(|(key, _)| key == "id_token_hint")
+        .map(|(_, value)| value.into_owned());
+    assert_eq!(hint, signed_in_with);
+}

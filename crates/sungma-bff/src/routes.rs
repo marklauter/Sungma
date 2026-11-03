@@ -92,13 +92,16 @@ pub(crate) async fn callback(
     let id_token = response
         .id_token()
         .ok_or_else(|| Error::IdToken("missing".to_owned()))?;
-    let claims = bff.claims(
-        id_token,
-        response.access_token(),
-        &Nonce::new(sign_in.nonce),
-    )?;
+    let claims = bff
+        .claims(
+            id_token,
+            response.access_token(),
+            &Nonce::new(sign_in.nonce),
+        )
+        .await
+        .map_err(|check| Error::IdToken(check.reason()))?;
     let signed_in = SignedIn {
-        user: User::from_claims(claims),
+        user: User::from_claims(&claims),
         tokens: Tokens {
             access: response.access_token().secret().clone(),
             refresh: response
