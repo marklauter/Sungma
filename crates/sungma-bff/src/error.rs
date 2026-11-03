@@ -38,7 +38,11 @@ impl IntoResponse for Error {
             Self::Config(_) | Self::Discovery(_) | Self::Session(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR.into_response()
             }
-            Self::SignedOut => StatusCode::UNAUTHORIZED.into_response(),
+            Self::SignedOut => {
+                let mut response = StatusCode::UNAUTHORIZED.into_response();
+                response.extensions_mut().insert(crate::session::Ended);
+                response
+            }
             Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
             Self::NoSignIn
             | Self::StateMismatch

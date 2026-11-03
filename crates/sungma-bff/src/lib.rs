@@ -14,7 +14,8 @@
 //! - `GET /auth/callback` takes it back, trades the code for tokens and
 //!   checks the ID token.
 //! - `POST /auth/logout` ends the session and sends the browser to the
-//!   identity provider's end-session endpoint.
+//!   identity provider's end-session endpoint, with the ID token as a
+//!   hint.
 //!
 //! Every request that isn't GET, HEAD, OPTIONS or TRACE must carry
 //! `HX-Request: true`, which HTMX adds and a cross-site form can't, or
@@ -27,6 +28,7 @@ mod routes;
 mod session;
 mod shared;
 mod signed_out;
+mod store;
 #[cfg(feature = "testkit")]
 pub mod testkit;
 

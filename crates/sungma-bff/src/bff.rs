@@ -1,15 +1,17 @@
-use std::{sync::Arc, time::Duration};
+use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use axum::{
     Extension, Router,
+    http::StatusCode,
     routing::{get, post},
 };
 use chrono::{DateTime, Utc};
 use openidconnect::{
-    AccessToken, AccessTokenHash, ClaimsVerificationError, ClientId, ClientSecret, EndSessionUrl,
-    EndpointMaybeSet, EndpointNotSet, EndpointSet, IssuerUrl, JsonWebKeySetUrl, Nonce,
-    NonceVerifier, OAuth2TokenResponse, PostLogoutRedirectUrl, ProviderMetadataWithLogout,
-    RedirectUrl, RefreshToken, RequestTokenError, Scope, SignatureVerificationError, TokenResponse,
+    AccessToken, AccessTokenHash, AsyncHttpClient, ClaimsVerificationError, ClientId, ClientSecret,
+    EndSessionUrl, EndpointMaybeSet, EndpointNotSet, EndpointSet, HttpClientError, HttpRequest,
+    HttpResponse, IssuerUrl, JsonWebKeySetUrl, Nonce, NonceVerifier, OAuth2TokenResponse,
+    PostLogoutRedirectUrl, ProviderMetadataWithLogout, RedirectUrl, RefreshToken,
+    RequestTokenError, Scope, SignatureVerificationError, StandardErrorResponse, TokenResponse,
     core::{
         CoreClient, CoreErrorResponseType, CoreIdToken, CoreIdTokenClaims, CoreIdTokenVerifier,
         CoreJsonWebKeySet, CoreJwsSigningAlgorithm,
@@ -18,30 +20,40 @@ use openidconnect::{
 };
 use parking_lot::Mutex;
 use sungma_clock::TimeSource;
-use tower_sessions::{Session, SessionManagerLayer, SessionStore, cookie::SameSite};
+use tower_sessions::{
+    Expiry, Session, SessionManagerLayer, SessionStore,
+    cookie::{SameSite, time},
+};
 
 use crate::{
     Error, User, header, routes,
     session::{self, SIGNED_IN, SignedIn, Tokens},
     shared::Shared,
     signed_out::SignedOut,
+    store::Guarded,
 };
 
 /// An access token is refreshed this long before it expires, or halfway
-/// through its life if that comes first, so it doesn't expire on its way
+/// through its life if that comes later, so it doesn't expire on its way
 /// to Sungma.
 const SKEW: Duration = Duration::from_secs(60);
 
-/// The signing keys are fetched again, for a key id they don't hold, at
-/// most this often.
+/// The signing keys are fetched again, for an ID token they don't verify,
+/// at most this often.
 const REFETCH: Duration = Duration::from_secs(60);
 
 /// A refresh whose access token has no expiry is shared this long, with
 /// requests that read the session before the refresh saved it.
 const GRACE: Duration = Duration::from_secs(60);
 
-/// The session cookie's name.
-const COOKIE: &str = "sungma";
+/// A refresh the identity provider couldn't answer is tried again after
+/// this long, not by every request that needs it.
+const RETRY: Duration = Duration::from_secs(5);
+
+/// The session cookie's name. The `__Host-` prefix makes the browser
+/// refuse the cookie unless it is Secure, for the path `/` and for this
+/// host alone, so another host in the domain can't plant a session.
+pub(crate) const COOKIE: &str = "__Host-sungma";
 
 /// The OIDC client discovery builds: an authorization endpoint and a
 /// token endpoint.
@@ -54,11 +66,22 @@ pub(crate) type Client = CoreClient<
     EndpointMaybeSet,
 >;
 
+/// The error a token request fails with.
+type TokenError = RequestTokenError<
+    HttpClientError<reqwest::Error>,
+    StandardErrorResponse<CoreErrorResponseType>,
+>;
+
 /// How the BFF reaches the identity provider and where it sends people.
 pub struct Config {
     /// The identity provider's issuer URL, where discovery starts.
     pub issuer: String,
     /// The client the identity provider registered for this BFF.
+    ///
+    /// The client's ID tokens must carry an `at_hash` made with the hash
+    /// of the ID token's own algorithm. Rauthy makes it with the access
+    /// token's algorithm instead, so a Rauthy client signs both tokens
+    /// with one algorithm, or with two that hash alike.
     pub client_id: String,
     pub client_secret: String,
     /// This service's origin, such as `https://author.example.com`. The
@@ -72,6 +95,8 @@ pub struct Config {
     pub sign_in_page: String,
     /// How long a call to the identity provider may take.
     pub timeout: Duration,
+    /// How long a signed-in session lasts without a request.
+    pub idle: Duration,
 }
 
 /// An OAuth backend-for-frontend for one identity provider.
@@ -82,9 +107,12 @@ pub struct Bff {
     pub(crate) scopes: Vec<Scope>,
     pub(crate) end_session: Option<EndSessionUrl>,
     pub(crate) post_logout: PostLogoutRedirectUrl,
+    /// The path of the origin's home, where a sign-in lands.
+    pub(crate) home: String,
     sign_in_page: String,
+    idle: Duration,
     refreshes: Shared<Result<SignedIn, Failure>>,
-    pub(crate) signed_out: SignedOut,
+    pub(crate) signed_out: Arc<SignedOut>,
     id_tokens: IdTokens,
 }
 
@@ -92,9 +120,9 @@ pub struct Bff {
 /// identity provider rotates them.
 struct IdTokens {
     issuer: IssuerUrl,
-    /// The algorithms the identity provider signs with, less those that
-    /// sign with a shared secret or not at all: an ID token must be signed
-    /// with a key only the identity provider holds.
+    /// The algorithms the identity provider signs with that use a private
+    /// key: an ID token must be signed with a key only the identity
+    /// provider holds.
     algs: Vec<CoreJwsSigningAlgorithm>,
     keys_url: JsonWebKeySetUrl,
     keys: Mutex<Arc<CoreJsonWebKeySet>>,
@@ -148,6 +176,7 @@ impl Bff {
             .map_err(|error| Error::Config(error.to_string()))?;
         let post_logout = PostLogoutRedirectUrl::new(format!("{origin}/"))
             .map_err(|error| Error::Config(error.to_string()))?;
+        let home = post_logout.url().path().to_owned();
         let metadata = ProviderMetadataWithLogout::discover_async(issuer, &http)
             .await
             .map_err(|error| Error::Discovery(error.to_string()))?;
@@ -158,7 +187,7 @@ impl Bff {
         let algs: Vec<_> = metadata
             .id_token_signing_alg_values_supported()
             .iter()
-            .filter(|alg| !shared_secret(alg))
+            .filter(|alg| private_key(alg))
             .cloned()
             .collect();
         if algs.is_empty() {
@@ -187,20 +216,36 @@ impl Bff {
             scopes: config.scopes.into_iter().map(Scope::new).collect(),
             end_session,
             post_logout,
+            home,
             sign_in_page: config.sign_in_page,
+            idle: config.idle,
             refreshes: Shared::new(),
-            signed_out: SignedOut::new(),
+            signed_out: Arc::new(SignedOut::new(config.timeout)),
             id_tokens,
         }))
     }
 
     /// Adds the BFF's routes to `app`, and its layers around both: the
     /// session, the BFF itself for the [`User`](crate::User) extractor,
-    /// and the header check. `store` keeps the sessions.
+    /// the header check, and the sign-in page for a session that ended.
+    /// `store` keeps the sessions.
     ///
     /// The layers cover the routes `app` holds when it is wrapped, and no
     /// route added after, so wrap the app last.
+    ///
+    /// Run one BFF on a store. A refresh in progress and a sign-out are
+    /// known only to the BFF that saw them, so two BFFs on one store spend
+    /// a refresh token twice and miss each other's sign-outs. A session
+    /// lasts [`Config::idle`] without a request, and a sign-in in progress
+    /// ten minutes; a store that doesn't delete expired sessions keeps
+    /// them, unread.
     pub fn wrap<S: SessionStore + Clone>(self: &Arc<Self>, app: Router, store: S) -> Router {
+        let idle = time::Duration::try_from(self.idle).unwrap_or(time::Duration::MAX);
+        let store = Guarded {
+            inner: store,
+            signed_out: Arc::clone(&self.signed_out),
+            time: Arc::clone(&self.time),
+        };
         let sessions = SessionManagerLayer::new(store)
             .with_name(COOKIE)
             .with_secure(true)
@@ -208,7 +253,8 @@ impl Bff {
             // Lax, not Strict: the identity provider's redirect to the
             // callback is a cross-site navigation, and it must carry the
             // cookie to find the sign-in it finishes.
-            .with_same_site(SameSite::Lax);
+            .with_same_site(SameSite::Lax)
+            .with_expiry(Expiry::OnInactivity(idle));
         let auth = Router::new()
             .route("/auth/login", post(routes::login))
             .route("/auth/callback", get(routes::callback))
@@ -216,18 +262,25 @@ impl Bff {
             .with_state(Arc::clone(self));
         app.merge(auth)
             .layer(axum::middleware::from_fn(header::require_header))
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::clone(self),
+                session::to_sign_in_when_ended,
+            ))
             .layer(Extension(Arc::clone(self)))
             .layer(sessions)
     }
 
     /// The signed-in person's access token, for a call to Sungma's APIs.
     /// A token about to expire is refreshed first, once for all the
-    /// requests that find it so at the same time.
+    /// requests that find it so at the same time, and the session saved
+    /// at once.
     ///
     /// A session with no sign-in, or whose refresh the identity provider
     /// refuses, is ended, and the call gets [`Error::SignedOut`]. An
     /// identity provider that can't be reached, or answers with anything
-    /// but a refusal, gets [`Error::Unavailable`], and the session stays.
+    /// but a refusal, leaves the session as it was: the call gets the
+    /// access token it holds while that is good, and
+    /// [`Error::Unavailable`] after.
     pub async fn access_token(self: &Arc<Self>, session: &Session) -> Result<AccessToken, Error> {
         let Some(signed_in) = session::read::<SignedIn>(session, SIGNED_IN).await? else {
             return Err(Error::SignedOut);
@@ -240,27 +293,40 @@ impl Bff {
             session.flush().await?;
             return Err(Error::SignedOut);
         };
+        let held = signed_in.tokens.clone();
         let bff = Arc::clone(self);
+        let saving = session.clone();
         let spent = refresh.clone();
         let refreshed = self
             .refreshes
             .run(&refresh, now, move || async move {
                 let refreshed = bff.refresh(spent, &signed_in).await;
+                if let Ok(refreshed) = &refreshed {
+                    // Saved here, not when the request ends: a request that
+                    // fails or goes away would leave the session holding
+                    // the spent refresh token. If this save fails, the
+                    // request's own save at its end is left.
+                    let _ = keep(&saving, refreshed).await;
+                }
                 // Shared until it is due for a refresh of its own, and a
-                // while when it never is. A failure isn't shared past the
-                // requests waiting on it.
-                let until = refreshed.as_ref().ok().map(|refreshed| {
-                    refreshed
-                        .tokens
-                        .refresh_at
-                        .unwrap_or_else(|| now.saturating_add(nanos(GRACE)))
-                });
+                // while when it never is. A failure to reach the identity
+                // provider is shared a few seconds, and a refusal only
+                // with the requests waiting on it.
+                let until = match &refreshed {
+                    Ok(refreshed) => Some(
+                        refreshed
+                            .tokens
+                            .refresh_at
+                            .unwrap_or_else(|| now.saturating_add(nanos(GRACE))),
+                    ),
+                    Err(Failure::Unavailable(_)) => Some(now.saturating_add(nanos(RETRY))),
+                    Err(Failure::SignedOut) => None,
+                };
                 (refreshed, until)
             })
             .await
             .unwrap_or_else(|| Err(Failure::Unavailable("the refresh ended".to_owned())));
-        // The person may have signed out while the refresh was out;
-        // saving the session would sign them back in.
+        // The person may have signed out while the refresh was out.
         let id = session.id().map(|id| id.to_string()).unwrap_or_default();
         if self.signed_out.contains(&id, self.time.wall()) {
             return Err(Error::SignedOut);
@@ -273,6 +339,12 @@ impl Bff {
             Err(Failure::SignedOut) => {
                 session.flush().await?;
                 Err(Error::SignedOut)
+            }
+            // Refreshed early, the held token may still be good.
+            Err(Failure::Unavailable(_))
+                if held.expires_at.is_some_and(|at| self.time.wall() < at) =>
+            {
+                Ok(AccessToken::new(held.access))
             }
             Err(Failure::Unavailable(reason)) => Err(Error::Unavailable(reason)),
         }
@@ -291,15 +363,14 @@ impl Bff {
         let response = self
             .client
             .exchange_refresh_token(&RefreshToken::new(refresh.clone()))
-            .request_async(&self.http)
+            .request_async(&Backchannel(&self.http))
             .await
-            .map_err(|error| match error {
-                RequestTokenError::ServerResponse(response)
-                    if *response.error() == CoreErrorResponseType::InvalidGrant =>
-                {
+            .map_err(|error| {
+                if refused(&error) {
                     Failure::SignedOut
+                } else {
+                    Failure::Unavailable(error.to_string())
                 }
-                error => Failure::Unavailable(error.to_string()),
             })?;
         let mut user = old.user.clone();
         let mut id_token = old.tokens.id_token.clone();
@@ -325,7 +396,9 @@ impl Bff {
                         .map_or(refresh, |refresh| refresh.secret().clone()),
                 ),
                 refresh_at: self.refresh_at(response.expires_in()),
+                expires_at: self.expires_at(response.expires_in()),
                 id_token,
+                generation: old.tokens.generation + 1,
             },
         })
     }
@@ -333,9 +406,10 @@ impl Bff {
     /// Checks an ID token and returns its claims: its signature, issuer,
     /// audience and expiry, its nonce by `nonce`, and that `access` is the
     /// access token it was issued with, not another person's swapped in.
-    /// A key id the signing keys don't hold fetches them again, as the
-    /// identity provider may have rotated them: once for all the requests
-    /// that need it at the same time, and at most once a [`REFETCH`].
+    /// A token the signing keys don't verify fetches them again, as the
+    /// identity provider may have rotated them, under a new key id or the
+    /// same one: once for all the requests that need it at the same time,
+    /// and at most once a [`REFETCH`].
     pub(crate) async fn claims(
         self: &Arc<Self>,
         id_token: &CoreIdToken,
@@ -344,7 +418,7 @@ impl Bff {
     ) -> Result<CoreIdTokenClaims, Check> {
         let keys = Arc::clone(&self.id_tokens.keys.lock());
         match self.check(id_token, access, nonce, &keys) {
-            Err(Check::NoKey) => {
+            Err(Check::NoKey | Check::Forged(_)) => {
                 let keys = self.fetch_keys().await;
                 self.check(id_token, access, nonce, &keys)
             }
@@ -413,12 +487,17 @@ impl Bff {
     }
 
     /// When to refresh a token that lasts `lifetime` from now: [`SKEW`]
-    /// before it expires, or halfway through its life if that comes first.
+    /// before it expires, or halfway through its life if that comes later.
     pub(crate) fn refresh_at(&self, lifetime: Option<Duration>) -> Option<u64> {
         lifetime.map(|lifetime| {
             let early = SKEW.min(lifetime / 2);
             self.time.wall().saturating_add(nanos(lifetime - early))
         })
+    }
+
+    /// When a token that lasts `lifetime` from now expires.
+    pub(crate) fn expires_at(&self, lifetime: Option<Duration>) -> Option<u64> {
+        lifetime.map(|lifetime| self.time.wall().saturating_add(nanos(lifetime)))
     }
 
     /// An ID token verifier for `keys`, on the BFF's clock. It holds no
@@ -436,14 +515,65 @@ impl Bff {
     }
 }
 
-/// Whether `alg` signs with a secret the client shares, or not at all.
-fn shared_secret(alg: &CoreJwsSigningAlgorithm) -> bool {
+/// Saves `signed_in` in `session` now.
+async fn keep(session: &Session, signed_in: &SignedIn) -> Result<(), Error> {
+    session.insert(SIGNED_IN, signed_in).await?;
+    session.save().await?;
+    Ok(())
+}
+
+/// The back channel token requests go to the identity provider on. An
+/// answer of 5xx or 429 says it can't answer now, whatever its body says,
+/// so the call fails rather than read it as a refusal.
+pub(crate) struct Backchannel<'a>(pub &'a reqwest::Client);
+
+impl<'c> AsyncHttpClient<'c> for Backchannel<'_> {
+    type Error = HttpClientError<reqwest::Error>;
+    type Future = Pin<Box<dyn Future<Output = Result<HttpResponse, Self::Error>> + Send + 'c>>;
+
+    fn call(&'c self, request: HttpRequest) -> Self::Future {
+        Box::pin(async move {
+            let response = self.0.call(request).await?;
+            let status = response.status();
+            if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
+                return Err(HttpClientError::Other(format!(
+                    "the identity provider answered {status}"
+                )));
+            }
+            Ok(response)
+        })
+    }
+}
+
+/// Whether the identity provider refused the grant a token request
+/// spends: `invalid_grant`, or an error of its own, such as Rauthy's
+/// `NotFound` for a spent refresh token. The standard errors besides say
+/// the BFF is misconfigured, not that the grant is gone.
+pub(crate) fn refused(error: &TokenError) -> bool {
+    matches!(
+        error,
+        RequestTokenError::ServerResponse(response)
+            if matches!(
+                response.error(),
+                CoreErrorResponseType::InvalidGrant | CoreErrorResponseType::Extension(_)
+            )
+    )
+}
+
+/// Whether `alg` signs with a private key: RSA, ECDSA or EdDSA.
+fn private_key(alg: &CoreJwsSigningAlgorithm) -> bool {
     matches!(
         alg,
-        CoreJwsSigningAlgorithm::HmacSha256
-            | CoreJwsSigningAlgorithm::HmacSha384
-            | CoreJwsSigningAlgorithm::HmacSha512
-            | CoreJwsSigningAlgorithm::None
+        CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256
+            | CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha384
+            | CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha512
+            | CoreJwsSigningAlgorithm::RsaSsaPssSha256
+            | CoreJwsSigningAlgorithm::RsaSsaPssSha384
+            | CoreJwsSigningAlgorithm::RsaSsaPssSha512
+            | CoreJwsSigningAlgorithm::EcdsaP256Sha256
+            | CoreJwsSigningAlgorithm::EcdsaP384Sha384
+            | CoreJwsSigningAlgorithm::EcdsaP521Sha512
+            | CoreJwsSigningAlgorithm::EdDsa
     )
 }
 

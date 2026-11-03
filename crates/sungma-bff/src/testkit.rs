@@ -46,6 +46,9 @@ pub const CLIENT_SECRET: &str = "author-secret";
 /// The origin the fake sends the browser back to.
 pub const ORIGIN: &str = "http://localhost:8090";
 
+/// The session cookie's name.
+pub const COOKIE: &str = crate::bff::COOKIE;
+
 /// The person the fake signs in, unless a test says otherwise.
 pub const SUBJECT: &str = "3f6c1a52-alice";
 
@@ -75,15 +78,19 @@ pub struct Behavior {
     pub refresh_tokens: bool,
     /// Refuse every refresh.
     pub refuse_refresh: bool,
+    /// The status and error a refused refresh gets: `invalid_grant`, as
+    /// the RFC has it, unless a test says otherwise. Rauthy answers a
+    /// spent refresh token with 404 and `NotFound`.
+    pub refusal: (u16, String),
     /// Put another access token's hash in ID tokens.
     pub wrong_access_hash: bool,
     /// Leave the ID token out of the token response.
     pub no_id_token: bool,
     /// Name an end-session endpoint in discovery.
     pub end_session: bool,
-    /// Answer every refresh with a 500 and no OAuth error, as a provider
-    /// that's down does.
-    pub refresh_server_error: bool,
+    /// Answer every token request with a 500 and no OAuth error, as a
+    /// provider that's down does.
+    pub server_error: bool,
     /// Never answer a refresh.
     pub hang_refresh: bool,
     /// Issue a new ID token with each refresh.
@@ -97,8 +104,10 @@ pub struct Behavior {
     pub hold_refresh: bool,
     /// Name a token endpoint in discovery.
     pub token_endpoint: bool,
-    /// Sign ID tokens with HS256 under the client secret, and say so in
-    /// discovery, instead of with the signing key.
+    /// The algorithms discovery says ID tokens are signed with.
+    pub signing_algs: Vec<String>,
+    /// Sign ID tokens with HS256 under the client secret instead of with
+    /// the signing key.
     pub hmac: bool,
 }
 
@@ -114,15 +123,17 @@ impl Default for Behavior {
             access_token_lifetime: Some(300),
             refresh_tokens: true,
             refuse_refresh: false,
+            refusal: (400, "invalid_grant".to_owned()),
             wrong_access_hash: false,
             no_id_token: false,
             end_session: true,
-            refresh_server_error: false,
+            server_error: false,
             hang_refresh: false,
             id_token_on_refresh: false,
             rotate_refresh: true,
             hold_refresh: false,
             token_endpoint: true,
+            signing_algs: vec!["EdDSA".to_owned()],
             hmac: false,
         }
     }
@@ -202,6 +213,7 @@ impl FakeIdp {
             scopes: vec!["profile".to_owned(), "email".to_owned()],
             sign_in_page: "/signin".to_owned(),
             timeout: std::time::Duration::from_secs(30),
+            idle: std::time::Duration::from_secs(3600),
         }
     }
 
@@ -220,6 +232,13 @@ impl FakeIdp {
     pub fn rotate_key(&self) {
         let mut keys = self.fake.keys.lock();
         *keys = Keys::new(keys.generation + 1);
+    }
+
+    /// Replaces the signing key with a new one under the same key id, as
+    /// an identity provider that keeps its key ids does.
+    pub fn replace_key(&self) {
+        let mut keys = self.fake.keys.lock();
+        *keys = Keys::new(keys.generation);
     }
 
     /// Answers the refresh held by [`Behavior::hold_refresh`].
@@ -264,14 +283,13 @@ fn signing_key(kid: &str) -> CoreEdDsaPrivateSigningKey {
 async fn discovery(State(fake): State<Arc<Fake>>) -> Json<serde_json::Value> {
     let issuer = &fake.issuer;
     let behavior = fake.behavior.lock().clone();
-    let alg = if behavior.hmac { "HS256" } else { "EdDSA" };
     let mut metadata = json!({
         "issuer": issuer,
         "authorization_endpoint": format!("{issuer}/authorize"),
         "jwks_uri": format!("{issuer}/jwks"),
         "response_types_supported": ["code"],
         "subject_types_supported": ["public"],
-        "id_token_signing_alg_values_supported": [alg],
+        "id_token_signing_alg_values_supported": behavior.signing_algs,
         "token_endpoint_auth_methods_supported": ["client_secret_basic"],
         "code_challenge_methods_supported": ["S256"],
     });
@@ -354,15 +372,15 @@ async fn token(
     {
         return refuse("invalid_client");
     }
+    if fake.behavior.lock().server_error {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "down").into_response();
+    }
     match request.grant_type.as_str() {
         "authorization_code" => exchange_code(&fake, request),
         "refresh_token" => {
             let behavior = fake.behavior.lock().clone();
             if behavior.hang_refresh {
                 std::future::pending::<()>().await;
-            }
-            if behavior.refresh_server_error {
-                return (StatusCode::INTERNAL_SERVER_ERROR, "down").into_response();
             }
             let answer = exchange_refresh(&fake, request);
             if behavior.hold_refresh {
@@ -408,7 +426,9 @@ fn exchange_refresh(fake: &Fake, request: TokenRequest) -> Response<Body> {
         }
     });
     if behavior.refuse_refresh || !known {
-        return refuse("invalid_grant");
+        let (status, error) = &behavior.refusal;
+        let status = StatusCode::from_u16(*status).expect("a status");
+        return (status, Json(json!({ "error": error }))).into_response();
     }
     let access = fake.access_token();
     let mut body = tokens(fake, &behavior, &access);
@@ -543,14 +563,19 @@ impl Browser {
     /// cookie the response sets.
     pub async fn send(&mut self, mut request: Request<Body>) -> Response<Body> {
         if let Some(cookie) = &self.cookie {
-            let value = format!("sungma={cookie}").parse().expect("a cookie header");
+            let value = format!("{COOKIE}={cookie}")
+                .parse()
+                .expect("a cookie header");
             request.headers_mut().insert(header::COOKIE, value);
         }
         let response = self.app.clone().oneshot(request).await.expect("infallible");
-        if let Some(set) = response.headers().get(header::SET_COOKIE) {
+        let prefix = format!("{COOKIE}=");
+        for set in response.headers().get_all(header::SET_COOKIE) {
             let set = set.to_str().expect("an ASCII cookie");
             let pair = set.split(';').next().unwrap_or_default();
-            let value = pair.strip_prefix("sungma=").unwrap_or_default();
+            let Some(value) = pair.strip_prefix(&prefix) else {
+                continue;
+            };
             let removed = value.is_empty() || set.contains("Max-Age=0");
             self.cookie = (!removed).then(|| value.to_owned());
         }

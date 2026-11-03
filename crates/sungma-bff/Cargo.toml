@@ -11,12 +11,12 @@ testkit = [
     "dep:serde_json",
     "dep:tower",
     "tokio/net",
-    "tokio/rt",
     "sungma-clock/test-util",
     "tower-sessions/memory-store",
 ]
 
 [dependencies]
+async-trait = "0.1.92"
 axum.workspace = true
 base64 = { version = "0.22.1", optional = true }
 chrono = { version = "0.4.42", default-features = false }
@@ -27,11 +27,11 @@ serde.workspace = true
 serde_json = { workspace = true, optional = true }
 sungma-clock.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["rt", "sync"] }
 tower = { workspace = true, optional = true, features = ["util"] }
 tower-sessions = "0.15.0"
 
 [dev-dependencies]
 http-body-util.workspace = true
 sungma-bff = { path = ".", features = ["testkit"] }
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "time"] }

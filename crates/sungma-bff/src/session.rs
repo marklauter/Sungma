@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::FromRequestParts,
+    extract::{FromRequestParts, Request, State},
     http::{StatusCode, request::Parts},
+    middleware::Next,
     response::{IntoResponse, Redirect, Response},
 };
 use openidconnect::core::CoreIdTokenClaims;
@@ -38,7 +39,8 @@ pub(crate) struct SignedIn {
     pub tokens: Tokens,
 }
 
-/// The tokens a session holds. The browser never sees them.
+/// The tokens a session holds. The browser never sees the access token
+/// or the refresh token.
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Tokens {
     pub access: String,
@@ -47,8 +49,13 @@ pub(crate) struct Tokens {
     /// epoch, or `None` when the identity provider didn't say when it
     /// expires.
     pub refresh_at: Option<u64>,
-    /// The ID token, sent back as a hint when signing out.
+    /// When the access token expires, in nanoseconds since the Unix epoch.
+    pub expires_at: Option<u64>,
+    /// The ID token, sent back as a hint when signing out. The hint goes
+    /// by way of the browser.
     pub id_token: String,
+    /// How many refreshes these tokens come after the sign-in.
+    pub generation: u64,
 }
 
 /// The signed-in person, from their ID token.
@@ -90,7 +97,7 @@ impl<S: Send + Sync> FromRequestParts<S> for User {
             .map_err(IntoResponse::into_response)?;
         match read::<SignedIn>(&session, SIGNED_IN).await {
             Ok(Some(signed_in)) => Ok(signed_in.user),
-            Ok(None) => Err(to_sign_in(parts, bff.sign_in_page())),
+            Ok(None) => Err(to_sign_in(is_htmx(&parts.headers), bff.sign_in_page())),
             Err(error) => Err(error.into_response()),
         }
     }
@@ -113,11 +120,33 @@ pub(crate) async fn read<T: DeserializeOwned>(
     }
 }
 
+/// Marks the response to a request whose session ended, so
+/// [`to_sign_in_when_ended`] can send HTMX to the sign-in page.
+#[derive(Clone)]
+pub(crate) struct Ended;
+
+/// Sends HTMX to the sign-in page when its request finds the session
+/// ended, as the [`User`] extractor does. HTMX doesn't swap a 401, so the
+/// page would stop updating and leave the person where they were.
+pub(crate) async fn to_sign_in_when_ended(
+    State(bff): State<Arc<Bff>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let htmx = is_htmx(request.headers());
+    let response = next.run(request).await;
+    if htmx && response.extensions().get::<Ended>().is_some() {
+        to_sign_in(true, bff.sign_in_page())
+    } else {
+        response
+    }
+}
+
 /// Sends the browser to the sign-in page. HTMX doesn't follow a redirect
 /// for the page, only for the fragment it asked for, so it gets
 /// `HX-Redirect` instead.
-fn to_sign_in(parts: &Parts, page: &str) -> Response {
-    if is_htmx(&parts.headers) {
+fn to_sign_in(htmx: bool, page: &str) -> Response {
+    if htmx {
         ([("hx-redirect", page)], StatusCode::OK).into_response()
     } else {
         Redirect::to(page).into_response()

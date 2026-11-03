@@ -13,16 +13,24 @@ use openidconnect::{
 use serde::Deserialize;
 use tower_sessions::Session;
 
+use tower_sessions::{Expiry, cookie::time};
+
 use crate::{
     Bff, Error, User,
+    bff::{Backchannel, refused},
     session::{self, MAX_PENDING, PENDING, Pending, SIGNED_IN, SignedIn, Tokens},
 };
+
+/// How long a session with only sign-ins in progress lasts.
+const PENDING_LIFE: time::Duration = time::Duration::minutes(10);
 
 /// Starts a sign-in: keeps a fresh state, nonce and PKCE verifier in the
 /// session, beside the sign-ins already in progress, and sends the
 /// browser to the identity provider by `HX-Redirect`. It's a POST, so the
 /// header check keeps a cross-site page from starting sign-ins that push
-/// a real one out.
+/// a real one out. A session with only sign-ins in progress lasts
+/// [`PENDING_LIFE`], so one started and left costs little to keep; a
+/// signed-in session keeps its own life.
 pub(crate) async fn login(
     State(bff): State<Arc<Bff>>,
     session: Session,
@@ -49,6 +57,9 @@ pub(crate) async fn login(
     let excess = pending.len().saturating_sub(MAX_PENDING);
     pending.drain(..excess);
     session.insert(PENDING, pending).await?;
+    if session.get_value(SIGNED_IN).await?.is_none() {
+        session.set_expiry(Some(Expiry::OnInactivity(PENDING_LIFE)));
+    }
     Ok(([("hx-redirect", url.to_string())], StatusCode::OK).into_response())
 }
 
@@ -87,9 +98,15 @@ pub(crate) async fn callback(
         .client
         .exchange_code(AuthorizationCode::new(code))
         .set_pkce_verifier(PkceCodeVerifier::new(sign_in.verifier))
-        .request_async(&bff.http)
+        .request_async(&Backchannel(&bff.http))
         .await
-        .map_err(|error| Error::Token(error.to_string()))?;
+        .map_err(|error| {
+            if refused(&error) {
+                Error::Token(error.to_string())
+            } else {
+                Error::Unavailable(error.to_string())
+            }
+        })?;
     let id_token = response
         .id_token()
         .ok_or_else(|| Error::IdToken("missing".to_owned()))?;
@@ -109,13 +126,15 @@ pub(crate) async fn callback(
                 .refresh_token()
                 .map(|refresh| refresh.secret().clone()),
             refresh_at: bff.refresh_at(response.expires_in()),
+            expires_at: bff.expires_at(response.expires_in()),
             id_token: id_token.to_string(),
+            generation: 0,
         },
     };
     // A new session id, so an id planted before sign-in isn't signed in.
     session.cycle_id().await?;
     session.insert(SIGNED_IN, signed_in).await?;
-    Ok(Redirect::to("/"))
+    Ok(Redirect::to(&bff.home))
 }
 
 /// Ends the session and sends the browser, by `HX-Redirect`, to the
