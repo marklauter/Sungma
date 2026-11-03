@@ -1,0 +1,9 @@
+[advisories]
+ignore = [
+    # rsa, through openidconnect: the Marvin attack recovers an RSA private
+    # key from the timing of decryption or signing. sungma-bff only verifies
+    # ID token signatures with the identity provider's public keys, and holds
+    # no RSA private key. No patched rsa release exists. When to drop this:
+    # docs/todos/drop-the-rsa-advisory-ignore.md.
+    "RUSTSEC-2023-0071",
+]
