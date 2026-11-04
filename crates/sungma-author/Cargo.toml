@@ -1,0 +1,36 @@
+[package]
+name = "sungma-author"
+version.workspace = true
+edition.workspace = true
+
+[features]
+# Author's binary, on a memory session store.
+server = [
+    "dep:tokio",
+    "tokio/macros",
+    "tokio/rt-multi-thread",
+    "tokio/net",
+    "tower-sessions/memory-store",
+]
+
+[[bin]]
+name = "sungma-author"
+path = "src/main.rs"
+required-features = ["server"]
+
+[dependencies]
+askama = "0.16.1"
+axum.workspace = true
+sungma-bff.workspace = true
+sungma-clock.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, optional = true }
+tower-sessions = "0.15.0"
+
+[dev-dependencies]
+http-body-util.workspace = true
+sungma-author = { path = ".", features = ["server"] }
+sungma-bff = { workspace = true, features = ["testkit"] }
+sungma-clock = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["macros", "process", "rt"] }
+tower-sessions = { version = "0.15.0", features = ["memory-store"] }
