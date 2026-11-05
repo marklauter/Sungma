@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Sign in to Author{% endblock %}
+{% block body %}
+<div class="signin">
+<main>
+<img src="/static/sungma.png" alt="Sungma" width="280" height="92">
+<section class="panel" aria-labelledby="signin-title">
+<div class="heading">
+<h1 id="signin-title">Sign in to Author</h1>
+<p class="muted">Administer your organization's access.</p>
+</div>
+<button type="button" class="primary" hx-post="/auth/login">Sign in with {{ provider }}</button>
+<p class="muted small">You'll sign in on your organization's page, then come back here. Author never sees your password.</p>
+</section>
+</main>
+<footer class="muted small">Author {{ version }}</footer>
+</div>
+{% endblock %}
