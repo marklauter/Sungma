@@ -21,24 +21,6 @@ A revision doesn't close the gap between a check and the action that follows it.
 
 A proof of concept. The evaluator, decisions with grounds and replay, namespace documents, versioned namespaces, the revision clock and a DynamoDB table work. The HTTP API checks access and reads and writes facts and namespaces. [docs/roadmap.md](docs/roadmap.md) lists what comes next.
 
-## Crates
-
-Each context has its own readers, writers and shapes, over one key-value table and a small shared kernel.
-
-- `sungma`: the shared kernel. Names, ids and revisions, the fact graph, namespaces and rewrites, and namespace versions with their epochs.
-- `sungma-table`: the key-value table, which knows nothing of what its items mean: a get by key, a query of a partition, a unit of work that commits whole or not at all, and sequences. Holds the memory table, for tests, and the tests every table passes.
-- `sungma-dynamodb`: the table on DynamoDB.
-- `sungma-schema`: where facts, namespace versions and the head live on the table, and what each row holds.
-- `sungma-names`: the names context. Names and their interned ids, the interner, and resolving a caller's names.
-- `sungma-write`: the write context. Fact and namespace writes, judged by the epoch rules and committed as one unit of work.
-- `sungma-check`: the Check context. Resolves a request's names, decides it at a revision and appends an audit record; closure evaluation and replay.
-- `sungma-read`: the API's reads of facts and namespace documents at a snapshot.
-- `sungma-clock`: the revision clock, with NTP, NTS and platform clocks.
-- `sungma-lang`: namespace and fact documents: parsing and printing.
-- `sungma-node`: one node's contexts wired over one table.
-- `sungma-http`: what the HTTP services share. `sungma-check`, `sungma-read` and `sungma-write` each serve their context over HTTP, on axum, with the `server` feature.
-- `sungma-author`: Author, Sungma's web UI. HTMX pages behind `sungma-bff`: sign-in and Home so far.
-
 ## Docs
 
 - [Architecture](docs/architecture.md): Sungma, its neighbors and its services.
