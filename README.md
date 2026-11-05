@@ -37,6 +37,7 @@ Each context has its own readers, writers and shapes, over one key-value table a
 - `sungma-lang`: namespace and fact documents: parsing and printing.
 - `sungma-node`: one node's contexts wired over one table.
 - `sungma-http`: what the HTTP services share. `sungma-check`, `sungma-read` and `sungma-write` each serve their context over HTTP, on axum, with the `server` feature.
+- `sungma-author`: Author, Sungma's web UI. HTMX pages behind `sungma-bff`: sign-in and Home so far.
 
 ## Docs
 
