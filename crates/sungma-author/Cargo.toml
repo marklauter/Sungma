@@ -19,7 +19,9 @@ path = "src/main.rs"
 required-features = ["server"]
 
 [dependencies]
-askama = "0.16.1"
+# Without the config feature, which reads askama.toml through basic-toml,
+# an unmaintained crate.
+askama = { version = "0.16.1", default-features = false, features = ["derive", "std"] }
 axum.workspace = true
 sungma-bff.workspace = true
 sungma-clock.workspace = true
