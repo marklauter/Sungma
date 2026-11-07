@@ -177,4 +177,4 @@ A namespace version that declares a relation the namespace's earlier versions di
 3. Whether a namespace's owner should be able to transfer ownership, or revoke the last owner while admins still own it through the deployment.
 4. How groups imported through SCIM are named, created and edited. See [[scim-imports-users-and-groups]].
 5. How a namespace version that adds more relations than one unit of work holds gets its `parent` facts, and how namespace writes and the table make room for fact items in a namespace write.
-6. Whether bringing back a relation, or creating a retired namespace again, should drop the grants it had before.
+6. Whether grants start fresh when a relation comes back, or a retired namespace is created again. A relation brought back gets a new epoch, so its facts from before don't count. The grants on it, such as `sungma.relation:billing/approver#writer@alice`, sit under `sungma.relation`'s `writer`, which is never dropped, so they count again. A grant could count only if it was written after its relation's current epoch, the same rule its facts follow.
