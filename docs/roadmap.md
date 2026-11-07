@@ -27,8 +27,9 @@ Done means built, tested to the coverage floor and merged. It doesn't mean produ
 23. Snapshot dumps for offline processing.
 24. Metrics, tracing and latency objectives.
 25. Client SDKs.
-26. Namespace diagrams: Author draws the model as a graph, with each namespace as a node and each relation's accepted subjects as edges.
-27. Opaque zookies.
+26. Model simulation and review: load a set of namespaces and facts locally, without writing them to a deployment, run Check and Expand against them, and report who can reach what, including paths by which a role reaches more than it was granted.
+27. Namespace diagrams: Author draws the model as a graph, with each namespace as a node and each relation's accepted subjects as edges.
+28. Opaque zookies.
 
 ## Deferred
 
