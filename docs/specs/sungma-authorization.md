@@ -56,6 +56,21 @@ writer = { rewrite = "this | (parent, fact_writer)", subjects = ["identity"] }
 reader = { rewrite = "this | writer | (parent, fact_reader)", subjects = ["identity"] }
 ```
 
+Drawn as a graph, each namespace is a node, and each relation's accepted subjects are its edges. Solid edges are the `parent` links that rewrites follow. Dashed edges go to identities, the people and clients who hold roles.
+
+```mermaid
+flowchart LR
+  relation["<b>sungma.relation</b><br/>parent<br/>writer<br/>reader"]
+  namespace["<b>sungma.namespace</b><br/>parent<br/>owner<br/>editor<br/>fact_writer<br/>fact_reader<br/>viewer"]
+  sungma["<b>sungma</b><br/>admin<br/>namespace_creator"]
+  identity(["identity"])
+  relation -- parent --> namespace
+  namespace -- parent --> sungma
+  relation -. "writer, reader" .-> identity
+  namespace -. "owner, editor, fact_writer, fact_reader, viewer" .-> identity
+  sungma -. "admin, namespace_creator" .-> identity
+```
+
 The [[resource]]s are:
 
 - `sungma:deployment`, the one deployment.
