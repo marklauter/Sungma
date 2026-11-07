@@ -110,7 +110,8 @@ Three kinds of fact link these resources, and only Sungma writes them:
 | Add or remove a group's members, or grant or revoke its `owner` | `owner` on the group |
 | Run the deployment: read its logs and metrics | `operator` on `sungma:deployment` |
 | Read and replay the audit records of decisions | `auditor` on `sungma:deployment` |
-| Write a new version of a namespace, or retire it | `writer` on the namespace |
+| Write a new version of a namespace | `writer` on the namespace |
+| Retire a namespace | `owner` on the namespace |
 | Read a namespace's document | `reader` on the namespace |
 | Grant or revoke a role on a namespace or one of its relations | `owner` on the namespace |
 | Write facts under a relation | `writer` on the relation |
