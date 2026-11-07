@@ -149,8 +149,9 @@ Each test has a table of its own, so tests don't share state. Without DynamoDB L
 
 ## Open
 
-1. **Writes larger than one unit of work.** A unit of work holds 100 items, so a big write, such as a namespace with many relations or a large batch of facts, can't commit in one. One answer keeps it atomic with a commit point:
+1. **Writes larger than one unit of work.** A unit of work holds 100 items, so a big write, such as a namespace with many relations or a large batch of facts, can't commit in one. One possible answer is a head lease, which keeps the write atomic with a commit point:
    - The big write reserves the head, writes every item stamped with the next revision R across as many units of work as it needs, then moves the head to R in one last unit of work. Reads stop at the head, so nothing at R is seen until then.
    - It records its change set before writing anything, and the reservation points to it.
    - The reservation has a lease. When the lease expires, the next writer may take over, but the head never moves past R while R's items remain. The next writer either undoes them from the change set, restoring the pointers and spans the write changed, or marks R aborted so every read skips it.
    - Still open: whether pointers moved in place stay invisible until the head reaches R, whether to undo or mark aborted, and how long a big write may hold the head while every other write waits.
+   - Other answers: a commit record per write, which readers look up, so other writes don't wait. A cap on items per write, so big changes split into several versions. Or writing the extra items after the commit, which works only where their absence fails closed.
