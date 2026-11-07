@@ -80,7 +80,7 @@ banned = { subjects = ["identity"] }
 
 A document is refused if it breaks any of these limits:
 
-- A document is at most 4 MiB. The other limits allow about 2.1 MB of compact JSON; the rest is room for whitespace.
+- A document is at most 4 MiB. With accepted subjects, the other limits together allow more than that, so a namespace at every other limit at once is refused by this one.
 - A single namespace.
 - A namespace declares at most 500 relations.
 - A relation accepts at most 32 kinds of subject.
@@ -206,7 +206,7 @@ A namespace is checked whole when it is declared, and is refused if any of the f
 - A rewrite nests more than 100 levels deep. A leaf is one level, a run of `|` or `&` is one level however many operands it has, and each `!` adds a level. Grouping parentheses nested more than 100 deep are also refused, before the tree is built.
 - A computed subjectset, or the factset of a fact-to-subjectset, names a relation the namespace doesn't declare. The computed relation of a fact-to-subjectset belongs to the namespace of each fact's subject, so it's checked against the subjects the factset accepts, as [Accepted subjects](#accepted-subjects) says.
 - A relation's accepted subjects break a rule in [Accepted subjects](#accepted-subjects).
-- Computed subjectsets form a cycle, such as `"viewer": "editor"` with `"editor": "viewer"`, or `"viewer": "this ! viewer"`. A cycle through a fact-to-subjectset, such as folders inside folders, reads a fact at each step and is allowed.
+- Computed subjectsets form a cycle, such as `"viewer": "editor"` with `"editor": "viewer"`, or `"viewer": "owner ! viewer"`. A cycle through a fact-to-subjectset, such as folders inside folders, reads a fact at each step and is allowed.
 
 ## Errors
 
