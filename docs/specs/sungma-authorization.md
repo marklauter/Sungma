@@ -35,20 +35,21 @@ Neither implies the other. A namespace's writer can't write its facts unless the
 ## The model
 
 ```toml
-# The deployment: its admins, its operators, and who may create namespaces
+# The deployment: its admins, operators and auditors, and who may create namespaces
 [sungma]
 admin = { subjects = ["identity"] }
 namespace_creator = { rewrite = "this | admin", subjects = ["identity"] }
 operator = { rewrite = "this | admin", subjects = ["identity"] }
+auditor = { rewrite = "this | admin", subjects = ["identity"] }
 
 # Each namespace: who owns it, who writes its document, and who works with all its facts
 ["sungma.namespace"]
 parent = { subjects = ["sungma"] }
 owner = { rewrite = "this | (parent, admin)", subjects = ["identity"] }
 writer = { rewrite = "this | owner", subjects = ["identity"] }
-reader = { rewrite = "this | writer | fact_reader", subjects = ["identity"] }
+reader = { rewrite = "this | writer | fact_reader | (parent, auditor)", subjects = ["identity"] }
 fact_writer = { rewrite = "this | owner", subjects = ["identity"] }
-fact_reader = { rewrite = "this | fact_writer", subjects = ["identity"] }
+fact_reader = { rewrite = "this | fact_writer | (parent, auditor)", subjects = ["identity"] }
 
 # Each relation: who writes and reads the facts under it
 ["sungma.relation"]
@@ -63,13 +64,13 @@ Drawn as a graph, each namespace is a node, and each relation's accepted subject
 flowchart LR
   relation["<b>sungma.relation</b><br/>parent<br/>writer<br/>reader"]
   namespace["<b>sungma.namespace</b><br/>parent<br/>owner<br/>writer<br/>reader<br/>fact_writer<br/>fact_reader"]
-  sungma["<b>sungma</b><br/>admin<br/>namespace_creator<br/>operator"]
+  sungma["<b>sungma</b><br/>admin<br/>namespace_creator<br/>operator<br/>auditor"]
   identity(["identity"])
   relation -- parent --> namespace
   namespace -- parent --> sungma
   relation -. "writer, reader" .-> identity
   namespace -. "owner, writer, reader, fact_writer, fact_reader" .-> identity
-  sungma -. "admin, namespace_creator, operator" .-> identity
+  sungma -. "admin, namespace_creator, operator, auditor" .-> identity
 ```
 
 The [[resource]]s are:
@@ -87,9 +88,10 @@ Two kinds of fact link these resources, and only Sungma writes them:
 
 | To do this | the subject needs |
 |---|---|
-| Grant or revoke `admin`, `namespace_creator` or `operator` | `admin` on `sungma:deployment` |
+| Grant or revoke `admin`, `namespace_creator`, `operator` or `auditor` | `admin` on `sungma:deployment` |
 | Create a namespace | `namespace_creator` on `sungma:deployment` |
 | Run the deployment: read its logs and metrics | `operator` on `sungma:deployment` |
+| Read and replay the audit records of decisions | `auditor` on `sungma:deployment` |
 | Write a new version of a namespace, or retire it | `writer` on the namespace |
 | Read a namespace's document | `reader` on the namespace |
 | Grant or revoke a role on a namespace or one of its relations | `owner` on the namespace |
@@ -97,6 +99,8 @@ Two kinds of fact link these resources, and only Sungma writes them:
 | Read facts under a relation, or check a [[subjectset]] formed from it | `reader` on the relation |
 
 A fact's subject may name a resource or subjectset in another namespace. Writing the fact needs `writer` on its own relation only, nothing on the namespace it points into.
+
+An auditor reads every namespace's document and every fact, and changes nothing.
 
 A namespace-wide grant flows down: `fact_writer` on `billing` makes its holder a `writer` on every relation in `billing`, including relations added later.
 
@@ -133,9 +137,10 @@ A namespace version that declares a relation the namespace's earlier versions di
 7. Two admins revoking each other at once leave one admin.
 8. A failed namespace creation stores none of its three items.
 9. A new relation gets its `parent` fact in the same unit of work as the version that declares it.
+10. An auditor reads every namespace's document and the facts under every relation, and every write by an auditor who holds no other role is refused.
 
 ## Open
 
 1. How deployment setup runs, and where it takes the first admin's subject from.
-2. What `operator` covers beyond logs and metrics: audit records, replaying decisions, health, and whether operators may see namespace documents to diagnose a problem.
+2. What `operator` covers beyond logs and metrics, such as health, and whether operators may read namespace documents to diagnose a problem.
 3. Whether a namespace's owner should be able to transfer ownership, or revoke the last owner while admins still own it through the deployment.
