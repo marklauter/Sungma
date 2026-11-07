@@ -55,7 +55,7 @@ banned = { subjects = ["identity"] }
 
 ## JSON form
 
-- A document is one JSON object with exactly one key, the namespace's name. Its value is an object mapping the namespace's relation names to their expressions.
+- A document is one JSON object with exactly one key, the namespace's name. Its value is an object mapping each of the namespace's relation names to that relation's value.
 - A relation's value is its expression, a non-empty string, or an object that also declares the subjects it accepts, as [Accepted subjects](#accepted-subjects) says. Any other value, such as `null`, `""`, a number or an array, is refused.
 - A namespace without relations is written `{}`. It names a kind of [[resource]] that is only ever a subject, `namespace:id`, of facts in other namespaces, as a `user` type does in other ReBAC models. Any other value for the namespace, such as `null` or `[]`, is refused.
 - A document declares exactly one namespace. An empty document or `{}` declares nothing, and an object with two or more keys declares more than one, so both are refused as parse errors. An API that takes a document answers either as a bad request.
@@ -66,7 +66,7 @@ banned = { subjects = ["identity"] }
 
 ## TOML form
 
-- A document is one TOML table. Its header is the namespace's name, and each key in it names a relation and holds its expression.
+- A document is one TOML table. Its header is the namespace's name, and each key in it names a relation and holds that relation's value.
 - A dotted namespace name is quoted, as in `["drive.file"]`. TOML reads an unquoted dot as a nested table.
 - A relation's value is its expression, a non-empty string, or an inline table that also declares the subjects it accepts, as [Accepted subjects](#accepted-subjects) says. Any other value, such as `true`, a number, an array or a nested table like `a.b = "x"`, is refused.
 - An expression may be any TOML string: basic `"…"`, literal `'…'`, or multi-line when it wraps. Strings hold no escapes, as in the JSON form, and a string with one is refused.
@@ -113,7 +113,7 @@ Namespace and relation names are value types, `NamespaceName` and `RelationName`
 
 Everything past the edge, including the rewrite tree, the namespace and the printer, holds these types, so a name the grammar doesn't allow can't reach them.
 
-The keyword is `this`, in lowercase only. No relation may be named `this` in any casing, so `This` and `THIS` are refused as names, and so is a reference to one: `"viewer": "this"` is valid, and `"viewer": "This"` is refused as a reserved name. A name that differs from the keyword only in case would read as the keyword. The core accepts these names; the document reserves them.
+The keyword is `this`, in lowercase only. No relation may be named `this` in any casing, so `This` and `THIS` are refused as names, and so is a reference to one: `this | owner` is a valid rewrite, and `This | owner` is refused as a reserved name. A name that differs from the keyword only in case would read as the keyword. The core accepts these names; the document reserves them.
 
 ## Rewrite grammar
 
