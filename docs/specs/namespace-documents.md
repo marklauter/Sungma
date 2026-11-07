@@ -92,7 +92,7 @@ The rewrite depth limit is under [Checks](#checks).
 
 ## Names
 
-A relation name is one name. A namespace name is one or more segments joined by dots, such as `file` or `drive.file`. Each segment is a name. A name whose first segment is `sungma` belongs to Sungma, so `sungma` and `sungma.audit` are reserved for Sungma's own namespaces, and `sungmax` isn't. A namespace name is also the namespace part of a resource name, as `file` is in `file:design.md`. The grammars in this spec are EBNF: `::=` defines, `|` alternates, `{ }` repeats zero or more times, quoted text is literal, and `'x'…'y'` is an inclusive character range.
+A relation name is one name. A namespace name is one or more segments joined by dots, such as `file` or `drive.file`. Each segment is a name. A namespace name whose first segment is `sungma` belongs to Sungma, so `sungma` and `sungma.audit` are reserved for Sungma's own namespaces, and `sungmax` isn't. A namespace name is also the namespace part of a resource name, as `file` is in `file:design.md`. The grammars in this spec are EBNF: `::=` defines, `|` alternates, `{ }` repeats zero or more times, quoted text is literal, and `'x'…'y'` is an inclusive character range.
 
 ```ebnf
 ⟨namespace name⟩   ::= ⟨name⟩ { '.' ⟨name⟩ }
@@ -254,7 +254,7 @@ The printer writes a document, in either form, that the parser reads back as an 
 The parser takes untrusted input in a security system, so its tests cover hostile input as well as valid documents. Each class below is required.
 
 1. **Document shape.** Each rule in [JSON form](#json-form) and [TOML form](#toml-form) holds, for valid documents and for each way of breaking it.
-2. **Names.** The name grammar, dotted namespace names, and the reserved `this` in every casing.
+2. **Names.** The name grammar, dotted namespace names, the reserved `this` in every casing, and the reserved first segment `sungma`.
 3. **Grammar.** Precedence, left-to-right reading, runs as one node, parentheses kept as structure, whitespace, and longest-match names.
 4. **Checks.** Each check in [Checks](#checks) refuses what it should and allows what it should, including cycles through a fact-to-subjectset and relations that share a target.
 5. **Errors.** Every problem is reported in document order, up to the cap, each with its place. A syntax error's message names what was expected and what was found. Quoted input is bounded and escaped.
@@ -288,7 +288,7 @@ The cases each class covers, at minimum.
 #### Names
 
 1. Namespace and relation names follow the grammar, and names that break it are refused.
-2. A dotted namespace name is one name. `.a`, `a.`, `a..b` and `a.1b` are refused.
+2. A dotted namespace name is one namespace name made of segments, each a name. `.a`, `a.`, `a..b` and `a.1b` are refused.
 3. `this` in any casing is refused as a relation name, and in any casing other than `this` it's refused inside an expression.
 4. `NamespaceName` and `RelationName`'s `FromStr` and `TryFrom<&str>` refuse every name the grammar or the length limit refuses, including names holding `"`, `:`, `#`, whitespace or control characters.
 
