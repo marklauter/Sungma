@@ -157,6 +157,8 @@ Each entry in `subjects` is one of:
 - A namespace name, such as `folder`: a resource member of that namespace, such as `folder:root#...`.
 - A namespace name and a relation joined by `#`, such as `group#member`: a subjectset of that relation.
 
+No entry accepts every subject. A relation that would take anything can't have its links checked, so each one names what it takes.
+
 A relation that declares subjects is written as an object in JSON and an inline table in TOML, with `rewrite` and `subjects` keys. `rewrite` may be left out, and is then `this`:
 
 ```toml
