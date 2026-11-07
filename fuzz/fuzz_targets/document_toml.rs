@@ -28,6 +28,9 @@ fuzz_target!(|data: &[u8]| {
             .map(|(name, rewrite)| (name.clone(), rewrite.clone()))
             .collect::<Vec<_>>()
     };
+    let printed_again = namespace::print_toml(&again.namespace, &again.relations)
+        .expect("a reparsed namespace prints");
+    assert_eq!(printed_again, printed);
     assert_eq!(again.namespace, parsed.namespace);
     assert_eq!(sorted(&again), sorted(&parsed));
     assert_eq!(from_json.namespace, parsed.namespace);
