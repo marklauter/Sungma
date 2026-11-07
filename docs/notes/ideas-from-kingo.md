@@ -104,7 +104,7 @@ Empty operators can't be built, and excess depth is refused at construction.
 
 Precedence `!` > `&` > `|`, left-associative `!`, minimal parentheses on print, and a hostile-input suite: 20k nested parentheses, a 20k `!` chain, and a 500-wide union that isn't depth.
 
-- **Sungma: missing.** Namespaces load from JSON only; roadmap item 12.
+- **Sungma: done.** Rewrites are expression strings with this grammar, a printer that adds only the parentheses it needs, and hostile-input tests; see [Namespace documents](../specs/namespace-documents.md).
 - Source: `src/Kingo.Documents/RewriteExpressionParser.cs`, `RewriteExpressionPrinter.cs`, `tests/Kingo.Documents.Tests/`.
 
 ### 11. Grounds are kept from callers

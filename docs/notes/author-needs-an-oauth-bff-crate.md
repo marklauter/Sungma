@@ -43,7 +43,7 @@ No Rust crate covers the whole BFF, as Duende's BFF library does for .NET. Sungm
   5. End session, for sign-out.
 
   Each test sets how the fake misbehaves: an expired token, a signature from the wrong key, a refused refresh. No identity provider runs outside the tests, so the crate owns its tests and its mutants run without a container.
-- Read and Write check the access token the BFF forwards. That's roadmap item 15, authentication and authorization of Sungma's own callers; see [[check-takes-a-caller-token-and-a-subject-token]].
+- Read and Write check the access token the BFF forwards. That's the roadmap's authentication and authorization of Sungma's own callers; see [[check-takes-a-caller-token-and-a-subject-token]].
 
 ## Open
 

@@ -10,7 +10,7 @@ cites:
 
 # Check takes a caller token and a subject token
 
-Zanzibar trusts every service that calls Check to name the right [[subject]]. A service that passes a user-supplied identity straight through lets a user claim to be anyone. Sungma closes that gap by never taking a subject by name. This belongs to roadmap item 15, authentication of Sungma's callers.
+Zanzibar trusts every service that calls Check to name the right [[subject]]. A service that passes a user-supplied identity straight through lets a user claim to be anyone. Sungma closes that gap by never taking a subject by name. This belongs to the roadmap's authentication and authorization of Sungma's own callers.
 
 ## Two tokens
 
