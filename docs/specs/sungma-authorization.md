@@ -35,12 +35,12 @@ Neither implies the other. An editor of a namespace can't write its facts unless
 ## The model
 
 ```toml
-# The deployment
+# The deployment: its admins, and who may create namespaces
 [sungma]
 admin = "this"
 namespace_creator = "this | admin"
 
-# Tier 1: a namespace's document
+# Each namespace: who owns it, who edits its rewrites, and who works with all its facts
 ["sungma.namespace"]
 deployment = "this"
 owner = "this | (deployment, admin)"
@@ -49,7 +49,7 @@ fact_writer = "this | owner"
 fact_reader = "this | fact_writer"
 viewer = "this | editor | fact_reader"
 
-# Tier 2: the facts under one relation
+# Each relation: who writes and reads the facts under it
 ["sungma.relation"]
 namespace = "this"
 writer = "this | (namespace, fact_writer)"
