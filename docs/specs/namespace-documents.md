@@ -20,8 +20,6 @@ cites:
 
 A namespace document is the JSON or TOML form of one [[namespace]]. Both forms parse to the same namespace. A document maps the namespace's name to its [[relation]]s, and each relation's name to a [[rewrite]] written as an expression string. A namespace is the unit a write declares, so a document holds exactly one. Sungma parses a document into a typed rewrite tree for each relation, checks the namespace whole, and prints a namespace back into a document, in either form, that parses as an equal namespace.
 
-A caller names the form with the request's content type: `application/json` or `application/toml`.
-
 ## The name
 
 The namespaces that model one domain together form a [[theory]], in the logician's sense: a set of sentences that, together with the [[fact]]s, settles every question it can be asked. Here the sentences are rewrites, and each question asks whether a [[subject]] is in the [[closure]] of a [[subjectset]]. The rules in [Checks](#checks) exist to keep that true, so a theory and its facts give exactly one answer to each question.
@@ -76,7 +74,7 @@ banned = "this"
 - A document declares exactly one namespace. An empty document, or one with two or more tables, is refused.
 - A relation named twice, or a table header written twice, is refused. TOML itself refuses both.
 - Comments are allowed. They aren't kept, because Sungma stores the namespace as the printer's JSON form.
-- A document is TOML 1.0. Like the JSON form, it carries no grammar version.
+- A document is TOML, version 1.0 or later. Like the JSON form, it carries no grammar version.
 
 ## Limits
 
@@ -172,7 +170,7 @@ A namespace is checked whole when it is declared, and is refused if any of the f
 
 A JSON or TOML library reads the document, and a document that isn't valid in its form is refused with the library's error and its line and column. Nothing further is checked.
 
-Sungma's own parser reads each expression. It reports the problems it finds in document order, up to 50; past that, a final error says there were too many. Each error carries the relation it was found in and, for a problem inside an expression, the column where the problem starts. A column counts characters from 1. A problem found only by checking a whole namespace, such as a cycle, is reported at the relation where it is found.
+Sungma's own parser reads each expression. It reports the problems it finds in document order, up to 50; past that, a final error says there were too many. Each error carries the relation it was found in and, for a problem inside an expression, the column where the problem starts. A column counts characters from 1, from the start of the expression. In a TOML multi-line string, it counts across the string's line breaks, so it doesn't match a column on the document's lines. A problem found only by checking a whole namespace, such as a cycle, is reported at the relation where it is found.
 
 One mistake reports one error:
 
@@ -201,6 +199,10 @@ The printer writes a document, in either form, that the parser reads back as an 
 - Relations print sorted by name, comparing bytes. Order carries no meaning, so a namespace holds its relations unordered, and the printer sorts them so one namespace always prints as the same text.
 - JSON objects indent by two spaces, one key per line. The TOML form prints one key per line under its header. Lines end in `\n` on every platform.
 - Printing refuses, with a `PrintError`, a name made with `new_unchecked` that breaks the grammar, including `this`, or a union or intersection with one operand.
+
+## Open
+
+- How a request names its document's form. A write carries the document inside a request body, so the form can't come from the request's content type. The endpoints that take documents settle it.
 
 ## Required tests
 
