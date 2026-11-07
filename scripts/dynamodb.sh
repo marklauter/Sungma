@@ -17,6 +17,7 @@ answers() {
 if answers; then
   exit 0
 fi
+"$(dirname "$0")/podman.sh"
 podman run -d --rm --name sungma-dynamodb -p 8000:8000 "$image" \
   -jar DynamoDBLocal.jar -inMemory -sharedDb > /dev/null
 for _ in $(seq 1 30); do

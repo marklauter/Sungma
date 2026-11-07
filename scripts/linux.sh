@@ -23,6 +23,7 @@ if [ "${1:-}" = mutants ]; then
   target=()
 fi
 
+"$(dirname "$0")/podman.sh"
 MSYS_NO_PATHCONV=1 exec podman run --rm \
   -v "$repo:/work" \
   -v sungma-cargo:/usr/local/cargo/registry \
