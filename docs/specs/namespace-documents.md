@@ -1,7 +1,7 @@
 ---
 title: Namespace documents
 type: specification
-summary: "A namespace document is the JSON or TOML form of one namespace: its name, and each relation's rewrite written as an expression string. Both forms parse to the same namespace."
+summary: "A namespace document is the JSON or TOML form of one namespace: its name, each relation's rewrite written as an expression string, and the subjects each relation's facts may bind. Both forms parse to the same namespace."
 status: evolving
 cites:
   - "[[namespace]]"
@@ -18,7 +18,7 @@ cites:
 
 # Namespace documents
 
-A namespace document is the JSON or TOML form of one [[namespace]]. Both forms parse to the same namespace. A document maps the namespace's name to its [[relation]]s, and each relation's name to a [[rewrite]] written as an expression string. A namespace is the unit a write declares, so a document holds exactly one. Sungma parses a document into a typed rewrite tree for each relation, checks the namespace whole, and prints a namespace back into a document, in either form, that parses as an equal namespace.
+A namespace document is the JSON or TOML form of one [[namespace]]. Both forms parse to the same namespace. A document maps the namespace's name to its [[relation]]s, and each relation's name to a [[rewrite]] written as an expression string. A relation whose facts bind subjects also declares which [[subject]]s they may bind. A namespace is the unit a write declares, so a document holds exactly one. Sungma parses a document into a typed rewrite tree for each relation, checks the namespace whole, and prints a namespace back into a document, in either form, that parses as an equal namespace.
 
 ## The name
 
@@ -26,17 +26,17 @@ The namespaces that model one domain together form a [[theory]], in the logician
 
 ## Sample
 
-The `file` namespace: files sit in folders, and `(parent, viewer)` reads the viewers of the folder a file sits in, under the `folder` namespace.
+The `file` namespace: files sit in folders, and `(parent, viewer)` reads the viewers of the folder a file sits in, under the `folder` namespace. People and clients are identities, and a group's members can be given a role as `group#member`.
 
 ```json
 {
   "file": {
-    "owner": "this",
-    "parent": "this",
-    "editor": "this | owner",
-    "viewer": "(this | editor | (parent, viewer)) ! banned",
-    "auditor": "this & viewer",
-    "banned": "this"
+    "owner": { "subjects": ["identity"] },
+    "parent": { "subjects": ["folder"] },
+    "editor": { "rewrite": "this | owner", "subjects": ["group#member", "identity"] },
+    "viewer": { "rewrite": "(this | editor | (parent, viewer)) ! banned", "subjects": ["group#member", "identity"] },
+    "auditor": { "rewrite": "this & viewer", "subjects": ["identity"] },
+    "banned": { "subjects": ["identity"] }
   }
 }
 ```
@@ -45,12 +45,12 @@ The same namespace in TOML:
 
 ```toml
 [file]
-owner = "this"
-parent = "this"
-editor = "this | owner"
-viewer = "(this | editor | (parent, viewer)) ! banned"
-auditor = "this & viewer"
-banned = "this"
+owner = { subjects = ["identity"] }
+parent = { subjects = ["folder"] }
+editor = { rewrite = "this | owner", subjects = ["group#member", "identity"] }
+viewer = { rewrite = "(this | editor | (parent, viewer)) ! banned", subjects = ["group#member", "identity"] }
+auditor = { rewrite = "this & viewer", subjects = ["identity"] }
+banned = { subjects = ["identity"] }
 ```
 
 ## JSON form
@@ -83,6 +83,7 @@ A document is refused if it breaks any of these limits:
 - A document is at most 4 MiB. The other limits allow about 2.1 MB of compact JSON; the rest is room for whitespace.
 - A single namespace.
 - A namespace declares at most 500 relations.
+- A relation accepts at most 32 kinds of subject.
 - A namespace name is at most 256 bytes.
 - A relation name is at most 64 bytes.
 - An expression is at most 4 KiB (4,096 bytes).
@@ -157,9 +158,15 @@ Each entry in `subjects` is one of:
 - A namespace name, such as `folder`: a resource member of that namespace, such as `folder:root#...`.
 - A namespace name and a relation joined by `#`, such as `group#member`: a subjectset of that relation.
 
+```ebnf
+⟨accepted subject⟩ ::= 'identity' | ⟨namespace name⟩ [ '#' ⟨relation name⟩ ]
+```
+
+`subjects` holds at least one entry and no entry twice. Order carries no meaning.
+
 No entry accepts every subject. A relation that would take anything can't have its links checked, so each one names what it takes.
 
-A relation that declares subjects is written as an object in JSON and an inline table in TOML, with `rewrite` and `subjects` keys. `rewrite` may be left out, and is then `this`:
+A relation that declares subjects is written as an object in JSON and an inline table in TOML, with a `subjects` key and an optional `rewrite` key, and no other keys. `rewrite` is a non-empty expression string. Left out, it is `this`:
 
 ```toml
 [folder]
@@ -198,6 +205,7 @@ A namespace is checked whole when it is declared, and is refused if any of the f
 - A relation is declared twice.
 - A rewrite nests more than 100 levels deep. A leaf is one level, a run of `|` or `&` is one level however many operands it has, and each `!` adds a level. Grouping parentheses nested more than 100 deep are also refused, before the tree is built.
 - A computed subjectset, or the factset of a fact-to-subjectset, names a relation the namespace doesn't declare. The computed relation of a fact-to-subjectset belongs to the namespace of each fact's subject, so it's checked against the subjects the factset accepts, as [Accepted subjects](#accepted-subjects) says.
+- A relation's accepted subjects break a rule in [Accepted subjects](#accepted-subjects).
 - Computed subjectsets form a cycle, such as `"viewer": "editor"` with `"editor": "viewer"`, or `"viewer": "this ! viewer"`. A cycle through a fact-to-subjectset, such as folders inside folders, reads a fact at each step and is allowed.
 
 ## Errors
@@ -214,7 +222,7 @@ One mistake reports one error:
 
 The parser refuses a document if it finds any problem, and declares nothing from it.
 
-Each error is a kind, with its relation and column where it has them. The kind is a variant of one enum with a variant for each problem this spec names, such as a relation whose value isn't a string, a reserved name, a broken limit, a rewrite syntax error, a dangling reference or a cycle. A variant carries the names involved. Callers match on the variant. There are no string codes.
+Each error is a kind, with its relation and column where it has them. The kind is a variant of one enum with a variant for each problem this spec names, such as a relation whose value isn't a string or the accepted-subjects form, a reserved name, an accepted subject that isn't allowed, a broken limit, a rewrite syntax error, a dangling reference or a cycle. A variant carries the names involved. Callers match on the variant. There are no string codes.
 
 An error that quotes the document quotes at most 64 bytes of it, cut at a character boundary and marked as cut, with control characters and other invisible or reordering characters, such as U+202E (right-to-left override) and U+200B (zero-width space), written as escapes. Errors reach logs, terminals and UIs. A quote copied as it was sent could forge a log line, recolor a terminal, reorder the text around it, or make an error as large as the document.
 
@@ -222,8 +230,9 @@ An error that quotes the document quotes at most 64 bytes of it, cut at a charac
 
 The printer writes a document, in either form, that the parser reads back as an equal namespace. Sungma stores the JSON form, and Author, Sungma's UI, shows the TOML form.
 
-- In JSON, every relation prints as `"name": "expression"`, including `"name": "this"`, and a namespace without relations prints as `"name": {}`.
-- In TOML, every relation prints as `name = "expression"`, including `name = "this"`, and a namespace without relations prints as its header alone. A dotted namespace name prints quoted.
+- A relation that accepts no facts prints as its expression, `"name": "expression"` in JSON and `name = "expression"` in TOML.
+- A relation that accepts subjects prints in the accepted-subjects form, `"name": { "rewrite": "expression", "subjects": [...] }` in JSON and `name = { rewrite = "expression", subjects = [...] }` in TOML. `rewrite` is left out when it is `this`, and subjects print sorted, comparing bytes.
+- A namespace without relations prints as `"name": {}` in JSON and as its header alone in TOML. A dotted namespace name prints quoted in TOML.
 - Operators print with a space on each side, and a fact-to-subjectset prints as `(factset, computed)`.
 - The printer adds parentheses only where the grammar needs them:
   - A union inside a union is parenthesized.
@@ -273,6 +282,7 @@ The cases each class covers, at minimum.
 9. A TOML document with no table, two tables, a non-string value or a nested table is refused, and so is a string with an escape. Basic, literal and multi-line strings each parse.
 10. A dotted namespace name parses quoted. Unquoted, it's refused as a nested table.
 11. Comments are allowed anywhere TOML allows them, and change nothing.
+12. The accepted-subjects form parses in each form, with and without `rewrite`. A key other than `rewrite` or `subjects`, an empty `subjects`, an entry written twice, an entry that breaks the grammar, and an empty `rewrite` are each refused.
 
 #### Names
 
@@ -313,18 +323,18 @@ The cases each class covers, at minimum.
 
 #### Limits
 
-1. Each limit is tested at its value and one past it: a 256-byte namespace name and a 257-byte one, a 64-byte relation name and a 65-byte one, a 4,096-byte expression and a 4,097-byte one, 500 relations and 501, a document of exactly the maximum size and one byte more, 100 levels of nesting and 101, and 100 grouping parentheses and 101.
+1. Each limit is tested at its value and one past it: a 256-byte namespace name and a 257-byte one, a 64-byte relation name and a 65-byte one, a 4,096-byte expression and a 4,097-byte one, 500 relations and 501, 32 accepted subjects and 33, a document of exactly the maximum size and one byte more, 100 levels of nesting and 101, and 100 grouping parentheses and 101.
 2. A dotted namespace name of exactly 256 bytes is accepted.
 
 #### Printing
 
-1. The printer writes the canonical form of the sample, and of a namespace without relations, in each form.
+1. The printer writes the canonical form of the sample, and of a namespace without relations, in each form. `rewrite` is left out when it is `this`, and subjects print sorted.
 2. The printer adds only the parentheses the grammar needs.
 3. The printer refuses, as a caller defect, a union or intersection with one operand, and a name made with `new_unchecked` that breaks the grammar or is `this`, so it never writes a document that parses differently or isn't valid in its form.
 
 #### Round trips
 
-1. A property test builds namespaces, prints them in each form, parses them back to equal namespaces, and prints the same text again. A namespace printed in one form and parsed from the other is equal too. The generated trees include both depth limits and wide runs of one operator.
+1. A property test builds namespaces, prints them in each form, parses them back to equal namespaces, and prints the same text again. A namespace printed in one form and parsed from the other is equal too. The generated trees include both depth limits and wide runs of one operator, and the generated relations include accepted subjects of every kind.
 2. A property test generates expression strings from the grammar's tokens and checks that parse, print and parse again gives an equal tree.
 
 #### Hostile input
