@@ -37,23 +37,23 @@ Neither implies the other. An editor of a namespace can't write its facts unless
 ```toml
 # The deployment: its admins, and who may create namespaces
 [sungma]
-admin = "this"
-namespace_creator = "this | admin"
+admin = { subjects = ["identity"] }
+namespace_creator = { rewrite = "this | admin", subjects = ["identity"] }
 
 # Each namespace: who owns it, who edits its rewrites, and who works with all its facts
 ["sungma.namespace"]
-host = "this"
-owner = "this | (host, admin)"
-editor = "this | owner"
-fact_writer = "this | owner"
-fact_reader = "this | fact_writer"
-viewer = "this | editor | fact_reader"
+host = { subjects = ["sungma"] }
+owner = { rewrite = "this | (host, admin)", subjects = ["identity"] }
+editor = { rewrite = "this | owner", subjects = ["identity"] }
+fact_writer = { rewrite = "this | owner", subjects = ["identity"] }
+fact_reader = { rewrite = "this | fact_writer", subjects = ["identity"] }
+viewer = { rewrite = "this | editor | fact_reader", subjects = ["identity"] }
 
 # Each relation: who writes and reads the facts under it
 ["sungma.relation"]
-host = "this"
-writer = "this | (host, fact_writer)"
-reader = "this | writer | (host, fact_reader)"
+host = { subjects = ["sungma.namespace"] }
+writer = { rewrite = "this | (host, fact_writer)", subjects = ["identity"] }
+reader = { rewrite = "this | writer | (host, fact_reader)", subjects = ["identity"] }
 ```
 
 The [[resource]]s are:

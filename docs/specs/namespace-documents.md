@@ -56,7 +56,7 @@ banned = "this"
 ## JSON form
 
 - A document is one JSON object with exactly one key, the namespace's name. Its value is an object mapping the namespace's relation names to their expressions.
-- Every expression is a string. A relation defined by its facts alone is written `"owner": "this"`. A relation whose value is anything other than a non-empty string, such as `null`, `""`, a number or an object, is refused.
+- A relation's value is its expression, a non-empty string, or an object that also declares the subjects it accepts, as [Accepted subjects](#accepted-subjects) says. Any other value, such as `null`, `""`, a number or an array, is refused.
 - A namespace without relations is written `{}`. It names a kind of [[resource]] that is only ever a subject, `namespace:id`, of facts in other namespaces, as a `user` type does in other ReBAC models. Any other value for the namespace, such as `null` or `[]`, is refused.
 - A document declares exactly one namespace. An empty document or `{}` declares nothing, and an object with two or more keys declares more than one, so both are refused as parse errors. An API that takes a document answers either as a bad request.
 - An object with the same key twice is refused, including a relation named twice. JSON leaves duplicate keys to the reader, and a reader that keeps the last one would hide a mistake.
@@ -68,7 +68,7 @@ banned = "this"
 
 - A document is one TOML table. Its header is the namespace's name, and each key in it names a relation and holds its expression.
 - A dotted namespace name is quoted, as in `["drive.file"]`. TOML reads an unquoted dot as a nested table.
-- Every expression is a non-empty string. A relation defined by its facts alone is written `owner = "this"`. Any other value, such as `true`, a number, an array or a nested table like `a.b = "x"`, is refused.
+- A relation's value is its expression, a non-empty string, or an inline table that also declares the subjects it accepts, as [Accepted subjects](#accepted-subjects) says. Any other value, such as `true`, a number, an array or a nested table like `a.b = "x"`, is refused.
 - An expression may be any TOML string: basic `"…"`, literal `'…'`, or multi-line when it wraps. Strings hold no escapes, as in the JSON form, and a string with one is refused.
 - A namespace without relations is a header with no keys.
 - A document declares exactly one namespace. An empty document, or one with two or more tables, is refused.
@@ -147,6 +147,38 @@ The following rules apply on top of the grammar:
 - A run of one operator parses as a single node with one operand per term, so `a | b | c` is one union of three.
 - Parentheses are kept as structure. `(a | b) | c` is a union whose first operand is a union, not a union of three.
 
+## Accepted subjects
+
+A relation whose rewrite reads `this` declares which [[subject]]s its facts may bind. A fact whose subject isn't one of them is refused, so a mistake in the data can't quietly empty a role.
+
+Each entry in `subjects` is one of:
+
+- `identity`: an identity, such as a person's or a client's `sub`.
+- A namespace name, such as `folder`: a resource member of that namespace, such as `folder:root#...`.
+- A namespace name and a relation joined by `#`, such as `group#member`: a subjectset of that relation.
+
+A relation that declares subjects is written as an object in JSON and an inline table in TOML, with `rewrite` and `subjects` keys. `rewrite` may be left out, and is then `this`:
+
+```toml
+[folder]
+owner = { subjects = ["identity"] }
+parent = { subjects = ["folder"] }
+viewer = { rewrite = "this | owner | (parent, viewer)", subjects = ["identity", "group#member"] }
+```
+
+```json
+"parent": { "subjects": ["folder"] }
+```
+
+A relation whose rewrite doesn't read `this` is written as a plain string. It accepts no facts.
+
+Writing a namespace checks the declarations:
+
+- A rewrite that reads `this` without declaring subjects is refused, and so is a relation that declares subjects without reading `this`.
+- For each fact-to-subjectset, every namespace its first relation accepts must declare its second relation. `(parent, viewer)` is refused unless `folder` declares `viewer`.
+
+`identity` is reserved: no namespace may be named `identity`.
+
 ## Meaning
 
 A relation's rewrite defines the closure of each [[subjectset]] formed from that relation. Each term contributes a set of subjects, taken for the subjectset in hand:
@@ -163,7 +195,7 @@ A namespace is checked whole when it is declared, and is refused if any of the f
 
 - A relation is declared twice.
 - A rewrite nests more than 100 levels deep. A leaf is one level, a run of `|` or `&` is one level however many operands it has, and each `!` adds a level. Grouping parentheses nested more than 100 deep are also refused, before the tree is built.
-- A computed subjectset, or the factset of a fact-to-subjectset, names a relation the namespace doesn't declare. The computed relation of a fact-to-subjectset belongs to the namespace of each fact's subject, so it isn't checked.
+- A computed subjectset, or the factset of a fact-to-subjectset, names a relation the namespace doesn't declare. The computed relation of a fact-to-subjectset belongs to the namespace of each fact's subject, so it's checked against the subjects the factset accepts, as [Accepted subjects](#accepted-subjects) says.
 - Computed subjectsets form a cycle, such as `"viewer": "editor"` with `"editor": "viewer"`, or `"viewer": "this ! viewer"`. A cycle through a fact-to-subjectset, such as folders inside folders, reads a fact at each step and is allowed.
 
 ## Errors
@@ -202,6 +234,7 @@ The printer writes a document, in either form, that the parser reads back as an 
 
 ## Open
 
+- When a fact-to-subjectset's first relation accepts a namespace that doesn't exist yet, whether the namespace write is refused or the check waits until that namespace is written. Two namespaces that reach each other can't both be written first.
 - How a request names its document's form. A write carries the document inside a request body, so the form can't come from the request's content type. The endpoints that take documents settle it.
 
 ## Required tests
@@ -230,7 +263,7 @@ The cases each class covers, at minimum.
 1. The sample parses to the namespace it shows.
 2. A document declares exactly one namespace: `{}`, an object with two namespace keys, and a namespace key written twice are refused.
 3. A namespace without relations, `{}`, parses. A namespace whose value isn't an object is refused.
-4. A relation's value is a non-empty string. `null`, `""`, numbers, arrays and objects are refused.
+4. A relation's value is a non-empty string, or the accepted-subjects form. `null`, `""`, numbers, arrays, and objects of any other shape are refused.
 5. A relation named twice is one error.
 6. Text that isn't valid JSON or TOML is refused with its library's error.
 7. JSON escapes are handled as the [JSON form](#json-form) section says.
@@ -260,11 +293,14 @@ The cases each class covers, at minimum.
 
 1. A relation declared twice, a computed subjectset or factset the namespace doesn't declare, and a cycle of computed subjectsets are refused, including a relation that excludes itself.
 2. A cycle through a fact-to-subjectset is allowed, and so are relations that share a target.
-3. The computed relation of a fact-to-subjectset isn't checked.
+3. The computed relation of a fact-to-subjectset is refused when a namespace its factset accepts doesn't declare it.
 4. A dangling target is reported once for each relation that names it.
 5. Relations that reach each other are one cycle, reported at the relation where the check meets the cycle first, with a path back to that relation.
 6. A rewrite tree may be 100 levels deep and no deeper, whether the extra level is under a run, an exclusion's base or its excluded side.
 7. Redeclaring a relation checks the whole namespace again.
+8. A rewrite that reads `this` without `subjects`, and `subjects` on a rewrite without `this`, are refused. `rewrite` left out means `this`.
+9. A fact whose subject isn't among its relation's accepted subjects is refused, and so is a fact under a relation that accepts none.
+10. A namespace named `identity` is refused.
 
 #### Errors
 
