@@ -45,11 +45,11 @@ A client in the client-credentials flow gets a fresh token each time and has no 
 
 ## Eligible and active roles
 
-A stronger form keeps privileged roles off a person until they ask: they hold `admin_eligible`, and elevating writes an `admin` fact that expires after a set time. That needs facts that expire on their own, which Sungma doesn't have.
+A stronger form keeps privileged roles off a person until they ask: they hold `admin_eligible`, and elevating writes an `admin` fact that expires after a set time. That needs facts that expire on their own, which conditions on the roadmap would give.
 
 ## Open
 
 1. How long the elevation window is, and whether it differs by role.
 2. Whether Rauthy honors `max_age` and reports `auth_time` as OpenID Connect specifies.
-3. Whether Sungma should have facts that expire, which eligible and active roles need.
+3. Whether elevation moves to conditions on the roadmap, a privileged relation's condition requiring a recent `auth_time`, once they exist.
 4. How a privileged client is told apart from an everyday one: its own client, or a scope it must ask for.
