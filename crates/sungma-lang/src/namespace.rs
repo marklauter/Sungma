@@ -336,13 +336,12 @@ fn leaf<'a>(text: &str, item: &'a Item) -> Leaf<'a> {
 
 /// A TOML string, `value` as toml_edit decoded it from the document's text
 /// at `span`. Only a basic string, written in `"`, has escapes; a literal
-/// string's backslash is a character like any other.
+/// string's backslash is a character like any other. A string with no text
+/// at `span` to check is taken as escaped, so it is refused.
 fn toml_text<'a>(text: &str, value: &'a str, span: Option<Range<usize>>) -> Text<'a> {
-    let raw = span.and_then(|span| text.get(span)).unwrap_or_default();
-    if raw.starts_with('"') && raw.contains('\\') {
-        Text::Escaped(value.to_owned())
-    } else {
-        Text::Plain(value)
+    match span.and_then(|span| text.get(span)) {
+        Some(raw) if !(raw.starts_with('"') && raw.contains('\\')) => Text::Plain(value),
+        _ => Text::Escaped(value.to_owned()),
     }
 }
 
@@ -934,4 +933,29 @@ fn grouped(
         expression(text, rewrite)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Text, toml_text};
+
+    #[test]
+    fn a_key_with_no_span_is_refused_as_escaped() {
+        let key = toml_edit::Key::new("viewer");
+        assert!(key.span().is_none());
+        assert!(matches!(
+            toml_text("", key.get(), key.span()),
+            Text::Escaped(_)
+        ));
+    }
+
+    #[test]
+    fn a_string_with_no_span_is_refused_as_escaped() {
+        let string = toml_edit::Formatted::new("viewer".to_owned());
+        assert!(string.span().is_none());
+        assert!(matches!(
+            toml_text("", string.value(), string.span()),
+            Text::Escaped(_)
+        ));
+    }
 }
