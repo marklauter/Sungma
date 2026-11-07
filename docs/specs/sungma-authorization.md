@@ -37,9 +37,10 @@ Neither implies the other. A namespace's writer can't write its facts unless the
 ## The model
 
 ```toml
-# The deployment: its admins, operators and auditors, and who may create namespaces
+# The deployment: its owners and admins, operators and auditors, and who may create namespaces
 [sungma]
-admin = { subjects = ["identity"] }
+owner = { subjects = ["identity"] }
+admin = { rewrite = "this | owner", subjects = ["identity"] }
 namespace_creator = { rewrite = "this | admin", subjects = ["identity", "sungma.group#member"] }
 operator = { rewrite = "this | admin", subjects = ["identity", "sungma.group#member"] }
 auditor = { rewrite = "this | admin", subjects = ["identity", "sungma.group#member"] }
@@ -72,7 +73,7 @@ Drawn as a graph, each namespace is a node, and each relation's accepted subject
 flowchart LR
   relation["<b>sungma.relation</b><br/>parent<br/>writer<br/>reader"]
   namespace["<b>sungma.namespace</b><br/>parent<br/>owner<br/>writer<br/>reader<br/>fact_writer<br/>fact_reader"]
-  sungma["<b>sungma</b><br/>admin<br/>namespace_creator<br/>operator<br/>auditor"]
+  sungma["<b>sungma</b><br/>owner<br/>admin<br/>namespace_creator<br/>operator<br/>auditor"]
   group["<b>sungma.group</b><br/>parent<br/>owner<br/>member"]
   identity(["identity"])
   relation -- parent --> namespace
@@ -80,7 +81,7 @@ flowchart LR
   group -- parent --> sungma
   relation -. "writer, reader" .-> identity
   namespace -. "owner, writer, reader, fact_writer, fact_reader" .-> identity
-  sungma -. "admin, namespace_creator, operator, auditor" .-> identity
+  sungma -. "owner, admin, namespace_creator, operator, auditor" .-> identity
   group -. "owner, member" .-> identity
   relation -. "every role" .-> group
   namespace -. "every role" .-> group
@@ -105,7 +106,9 @@ Three kinds of fact link these resources, and only Sungma writes them:
 
 | To do this | the caller needs |
 |---|---|
-| Grant or revoke `admin`, `namespace_creator`, `operator` or `auditor` | `admin` on `sungma:deployment` |
+| Grant or revoke `admin` | `owner` on `sungma:deployment` |
+| Grant or revoke `namespace_creator`, `operator` or `auditor` | `admin` on `sungma:deployment` |
+| Grant or revoke `owner` | no caller: only deployment setup, as [The deployment's owners](#the-deployments-owners) says |
 | Create a namespace | `namespace_creator` on `sungma:deployment` |
 | Create a group | `admin` on `sungma:deployment` |
 | Add or remove a group's members, or grant or revoke its `owner` | `owner` on the group |
@@ -139,9 +142,13 @@ Write also refuses adding a fact under `sungma.relation:<namespace>/<relation>` 
 
 Write also refuses adding a fact whose subject is `sungma.group:<name>#member` unless that group has been created. Otherwise a grant to a group that doesn't exist yet would take effect the day an admin creates it.
 
-## The first admin
+## The deployment's owners
 
-Deployment setup names one identity, the `sub` the identity provider issues to the first admin, and writes `sungma:deployment#admin@<sub>`. That person is admin when they first sign in to Author. Nobody becomes admin by signing in first.
+A role is trust placed in the people who hold it. The deployment's owners are the people the organization trusts most: they decide who the admins are. Every owner is an admin too. Admins run everything else, but can't grant or revoke `admin`, so no admin can remove another.
+
+No caller grants or revokes `owner` through Sungma's API, an owner included. Only deployment setup writes `owner` facts, run out of band by whoever controls the deployment's configuration. Setup names each owner by identity, the `sub` the identity provider issues to them, and each run is recorded for auditors. The first owners can act as soon as they first sign in to Author, and nobody becomes an owner by signing in first.
+
+A deployment has at least two owners. Setup refuses to leave fewer, so losing one owner's identity never leaves the deployment without one. Setup is also how the organization recovers from a lost or untrustworthy owner: it runs setup again with the owners it trusts. That doesn't guard against owners who abuse their trust. Nothing in the model can. Choosing them well is the organization's part.
 
 ## Authorizing a write
 
@@ -153,11 +160,9 @@ A read is authorized at the snapshot it reads, so a role revoked before that sna
 
 ## Revoking your own role
 
-No caller may revoke a privileged role from themselves: `admin`, or `owner` of a namespace or a group. Stepping down from one means asking another holder. A group's members are changed by its owners only, so a member can't leave a group on their own.
+No caller may revoke a privileged role from themselves: `admin`, or `owner` of a namespace or a group. The deployment's `owner` is never revoked through the API at all. Stepping down from one means asking another holder. A group's members are changed by its owners only, so a member can't leave a group on their own.
 
-`admin` is granted to identities only, never to a group, and only an admin can revoke `admin`. A caller who revokes `admin` therefore remains an admin after the write, so the deployment always has at least one.
-
-When two admins revoke each other at once, one write commits. The other retries, is authorized again at the new head, finds its caller no longer holds `admin`, and is refused. One admin is left either way.
+`admin` is granted to identities only, never to a group, and only an owner grants or revokes it. Owners are admins, and nothing in the API removes them, so the deployment always has an admin.
 
 ## Creating a namespace
 
@@ -189,7 +194,7 @@ A namespace version that declares a relation the namespace's earlier versions di
 4. Admins own every namespace without an `owner` fact of their own.
 5. A person and a client with the same roles get the same answers.
 6. Writes that change `sungma`, `sungma.namespace`, `sungma.relation` or `sungma.group` are refused, and so are facts under `parent` in `sungma.namespace`, `sungma.relation` or `sungma.group` from any caller.
-7. Two admins revoking each other at once leave one admin: the write that commits second is authorized again and refused.
+7. An admin who isn't an owner can't grant or revoke `admin`, and no caller can grant or revoke `owner`.
 8. A failed namespace creation stores none of its items.
 9. A new relation gets its `parent` fact in the same unit of work as the version that declares it.
 10. An auditor reads every namespace's document and the facts under every relation, and every write by an auditor who holds no other role is refused.
@@ -212,10 +217,11 @@ A namespace version that declares a relation the namespace's earlier versions di
 27. A privileged write from a token whose `auth_time` is outside the elevation window is refused.
 28. Changing a deployment setting needs `admin`.
 29. A read at a snapshot taken after a role was revoked is refused for the caller who lost it.
+30. Setup refuses to leave the deployment with fewer than two owners.
 
 ## Open
 
-1. How deployment setup runs, and where it takes the first admin's `sub` from.
+1. How deployment setup runs, where it takes the owners' identities from, and how its runs are recorded for auditors.
 2. What `operator` covers beyond logs and metrics, such as health, and whether operators may read namespace documents to diagnose a problem.
 3. Whether a namespace's owner should be able to transfer ownership, or revoke the last owner while admins still own it through the deployment.
 4. How groups imported through SCIM are named, created and edited. See [[scim-imports-users-and-groups]].
