@@ -126,7 +126,7 @@ A namespace-wide grant flows down: `fact_writer` on `billing` makes its holder a
 
 ## Protected namespaces
 
-Write refuses any change to the `sungma`, `sungma.namespace`, `sungma.relation` and `sungma.group` namespaces themselves. Only a Sungma release changes them, since an edit could lock everyone out. No other namespace may be named `sungma` or start with `sungma.`, so a namespace such as `sungma.audit` can't pass for one of Sungma's own.
+Write refuses any change to the `sungma`, `sungma.namespace`, `sungma.relation` and `sungma.group` namespaces themselves. Only a Sungma release changes them, since an edit could lock everyone out. No other namespace may have `sungma` as its first segment, as [Namespace documents](namespace-documents.md#names) reserves, so a namespace such as `sungma.audit` can't pass for one of Sungma's own.
 
 Write also refuses adding or retiring a fact under `parent` in `sungma.namespace`, `sungma.relation` or `sungma.group`, from any caller. Sungma writes those facts itself, as [Creating a namespace](#creating-a-namespace), [New relations](#new-relations) and [Groups](#groups) say. A caller who could add one could tie a namespace to a resource they control. A caller who could retire one could cut a namespace, relation or group off from the admins and auditors who reach it through `parent`.
 
@@ -181,7 +181,7 @@ A namespace version that declares a relation the namespace's earlier versions di
 15. A group's members can't be made admins through the group, because `admin` accepts identities only.
 16. Adding or retiring a `parent` fact in `sungma.namespace`, `sungma.relation` or `sungma.group` is refused from every caller, an admin included.
 17. A grant on `sungma.relation:<namespace>/<relation>` is refused while the namespace doesn't declare the relation.
-18. Creating a namespace named `sungma` or starting with `sungma.` is refused.
+18. Creating a namespace whose first segment is `sungma` is refused.
 
 ## Open
 

@@ -92,7 +92,7 @@ The rewrite depth limit is under [Checks](#checks).
 
 ## Names
 
-A relation name is one name. A namespace name is one or more names joined by dots, such as `file` or `drive.file`; the dots carry no meaning. A namespace name is also the namespace part of a resource name, as `file` is in `file:design.md`. The grammars in this spec are EBNF: `::=` defines, `|` alternates, `{ }` repeats zero or more times, quoted text is literal, and `'x'…'y'` is an inclusive character range.
+A relation name is one name. A namespace name is one or more segments joined by dots, such as `file` or `drive.file`. Each segment is a name. A name whose first segment is `sungma` belongs to Sungma, so `sungma` and `sungma.audit` are reserved for Sungma's own namespaces, and `sungmax` isn't. A namespace name is also the namespace part of a resource name, as `file` is in `file:design.md`. The grammars in this spec are EBNF: `::=` defines, `|` alternates, `{ }` repeats zero or more times, quoted text is literal, and `'x'…'y'` is an inclusive character range.
 
 ```ebnf
 ⟨namespace name⟩   ::= ⟨name⟩ { '.' ⟨name⟩ }
@@ -313,7 +313,7 @@ The cases each class covers, at minimum.
 7. Redeclaring a relation checks the whole namespace again.
 8. A rewrite that reads `this` without `subjects`, and `subjects` on a rewrite without `this`, are refused. `rewrite` left out means `this`.
 9. A fact whose subject isn't among its relation's accepted subjects is refused, and so is a fact under a relation that accepts none.
-10. A namespace named `identity` is refused.
+10. A namespace named `identity` is refused, and so is a namespace whose first segment is `sungma`, unless it is one of Sungma's own.
 11. An accepted subject `namespace#relation` is refused when that namespace doesn't declare the relation.
 
 #### Errors
