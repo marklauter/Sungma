@@ -17,6 +17,14 @@ Zanzibar trusts every service that calls Check to name the right [[subject]]. A 
 - **The caller token** identifies the client calling Check, such as a client-credentials JWT. Sungma authorizes the client in its own model, for example which clients may check which namespaces.
 - **The subject token** is the token of whoever the check is about. Sungma validates it and takes the subject from its `sub` claim, so a caller can't ask about Alice without a token Alice was issued. A client acting for a user forwards the user's token. A client acting for itself, such as a batch job, is its own subject and sends its own token as both.
 
+## The subject claim
+
+Sungma trusts one issuer, and a token's subject is that issuer's `sub` claim, as RFC 7519 defines it. This holds for both tokens, so the caller is the caller token's `sub`. A token without `sub` is refused.
+
+People and clients are both subjects, and Sungma doesn't tell them apart. A client in the client-credentials flow gets roles through the same facts as a person.
+
+The issuer is configured so every token it issues carries a `sub` that is stable and unique for each principal. A UPN or an email doesn't qualify: either can change, or pass to someone else, and the facts about the old value would follow. With Rauthy, client-credentials tokens carry `sub` only with `client_credentials_map_sub` turned on.
+
 ## On behalf of
 
 One hop needs nothing more. When service A calls Check with Alice's token, the two tokens already say "Alice, via A".
@@ -32,6 +40,6 @@ Forwarding can come first and exchange later without changing the check request,
 
 ## Open
 
-- Which claim identifies the caller: `client_id`, `azp`, or `sub` of the caller token.
+- How a caller holding another provider's token reaches Sungma. The leading option is token exchange (RFC 8693) at Sungma's issuer, since trusting other providers is something an identity provider already does. Another is federating the other provider into the issuer.
 - How Sungma models which clients may check which namespaces, and which may act for users.
 - Whether a check against an unknown namespace or relation answers `Unknown`, which shows a prober the names that exist, or `Denied`.
