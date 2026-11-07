@@ -134,9 +134,17 @@ Write also refuses a fact under `parent` in `sungma.namespace`, `sungma.relation
 
 Deployment setup names one identity, the `sub` the identity provider issues to the first admin, and writes `sungma:deployment#admin@<sub>`. That person is admin when they first sign in to Author. Nobody becomes admin by signing in first.
 
-## The last admin
+## Authorizing a write
 
-`admin` is granted to identities only, never to a group, so the admins are always a list of identities that can be counted. A write that would leave no identity holding `admin` is refused. The rule judges the write as a whole, after all its grants and revocations, so one write can't revoke every admin at once. The write reads the admins at the [head](table.md#the-head) it's based on, in its own [unit of work](table.md#the-table-and-the-contexts). Every write commits only while the head is unchanged. When two admins revoke each other at once, one commits, and the other retries, finds one admin left, and is refused.
+A write is authorized at the [head](table.md#the-head) it's based on, in its own [unit of work](table.md#the-table-and-the-contexts). Every write commits only while the head is unchanged, so a write that retries is authorized again at the new head. A role revoked by a write that committed first can't authorize a write that commits after it.
+
+## Revoking your own role
+
+No caller may revoke a privileged role from themselves: `admin`, or `owner` of a namespace or a group. Stepping down from one means asking another holder. Everyday roles, such as a group membership, can be given up freely.
+
+`admin` is granted to identities only, never to a group, and only an admin can revoke `admin`. A caller who revokes `admin` therefore remains an admin after the write, so the deployment always has at least one.
+
+When two admins revoke each other at once, one write commits. The other retries, is authorized again at the new head, finds its caller no longer holds `admin`, and is refused. One admin is left either way.
 
 ## Creating a namespace
 
@@ -160,12 +168,12 @@ A namespace version that declares a relation the namespace's earlier versions di
 4. Admins own every namespace without an `owner` fact of their own.
 5. A person and a client with the same roles get the same answers.
 6. Writes that change `sungma`, `sungma.namespace`, `sungma.relation` or `sungma.group` are refused, and so are facts under `parent` in `sungma.namespace`, `sungma.relation` or `sungma.group` from any caller.
-7. Two admins revoking each other at once leave one admin.
+7. Two admins revoking each other at once leave one admin: the write that commits second is authorized again and refused.
 8. A failed namespace creation stores none of its items.
 9. A new relation gets its `parent` fact in the same unit of work as the version that declares it.
 10. An auditor reads every namespace's document and the facts under every relation, and every write by an auditor who holds no other role is refused.
 11. A role granted to a group reaches its members, including members of groups nested inside it, and a group's owner can change its members without holding any other role.
-12. Revoking the last admin is refused, and so is one write that revokes every admin, even while others hold it at the head it's based on.
+12. A caller revoking their own `admin`, or their own `owner` of a namespace or group, is refused, including inside a batch that also revokes others. A write that retries is authorized again at the new head.
 13. A failed group creation stores neither fact, and an admin owns every group without an `owner` fact.
 14. A fact whose subject names another namespace needs `writer` on its own relation only.
 15. A group's members can't be made admins through the group, because `admin` accepts identities only.
