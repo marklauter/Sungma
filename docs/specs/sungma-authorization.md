@@ -35,10 +35,11 @@ Neither implies the other. An editor of a namespace can't write its facts unless
 ## The model
 
 ```toml
-# The deployment: its admins, and who may create namespaces
+# The deployment: its admins, its operators, and who may create namespaces
 [sungma]
 admin = { subjects = ["identity"] }
 namespace_creator = { rewrite = "this | admin", subjects = ["identity"] }
+operator = { rewrite = "this | admin", subjects = ["identity"] }
 
 # Each namespace: who owns it, who edits its rewrites, and who works with all its facts
 ["sungma.namespace"]
@@ -62,13 +63,13 @@ Drawn as a graph, each namespace is a node, and each relation's accepted subject
 flowchart LR
   relation["<b>sungma.relation</b><br/>parent<br/>writer<br/>reader"]
   namespace["<b>sungma.namespace</b><br/>parent<br/>owner<br/>editor<br/>fact_writer<br/>fact_reader<br/>viewer"]
-  sungma["<b>sungma</b><br/>admin<br/>namespace_creator"]
+  sungma["<b>sungma</b><br/>admin<br/>namespace_creator<br/>operator"]
   identity(["identity"])
   relation -- parent --> namespace
   namespace -- parent --> sungma
   relation -. "writer, reader" .-> identity
   namespace -. "owner, editor, fact_writer, fact_reader, viewer" .-> identity
-  sungma -. "admin, namespace_creator" .-> identity
+  sungma -. "admin, namespace_creator, operator" .-> identity
 ```
 
 The [[resource]]s are:
@@ -86,8 +87,9 @@ Two kinds of fact link these resources, and only Sungma writes them:
 
 | To do this | the subject needs |
 |---|---|
-| Grant or revoke `admin` or `namespace_creator` | `admin` on `sungma:deployment` |
+| Grant or revoke `admin`, `namespace_creator` or `operator` | `admin` on `sungma:deployment` |
 | Create a namespace | `namespace_creator` on `sungma:deployment` |
+| Run the deployment: read its logs and metrics | `operator` on `sungma:deployment` |
 | Write a new version of a namespace, or retire it | `editor` on the namespace |
 | See a namespace's document | `viewer` on the namespace |
 | Grant or revoke a role on a namespace or one of its relations | `owner` on the namespace |
@@ -133,4 +135,5 @@ A namespace version that declares a relation the namespace's earlier versions di
 ## Open
 
 1. How deployment setup runs, and where it takes the first admin's subject from.
-2. Whether a namespace's owner should be able to transfer ownership, or revoke the last owner while admins still own it through the deployment.
+2. What `operator` covers beyond logs and metrics: audit records, replaying decisions, health, and whether operators may see namespace documents to diagnose a problem.
+3. Whether a namespace's owner should be able to transfer ownership, or revoke the last owner while admins still own it through the deployment.
