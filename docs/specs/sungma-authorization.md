@@ -30,7 +30,7 @@ The model separates two kinds of work:
 - **Writing namespaces** is operator work. A namespace's rewrites decide who can reach what, so whoever edits one needs to understand the security it encodes.
 - **Writing facts** is everyday work, such as sharing an invoice. Most people only ever write facts, and usually under a few relations.
 
-Neither implies the other. An editor of a namespace can't write its facts unless they're also granted that, and a fact writer can't edit the namespace.
+Neither implies the other. A namespace's writer can't write its facts unless they're also granted that, and a fact writer can't write the namespace.
 
 ## The model
 
@@ -41,14 +41,14 @@ admin = { subjects = ["identity"] }
 namespace_creator = { rewrite = "this | admin", subjects = ["identity"] }
 operator = { rewrite = "this | admin", subjects = ["identity"] }
 
-# Each namespace: who owns it, who edits its rewrites, and who works with all its facts
+# Each namespace: who owns it, who writes its document, and who works with all its facts
 ["sungma.namespace"]
 parent = { subjects = ["sungma"] }
 owner = { rewrite = "this | (parent, admin)", subjects = ["identity"] }
-editor = { rewrite = "this | owner", subjects = ["identity"] }
+writer = { rewrite = "this | owner", subjects = ["identity"] }
+reader = { rewrite = "this | writer | fact_reader", subjects = ["identity"] }
 fact_writer = { rewrite = "this | owner", subjects = ["identity"] }
 fact_reader = { rewrite = "this | fact_writer", subjects = ["identity"] }
-viewer = { rewrite = "this | editor | fact_reader", subjects = ["identity"] }
 
 # Each relation: who writes and reads the facts under it
 ["sungma.relation"]
@@ -62,13 +62,13 @@ Drawn as a graph, each namespace is a node, and each relation's accepted subject
 ```mermaid
 flowchart LR
   relation["<b>sungma.relation</b><br/>parent<br/>writer<br/>reader"]
-  namespace["<b>sungma.namespace</b><br/>parent<br/>owner<br/>editor<br/>fact_writer<br/>fact_reader<br/>viewer"]
+  namespace["<b>sungma.namespace</b><br/>parent<br/>owner<br/>writer<br/>reader<br/>fact_writer<br/>fact_reader"]
   sungma["<b>sungma</b><br/>admin<br/>namespace_creator<br/>operator"]
   identity(["identity"])
   relation -- parent --> namespace
   namespace -- parent --> sungma
   relation -. "writer, reader" .-> identity
-  namespace -. "owner, editor, fact_writer, fact_reader, viewer" .-> identity
+  namespace -. "owner, writer, reader, fact_writer, fact_reader" .-> identity
   sungma -. "admin, namespace_creator, operator" .-> identity
 ```
 
@@ -90,8 +90,8 @@ Two kinds of fact link these resources, and only Sungma writes them:
 | Grant or revoke `admin`, `namespace_creator` or `operator` | `admin` on `sungma:deployment` |
 | Create a namespace | `namespace_creator` on `sungma:deployment` |
 | Run the deployment: read its logs and metrics | `operator` on `sungma:deployment` |
-| Write a new version of a namespace, or retire it | `editor` on the namespace |
-| See a namespace's document | `viewer` on the namespace |
+| Write a new version of a namespace, or retire it | `writer` on the namespace |
+| Read a namespace's document | `reader` on the namespace |
 | Grant or revoke a role on a namespace or one of its relations | `owner` on the namespace |
 | Write facts under a relation | `writer` on the relation |
 | Read facts under a relation, or check a [[subjectset]] formed from it | `reader` on the relation |
@@ -126,7 +126,7 @@ A namespace version that declares a relation the namespace's earlier versions di
 
 1. Each role in [What each role allows](#what-each-role-allows) allows its operation, and a subject without it is refused.
 2. `fact_writer` on a namespace allows writing facts under every relation in it, including one a later version adds.
-3. An editor who isn't a fact writer can't write facts, and a fact writer who isn't an editor can't write a namespace version.
+3. A namespace writer who isn't a fact writer can't write facts, and a fact writer who isn't a namespace writer can't write a namespace version.
 4. Admins own every namespace without an `owner` fact of their own.
 5. A person and a client with the same roles get the same answers.
 6. Writes that change `sungma`, `sungma.namespace` or `sungma.relation`, and facts under `parent` from a caller, are refused.
