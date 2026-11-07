@@ -18,15 +18,15 @@ cites:
 
 # Namespace documents
 
-A namespace document is the JSON or TOML form of one [[namespace]]. Both forms parse to the same namespace. A document maps the namespace's name to its [[relation]]s, and each relation's name to a [[rewrite]] written as an expression string. A relation whose facts bind subjects also declares which [[subject]]s they may bind. A namespace is the unit a write declares, so a document holds exactly one. Sungma parses a document into a typed rewrite tree for each relation, checks the namespace whole, and prints a namespace back into a document, in either form, that parses as an equal namespace.
+A namespace document is the JSON or TOML form of one [[namespace]]. Both forms parse to the same namespace. A document maps the namespace's name to its [[relation]]s, and each relation's name to a [[rewrite]] written as an expression string. A relation whose [[fact]]s bind subjects also declares which [[subject]]s they may bind. A namespace is the unit a write declares, so a document holds exactly one. Sungma parses a document into a typed rewrite tree for each relation, checks the namespace whole, and prints a namespace back into a document, in either form, that parses as an equal namespace.
 
 ## The name
 
-The namespaces that model one domain together form a [[theory]], in the logician's sense: a set of sentences that, together with the [[fact]]s, settles every question it can be asked. Here the sentences are rewrites, and each question asks whether a [[subject]] is in the [[closure]] of a [[subjectset]]. The rules in [Checks](#checks) exist to keep that true, so a theory and its facts give exactly one answer to each question.
+The namespaces that model one domain together form a [[theory]], in the logician's sense: a set of sentences that, together with the facts, settles every question it can be asked. Here the sentences are rewrites, and each question asks whether a [[subject]] is in the [[closure]] of a [[subjectset]]. The rules in [Checks](#checks) exist to keep that true, so a theory and its facts give exactly one answer to each question.
 
 ## Sample
 
-The `file` namespace: files sit in folders, and `(parent, viewer)` reads the viewers of the folder a file sits in, under the `folder` namespace. People and clients are identities, and a group's members can be given a role as `group#member`.
+The `file` namespace: files sit in folders, and `(parent, viewer)` reads the viewers of the folder a file sits in, under the `folder` namespace. People and clients are each known by an [[identity]], and a group's members can be given a role as `group#member`.
 
 ```json
 {
@@ -57,7 +57,7 @@ banned = { subjects = ["identity"] }
 
 - A document is one JSON object with exactly one key, the namespace's name. Its value is an object mapping each of the namespace's relation names to that relation's value.
 - A relation's value is its expression, a non-empty string, or an object that also declares the subjects it accepts, as [Accepted subjects](#accepted-subjects) says. Any other value, such as `null`, `""`, a number or an array, is refused.
-- A namespace without relations is written `{}`. It names a kind of [[resource]] that is only ever a subject, `namespace:id`, of facts in other namespaces, as a `user` type does in other ReBAC models. Any other value for the namespace, such as `null` or `[]`, is refused.
+- A namespace without relations is written `{}`. It names a kind of [[resource]] that is only ever a subject, `namespace:id#...`, of facts in other namespaces, as a `user` type does in other ReBAC models. Any other value for the namespace, such as `null` or `[]`, is refused.
 - A document declares exactly one namespace. An empty document or `{}` declares nothing, and an object with two or more keys declares more than one, so both are refused as parse errors. An API that takes a document answers either as a bad request.
 - An object with the same key twice is refused, including a relation named twice. JSON leaves duplicate keys to the reader, and a reader that keeps the last one would hide a mistake.
 - Key order carries no meaning.
@@ -96,7 +96,7 @@ A relation name is one name. A namespace name is one or more names joined by dot
 
 ```ebnf
 ⟨namespace name⟩   ::= ⟨name⟩ { '.' ⟨name⟩ }
-⟨relation name⟩ ::= ⟨name⟩     excluding 'this'
+⟨relation name⟩ ::= ⟨name⟩     excluding 'this' in any casing
 ⟨name⟩          ::= ⟨name-start⟩ { ⟨name-char⟩ }
 ⟨name-start⟩    ::= ⟨letter⟩ | '_'
 ⟨name-char⟩     ::= ⟨letter⟩ | ⟨digit⟩ | '_'
@@ -113,7 +113,7 @@ Namespace and relation names are value types, `NamespaceName` and `RelationName`
 
 Everything past the edge, including the rewrite tree, the namespace and the printer, holds these types, so a name the grammar doesn't allow can't reach them.
 
-The keyword is `this`, in lowercase only. No relation may be named `this` in any casing, so `This` and `THIS` are refused as names, and so is a reference to one: `this | owner` is a valid rewrite, and `This | owner` is refused as a reserved name. A name that differs from the keyword only in case would read as the keyword. The core accepts these names; the document reserves them.
+The keyword is `this`, in lowercase only. No relation may be named `this` in any casing, so `This` and `THIS` are refused as names, and so is a reference to one: `this | owner` is a valid rewrite, and `This | owner` is refused as a reserved name. A name that differs from the keyword only in case would read as the keyword.
 
 ## Rewrite grammar
 
@@ -184,7 +184,8 @@ A relation whose rewrite doesn't read `this` is written as a plain string. It ac
 Writing a namespace checks the declarations:
 
 - A rewrite that reads `this` without declaring subjects is refused, and so is a relation that declares subjects without reading `this`.
-- For each fact-to-subjectset, every namespace its first relation accepts must declare its second relation. `(parent, viewer)` is refused unless `folder` declares `viewer`.
+- For each fact-to-subjectset, every namespace its factset accepts must declare its computed relation. `(parent, viewer)` is refused unless `folder` declares `viewer`.
+- Every accepted subject `namespace#relation` names a relation that namespace declares. `group#member` is refused unless `group` declares `member`.
 
 `identity` is reserved: no namespace may be named `identity`.
 
@@ -194,7 +195,7 @@ A relation's rewrite defines the closure of each [[subjectset]] formed from that
 
 - `this` is the subjects the [[fact]]s bind to the subjectset.
 - A computed subjectset is the closure of the subjectset formed from the same resource and the named relation.
-- A fact-to-subjectset reads the subjects the facts bind to the subjectset formed from the same resource and the factset. For each subject that is a resource member or a subjectset, it takes the closure of the subjectset formed from that subject's resource and the computed relation. An [[identity]] has no resource and is skipped.
+- A fact-to-subjectset reads the subjects the facts bind to the subjectset formed from the same resource and the factset. For each subject that is a resource member or a subjectset, it takes the closure of the subjectset formed from that subject's resource and the computed relation. An identity has no resource and is skipped.
 
 A subjectset whose relation its namespace doesn't declare has an empty closure. A fact-to-subjectset reaches one when the namespace of a resource it follows lacks the computed relation.
 
@@ -245,7 +246,7 @@ The printer writes a document, in either form, that the parser reads back as an 
 
 ## Open
 
-- When a fact-to-subjectset's first relation accepts a namespace that doesn't exist yet, whether the namespace write is refused or the check waits until that namespace is written. Two namespaces that reach each other can't both be written first.
+- When the factset of a fact-to-subjectset accepts a namespace that doesn't exist yet, whether the namespace write is refused or the check waits until that namespace is written. Two namespaces that reach each other can't both be written first.
 - How a request names its document's form. A write carries the document inside a request body, so the form can't come from the request's content type. The endpoints that take documents settle it.
 
 ## Required tests
@@ -256,7 +257,7 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 2. **Names.** The name grammar, dotted namespace names, and the reserved `this` in every casing.
 3. **Grammar.** Precedence, left-to-right reading, runs as one node, parentheses kept as structure, whitespace, and longest-match names.
 4. **Checks.** Each check in [Checks](#checks) refuses what it should and allows what it should, including cycles through a fact-to-subjectset and relations that share a target.
-5. **Errors.** Every problem is reported in document order, up to the cap, each with its place and a message that names what was expected and what was found. Quoted input is bounded and escaped.
+5. **Errors.** Every problem is reported in document order, up to the cap, each with its place. A syntax error's message names what was expected and what was found. Quoted input is bounded and escaped.
 6. **Limits.** Each limit at its value and one past it.
 7. **Printing.** The canonical form, only the parentheses the grammar needs, and each refusal: a union or intersection with one operand, and a name made with `new_unchecked` that breaks the grammar.
 8. **Round trips.** Property tests from trees and from expression text. Print then parse gives an equal namespace, and printing again gives the same text. Generated trees reach the depth limits and include wide runs.
@@ -313,6 +314,7 @@ The cases each class covers, at minimum.
 8. A rewrite that reads `this` without `subjects`, and `subjects` on a rewrite without `this`, are refused. `rewrite` left out means `this`.
 9. A fact whose subject isn't among its relation's accepted subjects is refused, and so is a fact under a relation that accepts none.
 10. A namespace named `identity` is refused.
+11. An accepted subject `namespace#relation` is refused when that namespace doesn't declare the relation.
 
 #### Errors
 
@@ -320,6 +322,7 @@ The cases each class covers, at minimum.
 2. Errors stop at the cap, and the last error says more were found.
 3. Each error's message names its relation and, inside an expression, its column.
 4. An error quoting a name or text longer than 64 bytes, or holding control, zero-width or right-to-left characters, quotes at most 64 bytes with those characters escaped. This includes the error that refuses a JSON escape.
+5. A syntax error stops its expression only, and a relation whose expression fails still satisfies references to it.
 
 #### Limits
 
@@ -339,7 +342,7 @@ The cases each class covers, at minimum.
 
 #### Hostile input
 
-1. A chain of computed subjectsets as long as the document limit allows, such as `"r0": "r1"`, `"r1": "r2"` and so on, is refused without a crash.
+1. A chain of 500 computed subjectsets, `"r0": "r1"` through `"r499": { "subjects": ["identity"] }`, is accepted, and a longer one is refused, both without a crash.
 2. One large set of relations that all reach each other is refused without a crash.
 3. Many more relations than the relation limit allows are refused without a crash.
 4. Each of these finishes within a time bound that catches quadratic work.

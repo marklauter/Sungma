@@ -66,7 +66,7 @@ Dropping a relation empties it everywhere, including in other namespaces that re
 - **Reading namespaces,** a namespace at a revision token and a list of its versions: the transports on the roadmap.
 - **Errors,** the status and body for each refusal: the transports on the roadmap.
 - **Propagation,** how a new version reaches other nodes and appears in the Watch stream: the Watch service on the roadmap. Namespace versions go into the same change log as facts.
-- **Who may write:** authentication and authorization on the roadmap. See [[check-takes-a-caller-token-and-a-subject-token]].
+- **Who may write:** [Sungma's own authorization](sungma-authorization.md).
 
 ## Required tests
 
