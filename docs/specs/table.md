@@ -146,3 +146,11 @@ Names are stored before the versions that use them. A version read that misses a
 8. **Mutation testing.** No mutant survives the tests of its own crate, apart from recorded exclusions, each with its reason.
 
 Each test has a table of its own, so tests don't share state. Without DynamoDB Local the tests fail rather than skip.
+
+## Open
+
+1. **Writes larger than one unit of work.** A unit of work holds 100 items, so a big write, such as a namespace with many relations or a large batch of facts, can't commit in one. One answer keeps it atomic with a commit point:
+   - The big write reserves the head, writes every item stamped with the next revision R across as many units of work as it needs, then moves the head to R in one last unit of work. Reads stop at the head, so nothing at R is seen until then.
+   - It records its change set before writing anything, and the reservation points to it.
+   - The reservation has a lease. When the lease expires, the next writer may take over, but the head never moves past R while R's items remain. The next writer either undoes them from the change set, restoring the pointers and spans the write changed, or marks R aborted so every read skips it.
+   - Still open: whether pointers moved in place stay invisible until the head reaches R, whether to undo or mark aborted, and how long a big write may hold the head while every other write waits.
