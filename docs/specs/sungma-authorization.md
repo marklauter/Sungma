@@ -38,7 +38,7 @@ Neither implies the other. An editor of a namespace can't write its facts unless
 # The deployment
 [sungma]
 admin = "this"
-creator = "this | admin"
+namespace_creator = "this | admin"
 
 # Tier 1: a namespace's document
 ["sungma.namespace"]
@@ -71,8 +71,8 @@ Two kinds of fact link these resources, and only Sungma writes them:
 
 | To do this | the subject needs |
 |---|---|
-| Grant or revoke `admin` or `creator` | `admin` on `sungma:deployment` |
-| Create a namespace | `creator` on `sungma:deployment` |
+| Grant or revoke `admin` or `namespace_creator` | `admin` on `sungma:deployment` |
+| Create a namespace | `namespace_creator` on `sungma:deployment` |
 | Write a new version of a namespace, or retire it | `editor` on the namespace |
 | See a namespace's document | `viewer` on the namespace |
 | Grant or revoke a role on a namespace or one of its relations | `owner` on the namespace |
