@@ -4,6 +4,7 @@ type: specification
 summary: "Sungma decides who may change and read its own namespaces and facts with four namespaces of its own: `sungma` for the deployment, `sungma.namespace` for each namespace's document, `sungma.relation` for the facts under each relation, and `sungma.group` for groups of subjects. Every subject, person or client, gets a role through facts like any other, directly or through a group."
 status: evolving
 cites:
+  - "[[scim-imports-users-and-groups]]"
   - "[[namespace]]"
   - "[[relation]]"
   - "[[rewrite]]"
@@ -167,6 +168,4 @@ A namespace version that declares a relation the namespace's earlier versions di
 1. How deployment setup runs, and where it takes the first admin's subject from.
 2. What `operator` covers beyond logs and metrics, such as health, and whether operators may read namespace documents to diagnose a problem.
 3. Whether a namespace's owner should be able to transfer ownership, or revoke the last owner while admins still own it through the deployment.
-4. How groups imported through SCIM are named. A SCIM group's `id` never changes and its `displayName` can, so a resource id taken from the display name would orphan every grant when the group is renamed.
-5. Who creates an imported group and writes its members. Sungma's SCIM endpoint would write the group's `parent` and `member` facts, so creating a group wouldn't be for admins alone.
-6. Whether an imported group can be edited in Sungma. The next SCIM push would overwrite a change made in Author, so imported groups may be read-only in Sungma, with their members changed only in the identity provider.
+4. How groups imported through SCIM are named, created and edited. See [[scim-imports-users-and-groups]].

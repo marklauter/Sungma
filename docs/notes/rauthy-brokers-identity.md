@@ -4,6 +4,7 @@ type: note
 summary: Every SaaS needs an identity provider, so a Sungma deployment ships Rauthy as its one issuer; Rauthy federates the organization's own providers, and Sungma keeps only a subject and what its UI shows.
 status: evolving
 cites:
+  - "[[scim-imports-users-and-groups]]"
   - "[[sungma-is-single-tenant]]"
   - "[[check-takes-a-caller-token-and-a-subject-token]]"
   - "[[author-needs-an-oauth-bff-crate]]"
@@ -47,7 +48,7 @@ Single tenancy removes Rauthy's biggest gap. Rauthy has no realms, and Sungma ne
 
 ### Users and groups reach Sungma through SCIM
 
-Sungma implements a SCIM v2 endpoint, and Rauthy pushes user and group changes to it. The endpoint is the anti-corruption layer: it turns SCIM resources into tuples such as `group:eng#member@user:<sub>` and refreshes the display projection.
+Sungma implements a SCIM v2 endpoint, and Rauthy pushes user and group changes to it. [[scim-imports-users-and-groups]] says what the endpoint writes.
 
 Rauthy's event stream doesn't carry group or role changes. Its events cover security and operations: invalid logins, brute force, new users, email changes, password resets, JWKS rotation and health. Sungma may subscribe for side signals, such as ending sessions after `UserPasswordReset`. The stream is SSE without a documented resume cursor, so a consumer reconnects and fills gaps from `/auth/v1/events`.
 
@@ -85,5 +86,4 @@ Hiqlite on its own, not Postgres or Aurora Global under a Raft cache, keeps one 
 
 1. Whether Rauthy maps upstream group claims into its own groups, or whether groups are managed in Rauthy or Sungma.
 2. How the control plane provisions a deployment's Rauthy: clients, scopes, upstream providers and API keys.
-3. What the SCIM endpoint maps: users and groups only, or custom attributes to relations too.
-4. Whether Author's BFF ([[author-needs-an-oauth-bff-crate]]) gets its tests from a fake provider alone, or also from a Rauthy container in an integration suite.
+3. Whether Author's BFF ([[author-needs-an-oauth-bff-crate]]) gets its tests from a fake provider alone, or also from a Rauthy container in an integration suite.
