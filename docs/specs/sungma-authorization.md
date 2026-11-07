@@ -96,6 +96,8 @@ Two kinds of fact link these resources, and only Sungma writes them:
 | Write facts under a relation | `writer` on the relation |
 | Read facts under a relation, or check a [[subjectset]] formed from it | `reader` on the relation |
 
+A fact's subject may name a resource or subjectset in another namespace. Writing the fact needs `writer` on its own relation only, nothing on the namespace it points into.
+
 A namespace-wide grant flows down: `fact_writer` on `billing` makes its holder a `writer` on every relation in `billing`, including relations added later.
 
 ## Protected namespaces
