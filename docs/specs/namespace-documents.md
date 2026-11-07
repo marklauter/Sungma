@@ -313,7 +313,7 @@ The cases each class covers, at minimum.
 7. Redeclaring a relation checks the whole namespace again.
 8. A rewrite that reads `this` without `subjects`, and `subjects` on a rewrite without `this`, are refused. `rewrite` left out means `this`.
 9. A fact whose subject isn't among its relation's accepted subjects is refused, and so is a fact under a relation that accepts none.
-10. A namespace named `identity` is refused, and so is a namespace whose first segment is `sungma`, unless it is one of Sungma's own.
+10. A namespace named `identity` is refused. The reserved first segment `sungma` is enforced when a namespace is written, as [Sungma's own authorization](sungma-authorization.md#protected-namespaces) says, so the parser still reads Sungma's own namespaces and facts that name them.
 11. An accepted subject `namespace#relation` is refused when that namespace doesn't declare the relation.
 
 #### Errors
