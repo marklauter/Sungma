@@ -17,15 +17,16 @@ Done means built, tested to the coverage floor and merged. It doesn't mean produ
 13. HTTP and gRPC transports for each service.
 14. Error kinds: every domain error carries a kind, such as validation, not found, gone, conflict or unavailable, and a stable code, such as `fact.undeclared_relation`. Each transport maps kinds to its own status codes in one table.
 15. Authentication and authorization of Sungma's own callers.
-16. Distributed storage adapter.
-17. Multi-region deployment with snapshot reads from local replicas.
-18. Garbage collection of fact history past a retention window.
-19. Check result caching.
-20. Index for large and deeply nested groups.
-21. Snapshot dumps for offline processing.
-22. Metrics, tracing and latency objectives.
-23. Client SDKs.
-24. Opaque zookies.
+16. Rate limiting: each caller gets a request budget per service, and a caller over its budget is refused until the budget refills.
+17. Distributed storage adapter.
+18. Multi-region deployment with snapshot reads from local replicas.
+19. Garbage collection of fact history past a retention window.
+20. Check result caching.
+21. Index for large and deeply nested groups.
+22. Snapshot dumps for offline processing.
+23. Metrics, tracing and latency objectives.
+24. Client SDKs.
+25. Opaque zookies.
 
 ## Deferred
 
