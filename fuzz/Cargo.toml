@@ -22,6 +22,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "document_toml"
+path = "fuzz_targets/document_toml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "fact"
 path = "fuzz_targets/fact.rs"
 test = false
