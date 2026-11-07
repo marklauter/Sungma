@@ -73,16 +73,16 @@ flowchart LR
   sungma -. "admin, namespace_creator, operator, auditor" .-> identity
 ```
 
-The [[resource]]s are:
+Facts name three kinds of [[resource]]:
 
-- `sungma:deployment`, the one deployment.
+- `sungma:deployment`, the one deployment. Setup's first fact names it.
 - `sungma.namespace:<name>`, one for each namespace, such as `sungma.namespace:billing`.
-- `sungma.relation:<namespace>/<relation>`, one for each relation, such as `sungma.relation:billing/viewer`. A relation name holds no `/`, so the id reads one way.
+- `sungma.relation:<namespace>/<relation>`, one for each relation, such as `sungma.relation:billing/approver`. A relation name holds no `/`, so the id reads one way.
 
 Two kinds of fact link these resources, and only Sungma writes them:
 
 - `sungma.namespace:billing#parent@sungma:deployment#...` makes every admin an owner of `billing`.
-- `sungma.relation:billing/viewer#parent@sungma.namespace:billing#...` lets `billing`'s fact writers and fact readers reach its `viewer` facts.
+- `sungma.relation:billing/approver#parent@sungma.namespace:billing#...` lets `billing`'s fact writers and fact readers reach its `approver` facts.
 
 ## What each role allows
 
