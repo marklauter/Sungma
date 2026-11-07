@@ -18,7 +18,7 @@ testkit = [
 [dependencies]
 async-trait = "0.1.92"
 axum.workspace = true
-base64 = { version = "0.22.1", optional = true }
+base64 = { version = "0.23.1", optional = true }
 chrono = { version = "0.4.42", default-features = false }
 openidconnect = "4.1.0"
 parking_lot.workspace = true
