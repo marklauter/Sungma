@@ -17,15 +17,17 @@ Done means built, tested to the coverage floor and merged. It doesn't mean produ
 13. HTTP and gRPC transports for each service.
 14. Error kinds: every domain error carries a kind, such as validation, not found, gone, conflict or unavailable, and a stable code, such as `fact.undeclared_relation`. Each transport maps kinds to its own status codes in one table.
 15. Authentication and authorization of Sungma's own callers.
-16. Distributed storage adapter.
-17. Multi-region deployment with snapshot reads from local replicas.
-18. Garbage collection of fact history past a retention window.
-19. Check result caching.
-20. Index for large and deeply nested groups.
-21. Snapshot dumps for offline processing.
-22. Metrics, tracing and latency objectives.
-23. Client SDKs.
-24. Opaque zookies.
+16. Identity provider: a deployment ships Rauthy as its one issuer, and any OIDC provider can replace it.
+17. SCIM endpoint: users first, which give Author names and emails, then groups as `member` facts in a namespace the sync owns.
+18. Distributed storage adapter.
+19. Multi-region deployment with snapshot reads from local replicas.
+20. Garbage collection of fact history past a retention window.
+21. Check result caching.
+22. Index for large and deeply nested groups.
+23. Snapshot dumps for offline processing.
+24. Metrics, tracing and latency objectives.
+25. Client SDKs.
+26. Opaque zookies.
 
 ## Deferred
 
