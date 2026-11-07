@@ -159,6 +159,14 @@ A group holds a role for its members. One fact, such as `sungma.namespace:billin
 
 Creating a group stores its `parent` fact and an `owner` fact for its creator in one unit of work, as creating a namespace does. Admins own every group through `parent`.
 
+Nesting is bounded, so a check that reaches a group never has to walk an unbounded graph. Write refuses a fact that makes a group a member of another group when:
+
+- it would form a cycle, because the containing group is already reachable from the one being added;
+- the longest chain of nested groups through it would be deeper than the deployment's depth limit;
+- the containing group would hold more groups as direct members than the deployment's width limit. Identities don't count toward it, so a group imported from an identity provider can hold any number of people.
+
+The two limits are deployment settings. They default to 10 levels deep and 32 groups wide. Write checks them at the head the write is based on, and checks them again when the write retries, so two writes can't each add half of a cycle.
+
 ## New relations
 
 A namespace version that declares a relation the namespace's earlier versions didn't stores the relation's `parent` fact in the same unit of work. A relation a later version drops keeps its `parent` fact and the grants on it. Nothing reads them while the relation is gone, and they count again if a later version brings the relation back.
@@ -183,6 +191,9 @@ A namespace version that declares a relation the namespace's earlier versions di
 16. Adding or retiring a `parent` fact in `sungma.namespace`, `sungma.relation` or `sungma.group` is refused from every caller, an admin included.
 17. A grant on `sungma.relation:<namespace>/<relation>` is refused while the namespace doesn't declare the relation.
 18. Creating a namespace whose first segment is `sungma` is refused.
+19. Making a group a member of a group that it already contains, directly or through nesting, is refused, and so is a group made a member of itself.
+20. Nesting groups one level deeper than the depth limit, or giving a group one more nested group than the width limit, is refused, and the limits come from the deployment's settings.
+21. Two writes that would together form a cycle can't both commit.
 
 ## Open
 
