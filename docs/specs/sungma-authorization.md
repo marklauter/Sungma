@@ -42,8 +42,8 @@ namespace_creator = "this | admin"
 
 # Each namespace: who owns it, who edits its rewrites, and who works with all its facts
 ["sungma.namespace"]
-deployment = "this"
-owner = "this | (deployment, admin)"
+host = "this"
+owner = "this | (host, admin)"
 editor = "this | owner"
 fact_writer = "this | owner"
 fact_reader = "this | fact_writer"
@@ -51,9 +51,9 @@ viewer = "this | editor | fact_reader"
 
 # Each relation: who writes and reads the facts under it
 ["sungma.relation"]
-namespace = "this"
-writer = "this | (namespace, fact_writer)"
-reader = "this | writer | (namespace, fact_reader)"
+host = "this"
+writer = "this | (host, fact_writer)"
+reader = "this | writer | (host, fact_reader)"
 ```
 
 The [[resource]]s are:
@@ -64,8 +64,8 @@ The [[resource]]s are:
 
 Two kinds of fact link these resources, and only Sungma writes them:
 
-- `sungma.namespace:billing#deployment@sungma:deployment#...` makes every admin an owner of `billing`.
-- `sungma.relation:billing/viewer#namespace@sungma.namespace:billing#...` lets `billing`'s fact writers and fact readers reach its `viewer` facts.
+- `sungma.namespace:billing#host@sungma:deployment#...` makes every admin an owner of `billing`.
+- `sungma.relation:billing/viewer#host@sungma.namespace:billing#...` lets `billing`'s fact writers and fact readers reach its `viewer` facts.
 
 ## What each role allows
 
@@ -85,7 +85,7 @@ A namespace-wide grant flows down: `fact_writer` on `billing` makes its holder a
 
 Write refuses any change to the `sungma`, `sungma.namespace` and `sungma.relation` namespaces themselves. Only a Sungma release changes them, since an edit could lock everyone out.
 
-Write also refuses a fact under `deployment` or `namespace` from any caller. Sungma writes those facts itself, as [Creating a namespace](#creating-a-namespace) and [New relations](#new-relations) say. A caller who could write one could tie a namespace to a resource they control.
+Write also refuses a fact under `host` from any caller. Sungma writes those facts itself, as [Creating a namespace](#creating-a-namespace) and [New relations](#new-relations) say. A caller who could write one could tie a namespace to a resource they control.
 
 ## The first admin
 
@@ -101,7 +101,7 @@ Creating a namespace stores it, the fact tying it to the deployment, and an `own
 
 ## New relations
 
-A namespace version that declares a relation the namespace's earlier versions didn't stores the relation's `namespace` fact in the same unit of work. A relation a later version drops keeps its fact. The fact is then inert, like any fact under a dropped relation.
+A namespace version that declares a relation the namespace's earlier versions didn't stores the relation's `host` fact in the same unit of work. A relation a later version drops keeps its fact. The fact is then inert, like any fact under a dropped relation.
 
 ## Required tests
 
@@ -110,10 +110,10 @@ A namespace version that declares a relation the namespace's earlier versions di
 3. An editor who isn't a fact writer can't write facts, and a fact writer who isn't an editor can't write a namespace version.
 4. Admins own every namespace without an `owner` fact of their own.
 5. A person and a client with the same roles get the same answers.
-6. Writes that change `sungma`, `sungma.namespace` or `sungma.relation`, and facts under `deployment` or `namespace` from a caller, are refused.
+6. Writes that change `sungma`, `sungma.namespace` or `sungma.relation`, and facts under `host` from a caller, are refused.
 7. Two admins revoking each other at once leave one admin.
 8. A failed namespace creation stores none of its three items.
-9. A new relation gets its `namespace` fact in the same unit of work as the version that declares it.
+9. A new relation gets its `host` fact in the same unit of work as the version that declares it.
 
 ## Open
 
