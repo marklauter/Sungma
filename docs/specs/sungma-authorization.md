@@ -5,6 +5,7 @@ summary: "Sungma decides who may change and read its own namespaces and facts wi
 status: evolving
 cites:
   - "[[scim-imports-users-and-groups]]"
+  - "[[privileged-roles-need-a-recent-sign-in]]"
   - "[[namespace]]"
   - "[[relation]]"
   - "[[rewrite]]"
@@ -116,6 +117,9 @@ Three kinds of fact link these resources, and only Sungma writes them:
 | Grant or revoke a role on a namespace or one of its relations | `owner` on the namespace |
 | Write facts under a relation | `writer` on the relation |
 | Read facts under a relation, or check a [[subjectset]] formed from it | `reader` on the relation |
+| Read the grants on a namespace and its relations | `owner` on the namespace |
+| Read a group's members and owners | `owner` on the group |
+| Change a deployment setting, such as the group nesting limits | `admin` on `sungma:deployment` |
 
 Facts under `sungma`, `sungma.namespace`, `sungma.relation` and `sungma.group` follow the rows that name them, and an auditor reads them all. The `writer` and `reader` rows cover facts under every other namespace.
 
@@ -131,7 +135,9 @@ Write refuses any change to the `sungma`, `sungma.namespace`, `sungma.relation` 
 
 Write also refuses adding or retiring a fact under `parent` in `sungma.namespace`, `sungma.relation` or `sungma.group`, from any caller. Sungma writes those facts itself, as [Creating a namespace](#creating-a-namespace), [New relations](#new-relations) and [Groups](#groups) say. A caller who could add one could tie a namespace to a resource they control. A caller who could retire one could cut a namespace, relation or group off from the admins and auditors who reach it through `parent`.
 
-Write also refuses a fact under `sungma.relation:<namespace>/<relation>` unless the namespace's latest version declares that relation. Otherwise a grant on a relation that doesn't exist yet would lie hidden, then take effect the day a version declares it.
+Write also refuses adding a fact under `sungma.relation:<namespace>/<relation>` unless the namespace's latest version declares that relation. Otherwise a grant on a relation that doesn't exist yet would lie hidden, then take effect the day a version declares it. Retiring one is always allowed, so a grant on a dropped relation can still be revoked before the relation returns.
+
+Write also refuses adding a fact whose subject is `sungma.group:<name>#member` unless that group has been created. Otherwise a grant to a group that doesn't exist yet would take effect the day an admin creates it.
 
 ## The first admin
 
@@ -141,9 +147,13 @@ Deployment setup names one identity, the `sub` the identity provider issues to t
 
 A write is authorized at the [head](table.md#the-head) it's based on, in its own [unit of work](table.md#the-table-and-the-contexts). Every write commits only while the head is unchanged, so a write that retries is authorized again at the new head. A role revoked by a write that committed first can't authorize a write that commits after it.
 
+A write that needs `admin`, `namespace_creator`, a namespace's `owner` or `writer`, or a group's `owner` is accepted only from a caller token whose `auth_time` falls within the elevation window, as [[privileged-roles-need-a-recent-sign-in]] says.
+
+A read is authorized at the snapshot it reads, so a role revoked before that snapshot can't read data written after it.
+
 ## Revoking your own role
 
-No caller may revoke a privileged role from themselves: `admin`, or `owner` of a namespace or a group. Stepping down from one means asking another holder. Everyday roles, such as a group membership, can be given up freely.
+No caller may revoke a privileged role from themselves: `admin`, or `owner` of a namespace or a group. Stepping down from one means asking another holder. A group's members are changed by its owners only, so a member can't leave a group on their own.
 
 `admin` is granted to identities only, never to a group, and only an admin can revoke `admin`. A caller who revokes `admin` therefore remains an admin after the write, so the deployment always has at least one.
 
@@ -169,7 +179,7 @@ The two limits are deployment settings. They default to 10 levels deep and 32 gr
 
 ## New relations
 
-A namespace version that declares a relation the namespace's earlier versions didn't stores the relation's `parent` fact in the same unit of work. A relation a later version drops keeps its `parent` fact and the grants on it. Nothing reads them while the relation is gone, and they count again if a later version brings the relation back.
+A namespace version that declares a relation the namespace's earlier versions didn't stores the relation's `parent` fact in the same unit of work. A relation a later version drops keeps its `parent` fact and the grants on it. Nothing reads them while the relation is gone. A version that declares the relation again writes its `parent` fact afresh, opening a new span, so the relation keeps its link whatever rule [open question 6](#open) settles for grants.
 
 ## Required tests
 
@@ -194,6 +204,14 @@ A namespace version that declares a relation the namespace's earlier versions di
 19. Making a group a member of a group that it already contains, directly or through nesting, is refused, and so is a group made a member of itself.
 20. Nesting groups one level deeper than the depth limit, or giving a group one more nested group than the width limit, is refused, and the limits come from the deployment's settings.
 21. Two writes that would together form a cycle can't both commit.
+22. Revoking a grant on a dropped relation is allowed, and a grant on a relation the namespace doesn't declare can't be added.
+23. A relation declared again has a `parent` fact whose span opens at the new version.
+24. A grant to a group that hasn't been created is refused.
+25. An owner reads the grants on their namespace and the members and owners of their group, and a caller without `owner` can't.
+26. A member removing themselves from a group is refused unless they own it.
+27. A privileged write from a token whose `auth_time` is outside the elevation window is refused.
+28. Changing a deployment setting needs `admin`.
+29. A read at a snapshot taken after a role was revoked is refused for the caller who lost it.
 
 ## Open
 
