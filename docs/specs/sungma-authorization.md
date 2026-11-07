@@ -1,7 +1,7 @@
 ---
 title: Sungma's own authorization
 type: specification
-summary: "Sungma decides who may change and read its own namespaces and facts with four namespaces of its own: `sungma` for the deployment, `sungma.namespace` for each namespace's document, `sungma.relation` for the facts under each relation, and `sungma.team` for groups of subjects. Every subject, person or client, gets a role through facts like any other, directly or through a team."
+summary: "Sungma decides who may change and read its own namespaces and facts with four namespaces of its own: `sungma` for the deployment, `sungma.namespace` for each namespace's document, `sungma.relation` for the facts under each relation, and `sungma.group` for groups of subjects. Every subject, person or client, gets a role through facts like any other, directly or through a group."
 status: evolving
 cites:
   - "[[namespace]]"
@@ -37,53 +37,53 @@ Neither implies the other. A namespace's writer can't write its facts unless the
 ```toml
 # The deployment: its admins, operators and auditors, and who may create namespaces
 [sungma]
-admin = { subjects = ["identity", "sungma.team#member"] }
-namespace_creator = { rewrite = "this | admin", subjects = ["identity", "sungma.team#member"] }
-operator = { rewrite = "this | admin", subjects = ["identity", "sungma.team#member"] }
-auditor = { rewrite = "this | admin", subjects = ["identity", "sungma.team#member"] }
+admin = { subjects = ["identity", "sungma.group#member"] }
+namespace_creator = { rewrite = "this | admin", subjects = ["identity", "sungma.group#member"] }
+operator = { rewrite = "this | admin", subjects = ["identity", "sungma.group#member"] }
+auditor = { rewrite = "this | admin", subjects = ["identity", "sungma.group#member"] }
 
 # Each namespace: who owns it, who writes its document, and who works with all its facts
 ["sungma.namespace"]
 parent = { subjects = ["sungma"] }
-owner = { rewrite = "this | (parent, admin)", subjects = ["identity", "sungma.team#member"] }
-writer = { rewrite = "this | owner", subjects = ["identity", "sungma.team#member"] }
-reader = { rewrite = "this | writer | fact_reader | (parent, auditor)", subjects = ["identity", "sungma.team#member"] }
-fact_writer = { rewrite = "this | owner", subjects = ["identity", "sungma.team#member"] }
-fact_reader = { rewrite = "this | fact_writer | (parent, auditor)", subjects = ["identity", "sungma.team#member"] }
+owner = { rewrite = "this | (parent, admin)", subjects = ["identity", "sungma.group#member"] }
+writer = { rewrite = "this | owner", subjects = ["identity", "sungma.group#member"] }
+reader = { rewrite = "this | writer | fact_reader | (parent, auditor)", subjects = ["identity", "sungma.group#member"] }
+fact_writer = { rewrite = "this | owner", subjects = ["identity", "sungma.group#member"] }
+fact_reader = { rewrite = "this | fact_writer | (parent, auditor)", subjects = ["identity", "sungma.group#member"] }
 
 # Each relation: who writes and reads the facts under it
 ["sungma.relation"]
 parent = { subjects = ["sungma.namespace"] }
-writer = { rewrite = "this | (parent, fact_writer)", subjects = ["identity", "sungma.team#member"] }
-reader = { rewrite = "this | writer | (parent, fact_reader)", subjects = ["identity", "sungma.team#member"] }
+writer = { rewrite = "this | (parent, fact_writer)", subjects = ["identity", "sungma.group#member"] }
+reader = { rewrite = "this | writer | (parent, fact_reader)", subjects = ["identity", "sungma.group#member"] }
 
-# Each team: who owns it and who is in it
-["sungma.team"]
+# Each group: who owns it and who is in it
+["sungma.group"]
 parent = { subjects = ["sungma"] }
-owner = { rewrite = "this | (parent, admin)", subjects = ["identity", "sungma.team#member"] }
-member = { subjects = ["identity", "sungma.team#member"] }
+owner = { rewrite = "this | (parent, admin)", subjects = ["identity", "sungma.group#member"] }
+member = { subjects = ["identity", "sungma.group#member"] }
 ```
 
-Drawn as a graph, each namespace is a node, and each relation's accepted subjects are its edges. Solid edges are the `parent` links that rewrites follow. Dashed edges go to identities, the people and clients who hold roles, and to teams, which hold roles for their members.
+Drawn as a graph, each namespace is a node, and each relation's accepted subjects are its edges. Solid edges are the `parent` links that rewrites follow. Dashed edges go to identities, the people and clients who hold roles, and to groups, which hold roles for their members.
 
 ```mermaid
 flowchart LR
   relation["<b>sungma.relation</b><br/>parent<br/>writer<br/>reader"]
   namespace["<b>sungma.namespace</b><br/>parent<br/>owner<br/>writer<br/>reader<br/>fact_writer<br/>fact_reader"]
   sungma["<b>sungma</b><br/>admin<br/>namespace_creator<br/>operator<br/>auditor"]
-  team["<b>sungma.team</b><br/>parent<br/>owner<br/>member"]
+  group["<b>sungma.group</b><br/>parent<br/>owner<br/>member"]
   identity(["identity"])
   relation -- parent --> namespace
   namespace -- parent --> sungma
-  team -- parent --> sungma
+  group -- parent --> sungma
   relation -. "writer, reader" .-> identity
   namespace -. "owner, writer, reader, fact_writer, fact_reader" .-> identity
   sungma -. "admin, namespace_creator, operator, auditor" .-> identity
-  team -. "owner, member" .-> identity
-  relation -. "every role" .-> team
-  namespace -. "every role" .-> team
-  sungma -. "every role" .-> team
-  team -. "owner, member" .-> team
+  group -. "owner, member" .-> identity
+  relation -. "every role" .-> group
+  namespace -. "every role" .-> group
+  sungma -. "every role" .-> group
+  group -. "owner, member" .-> group
 ```
 
 Facts name four kinds of [[resource]]:
@@ -91,7 +91,7 @@ Facts name four kinds of [[resource]]:
 - `sungma:deployment`, the one deployment. Setup's first fact names it.
 - `sungma.namespace:<name>`, one for each namespace, such as `sungma.namespace:billing`.
 - `sungma.relation:<namespace>/<relation>`, one for each relation, such as `sungma.relation:billing/approver`. A relation name holds no `/`, so the id reads one way.
-- `sungma.team:<name>`, one for each team, such as `sungma.team:billing-ops`.
+- `sungma.group:<name>`, one for each group, such as `sungma.group:billing-ops`.
 
 Two kinds of fact link these resources, and only Sungma writes them:
 
@@ -104,8 +104,8 @@ Two kinds of fact link these resources, and only Sungma writes them:
 |---|---|
 | Grant or revoke `admin`, `namespace_creator`, `operator` or `auditor` | `admin` on `sungma:deployment` |
 | Create a namespace | `namespace_creator` on `sungma:deployment` |
-| Create a team | `admin` on `sungma:deployment` |
-| Add or remove a team's members, or grant or revoke its `owner` | `owner` on the team |
+| Create a group | `admin` on `sungma:deployment` |
+| Add or remove a group's members, or grant or revoke its `owner` | `owner` on the group |
 | Run the deployment: read its logs and metrics | `operator` on `sungma:deployment` |
 | Read and replay the audit records of decisions | `auditor` on `sungma:deployment` |
 | Write a new version of a namespace, or retire it | `writer` on the namespace |
@@ -122,7 +122,7 @@ A namespace-wide grant flows down: `fact_writer` on `billing` makes its holder a
 
 ## Protected namespaces
 
-Write refuses any change to the `sungma`, `sungma.namespace`, `sungma.relation` and `sungma.team` namespaces themselves. Only a Sungma release changes them, since an edit could lock everyone out.
+Write refuses any change to the `sungma`, `sungma.namespace`, `sungma.relation` and `sungma.group` namespaces themselves. Only a Sungma release changes them, since an edit could lock everyone out.
 
 Write also refuses a fact under `parent` from any caller. Sungma writes those facts itself, as [Creating a namespace](#creating-a-namespace) and [New relations](#new-relations) say. A caller who could write one could tie a namespace to a resource they control.
 
@@ -138,11 +138,11 @@ Revoking `admin` from the last subject that holds it is refused. The revocation 
 
 Creating a namespace stores it, the fact tying it to the deployment, and an `owner` fact for its creator, in one unit of work. Either all three are stored or none is, so a namespace never exists without an owner.
 
-## Teams
+## Groups
 
-A team holds a role for its members. One fact, such as `sungma.namespace:billing#reader@sungma.team:billing-ops#member`, makes every member of `billing-ops` a reader of `billing`. A team's members can include other teams, so membership nests.
+A group holds a role for its members. One fact, such as `sungma.namespace:billing#reader@sungma.group:billing-ops#member`, makes every member of `billing-ops` a reader of `billing`. A group's members can include other groups, so membership nests.
 
-Creating a team stores its `parent` fact and an `owner` fact for its creator in one unit of work, as creating a namespace does. Admins own every team through `parent`.
+Creating a group stores its `parent` fact and an `owner` fact for its creator in one unit of work, as creating a namespace does. Admins own every group through `parent`.
 
 ## New relations
 
@@ -155,12 +155,12 @@ A namespace version that declares a relation the namespace's earlier versions di
 3. A namespace writer who isn't a fact writer can't write facts, and a fact writer who isn't a namespace writer can't write a namespace version.
 4. Admins own every namespace without an `owner` fact of their own.
 5. A person and a client with the same roles get the same answers.
-6. Writes that change `sungma`, `sungma.namespace`, `sungma.relation` or `sungma.team`, and facts under `parent` from a caller, are refused.
+6. Writes that change `sungma`, `sungma.namespace`, `sungma.relation` or `sungma.group`, and facts under `parent` from a caller, are refused.
 7. Two admins revoking each other at once leave one admin.
 8. A failed namespace creation stores none of its three items.
 9. A new relation gets its `parent` fact in the same unit of work as the version that declares it.
 10. An auditor reads every namespace's document and the facts under every relation, and every write by an auditor who holds no other role is refused.
-11. A role granted to a team reaches its members, including members of teams nested inside it, and a team's owner can change its members without holding any other role.
+11. A role granted to a group reaches its members, including members of groups nested inside it, and a group's owner can change its members without holding any other role.
 
 ## Open
 
