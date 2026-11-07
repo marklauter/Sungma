@@ -1,7 +1,7 @@
 ---
 title: Rauthy brokers identity
 type: note
-summary: Every SaaS needs an identity provider, so a Sungma deployment ships Rauthy as its one issuer; Rauthy federates the organization's own providers, and Sungma keeps only a subject and what its UI shows.
+summary: Every SaaS needs an identity provider, so a Sungma deployment ships Rauthy as its one issuer; Rauthy federates the organization's own providers, and Sungma keeps only an identity and what its UI shows.
 status: evolving
 cites:
   - "[[sungma-is-single-tenant]]"
@@ -21,7 +21,7 @@ This changes one line of [[sungma-is-single-tenant]]: Sungma no longer leaves th
 
 Sungma keeps no user store of its own beyond:
 
-- **The subject:** Rauthy's `sub`, an opaque, stable user ID. Tuples name subjects by it.
+- **The identity:** Rauthy's `sub`, an opaque, stable user ID. Facts name people by it.
 - **A display projection:** name and email for Author, a cache fed by SCIM, never a source of truth.
 
 ## Why Rauthy
@@ -47,11 +47,11 @@ Single tenancy removes Rauthy's biggest gap. Rauthy has no realms, and Sungma ne
 
 ### Users and groups reach Sungma through SCIM
 
-Sungma implements a SCIM v2 endpoint, and Rauthy pushes user and group changes to it. Sungma learns about users and groups only through this endpoint. It doesn't read them from Rauthy's API, so it stays independent of the IdP, and development uses the same path as production. Rauthy's admin API is for seeding test users, not for feeding Sungma. The endpoint is the anti-corruption layer: it turns SCIM resources into tuples such as `group:eng#member@user:<sub>` and refreshes the display projection.
+Sungma implements a SCIM v2 endpoint, and Rauthy pushes user and group changes to it. Sungma learns about users and groups only through this endpoint. It doesn't read them from Rauthy's API, so it stays independent of the IdP, and development uses the same path as production. Rauthy's admin API is for seeding test users, not for feeding Sungma. The endpoint is the anti-corruption layer: it turns SCIM resources into facts such as `group:eng#member@<sub>` and refreshes the display projection.
 
 Rauthy's event stream doesn't carry group or role changes. Its events cover security and operations: invalid logins, brute force, new users, email changes, password resets, JWKS rotation and health. Sungma may subscribe for side signals, such as ending sessions after `UserPasswordReset`. The stream is SSE without a documented resume cursor, so a consumer reconnects and fills gaps from `/auth/v1/events`.
 
-Watch is separate. It streams Sungma's own tuple changelog, ordered by its timeline, and never depends on Rauthy's delivery.
+Watch is separate. It streams Sungma's own changelog of facts, ordered by its timeline, and never depends on Rauthy's delivery.
 
 In development, Rauthy runs in a container, so the SCIM base URL has to name the host as the container sees it, such as `host.containers.internal`. `localhost` would point back at Rauthy's own container.
 
@@ -63,7 +63,7 @@ Rauthy holds the same shape with cardinality one: `auth_provider_id` and `federa
 
 - A login from a second provider with the same email is refused, or with `auto_link` it moves the binding. It doesn't add a second identity.
 - `auto_link` is on only for a provider authoritative for the email's domain, such as the organization's corporate provider. It's never on for social providers.
-- People with different emails are different subjects. Sungma doesn't merge them. If merging is ever wanted, it's a relation in Sungma, such as `user:a#same_as@user:b`, which is auditable and reversible.
+- People with different emails are different identities. Sungma doesn't merge them. If merging is ever wanted, it's a fact in Sungma, which is auditable and reversible.
 
 ### High availability
 

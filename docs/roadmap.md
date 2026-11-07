@@ -18,7 +18,7 @@ Done means built, tested to the coverage floor and merged. It doesn't mean produ
 14. Error kinds: every domain error carries a kind, such as validation, not found, gone, conflict or unavailable, and a stable code, such as `fact.undeclared_relation`. Each transport maps kinds to its own status codes in one table.
 15. Authentication and authorization of Sungma's own callers.
 16. Identity provider: a deployment ships Rauthy as its one issuer, and any OIDC provider can replace it.
-17. SCIM endpoint: users first, which give Author names and emails, then groups as `member` facts in a namespace the sync owns.
+17. SCIM endpoint: users first, which give Author names and emails, then group memberships as `member` facts in a namespace the sync owns.
 18. Distributed storage adapter.
 19. Multi-region deployment with snapshot reads from local replicas.
 20. Garbage collection of fact history past a retention window.
