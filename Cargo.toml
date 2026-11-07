@@ -36,6 +36,7 @@ sungma-names = { version = "0.1.0", path = "crates/sungma-names" }
 sungma-write = { version = "0.1.0", path = "crates/sungma-write" }
 thiserror = "2.0.21"
 tokio = "1.53.2"
+toml_edit = { version = "0.25.17", default-features = false, features = ["parse"] }
 tower = "0.5.3"
 webpki-roots = "1.0.9"
 

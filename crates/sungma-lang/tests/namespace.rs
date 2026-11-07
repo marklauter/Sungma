@@ -1304,3 +1304,506 @@ fn the_relation_limit_counts_distinct_relations() {
         ErrorKind::Namespace(NamespaceError::DuplicateRelation(_))
     ));
 }
+
+// The TOML form.
+
+fn parsed_toml(toml: &str) -> NamespaceDocument {
+    namespace::parse_toml(toml).unwrap_or_else(|errors| panic!("refused: {errors:?}"))
+}
+
+/// The one error a TOML document is refused with.
+fn only_toml(toml: &str) -> DocumentError {
+    match namespace::parse_toml(toml) {
+        Err(mut errors) => {
+            assert_eq!(errors.len(), 1, "{toml}: {errors:?}");
+            errors.remove(0)
+        }
+        Ok(document) => panic!("accepted {toml}: {document:?}"),
+    }
+}
+
+/// A document's relations, sorted by name, so documents in either form
+/// compare by what they declare.
+fn sorted(document: &NamespaceDocument) -> Vec<(RelationName, Rewrite<RelationName>)> {
+    let mut relations = listed(document);
+    relations.sort_by(|(one, _), (other, _)| one.cmp(other));
+    relations
+}
+
+/// The spec's TOML sample, in its order rather than the printer's.
+const TOML_SAMPLE: &str = r#"[file]
+owner = "this"
+parent = "this"
+editor = "this | owner"
+viewer = "(this | editor | (parent, viewer)) ! banned"
+auditor = "this & viewer"
+banned = "this"
+"#;
+
+/// The sample as the TOML printer writes it.
+const TOML_FILE: &str = r#"[file]
+auditor = "this & viewer"
+banned = "this"
+editor = "this | owner"
+owner = "this"
+parent = "this"
+viewer = "(this | editor | (parent, viewer)) ! banned"
+"#;
+
+/// A TOML namespace `t` of relations `r0`, `r1` and on, each mapped by
+/// `expression`.
+fn toml_namespace_of(count: usize, expression: impl Fn(usize) -> String) -> String {
+    let relations: String = (0..count)
+        .map(|i| format!("r{i} = \"{}\"\n", expression(i)))
+        .collect();
+    format!("[t]\n{relations}")
+}
+
+#[test]
+fn the_toml_sample_parses_to_the_json_sample() {
+    let toml = parsed_toml(TOML_SAMPLE);
+    let json = parsed(include_str!(
+        "../../sungma/tests/fixtures/namespaces/file.json"
+    ));
+    assert_eq!(toml.namespace, json.namespace);
+    assert_eq!(sorted(&toml), sorted(&json));
+    let names: Vec<_> = listed(&toml).into_iter().map(|(name, _)| name).collect();
+    let order = ["owner", "parent", "editor", "viewer", "auditor", "banned"];
+    assert_eq!(names, order.map(relation));
+}
+
+#[test]
+fn a_toml_document_declares_exactly_one_table() {
+    for toml in ["", "# a comment\n", "\n\n"] {
+        assert!(
+            matches!(only_toml(toml).kind, ErrorKind::NoNamespace),
+            "{toml:?}"
+        );
+    }
+    for toml in [
+        "[a]\n[b]\n",
+        "[a]\nr = \"this\"\n[b]\nr = \"this\"\n",
+        "a = \"this\"\n[t]\n",
+        "[a.b]\n[c]\n",
+    ] {
+        assert!(
+            matches!(only_toml(toml).kind, ErrorKind::ManyNamespaces(2)),
+            "{toml:?}"
+        );
+    }
+    for toml in [
+        "t = \"this\"\n",
+        "t = 1\n",
+        "t = { a = \"this\" }\n",
+        "t.a = \"this\"\n",
+        "[[t]]\na = \"this\"\n",
+    ] {
+        let error = only_toml(toml);
+        assert!(
+            matches!(&error.kind, ErrorKind::NotATable(name) if name == "t"),
+            "{toml:?}: {error}"
+        );
+    }
+}
+
+#[test]
+fn a_toml_header_without_keys_is_a_namespace_without_relations() {
+    let document = parsed_toml("[t]\n");
+    assert_eq!(document.namespace, t());
+    assert!(listed(&document).is_empty());
+}
+
+#[test]
+fn a_toml_relation_maps_to_a_non_empty_string() {
+    for value in [
+        "true",
+        "1",
+        "-1",
+        "1.5",
+        "inf",
+        "1979-05-27",
+        "1979-05-27T07:32:00Z",
+        "07:32:00",
+        "[]",
+        r#"["this"]"#,
+        "{}",
+        r#"{ a = "this" }"#,
+        r#""""#,
+        "''",
+        r#""""""""#,
+    ] {
+        let error = only_toml(&format!("[t]\nr = {value}\n"));
+        assert_eq!(error.relation.as_deref(), Some("r"), "{value}");
+        assert!(matches!(error.kind, ErrorKind::NotAnExpression), "{value}");
+    }
+    for toml in [
+        "[t]\nr.a = \"this\"\n",
+        "[t]\n[t.r]\na = \"this\"\n",
+        "[t]\n[[t.r]]\n",
+    ] {
+        let error = only_toml(toml);
+        assert_eq!(error.relation.as_deref(), Some("r"), "{toml:?}");
+        assert!(matches!(error.kind, ErrorKind::NotAnExpression), "{toml:?}");
+    }
+}
+
+#[test]
+fn every_kind_of_toml_string_parses() {
+    let union = Union(nonempty![This, name("a")]);
+    for value in [
+        r#""this | a""#,
+        "'this | a'",
+        "\"\"\"this | a\"\"\"",
+        "\"\"\"\nthis |\n  a\"\"\"",
+        "'''this | a'''",
+        "'''\nthis |\r\n  a\n'''",
+    ] {
+        let document = parsed_toml(&format!("[t]\na = \"this\"\nr = {value}\n"));
+        assert_eq!(listed(&document)[1].1, union, "{value}");
+    }
+}
+
+#[test]
+fn toml_escapes_are_refused() {
+    let backslash = char::from(92);
+    for (toml, relation) in [
+        (format!("[t]\nr = \"this{backslash}t\"\n"), Some("r")),
+        (format!("[t]\nr = \"{backslash}u0074his\"\n"), Some("r")),
+        (
+            format!("[t]\nr = \"\"\"this{backslash}n\"\"\"\n"),
+            Some("r"),
+        ),
+        // The line-ending backslash of a multi-line basic string is an
+        // escape too, though it decodes to no character.
+        (
+            format!("[t]\nr = \"\"\"this {backslash}\n  \"\"\"\n"),
+            Some("r"),
+        ),
+        (format!("[t]\n\"{backslash}u0072\" = \"this\"\n"), Some("r")),
+        (format!("[\"{backslash}u0074\"]\nr = \"this\"\n"), None),
+    ] {
+        let error = only_toml(&toml);
+        assert!(matches!(error.kind, ErrorKind::TomlEscape(_)), "{toml}");
+        assert_eq!(error.relation.as_deref(), relation, "{toml}");
+    }
+    // A literal string holds no escapes: its backslash is a character,
+    // which no expression holds.
+    let error = only_toml(&format!("[t]\nr = 'this {backslash} this'\n"));
+    assert_eq!(error.column, Some(6));
+    assert!(
+        matches!(&error.kind, ErrorKind::Syntax { found, .. } if *found == format!("'{backslash}'")),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_toml_escape_error_quotes_the_decoded_text_escaped() {
+    let backslash = char::from(92);
+    let error = only_toml(&format!("[t]\n\"a{backslash}u202eb\" = \"this\"\n"));
+    let message = error.to_string();
+    assert!(
+        !message.contains(char::from_u32(0x202e).unwrap()),
+        "{message}"
+    );
+    assert!(message.contains("u{202e}"), "{message}");
+    assert!(message.ends_with("contains a TOML escape"), "{message}");
+}
+
+#[test]
+fn a_dotted_toml_namespace_name_is_quoted() {
+    let document = parsed_toml("[\"drive.file\"]\nowner = \"this\"\n");
+    assert_eq!(document.namespace.as_str(), "drive.file");
+    let document = parsed_toml("['drive.file']\nowner = \"this\"\n");
+    assert_eq!(document.namespace.as_str(), "drive.file");
+    let error = only_toml("[drive.file]\nowner = \"this\"\n");
+    assert!(
+        matches!(&error.kind, ErrorKind::NotATable(name) if name == "drive"),
+        "{error}"
+    );
+}
+
+#[test]
+fn toml_comments_change_nothing() {
+    let commented = r#"# The file namespace.
+[file] # files sit in folders
+# Direct facts.
+owner = "this" # an owner
+parent = "this"
+
+editor = "this | owner"
+viewer = """
+(this | editor | (parent, viewer)) ! banned""" # not # in the string
+auditor = "this & viewer"
+banned = "this"
+# The end.
+"#;
+    let document = parsed_toml(commented);
+    let plain = parsed_toml(TOML_SAMPLE);
+    assert_eq!(document.namespace, plain.namespace);
+    assert_eq!(listed(&document), listed(&plain));
+}
+
+#[test]
+fn a_toml_key_or_header_written_twice_is_refused_by_toml() {
+    for toml in [
+        "[t]\na = \"this\"\na = \"this\"\n",
+        "[t]\na = \"this\"\n[t]\nb = \"this\"\n",
+        "[t]\na = \"this\"\n'a' = \"this\"\n",
+    ] {
+        let error = only_toml(toml);
+        assert!(
+            matches!(error.kind, ErrorKind::Toml { .. }),
+            "{toml:?}: {error}"
+        );
+        assert_eq!(error.relation, None);
+    }
+}
+
+#[test]
+fn a_document_that_is_not_toml_has_the_library_error() {
+    let error = only_toml("[t]\nab = this\n");
+    let ErrorKind::Toml {
+        message,
+        line,
+        column,
+    } = &error.kind
+    else {
+        panic!("expected a TOML error, got {error}");
+    };
+    assert_eq!((*line, *column), (2, 6));
+    assert_eq!(error.relation, None);
+    assert_eq!(error.to_string(), format!("{message} at line 2 column 6"));
+    // The column counts characters, and the document's line isn't quoted.
+    let error = only_toml("[t]\n\"é\" = \"this\" x\n");
+    assert!(
+        error.to_string().ends_with(" at line 2 column 14"),
+        "{error}"
+    );
+    assert!(!error.to_string().contains('é'), "{error}");
+    let error = only_toml("[");
+    assert!(
+        error.to_string().ends_with(" at line 1 column 2"),
+        "{error}"
+    );
+}
+
+#[test]
+fn each_limit_holds_in_toml_as_in_json() {
+    let namespace = |bytes: usize| "n".repeat(bytes);
+    let relation = |bytes: usize| "r".repeat(bytes);
+    parsed_toml(&format!(
+        "[{}]\n{} = \"this\"\n",
+        namespace(MAX_NAMESPACE_BYTES),
+        relation(MAX_RELATION_BYTES)
+    ));
+    for (toml, max) in [
+        (
+            format!("[t]\n{} = \"this\"\n", relation(MAX_RELATION_BYTES + 1)),
+            MAX_RELATION_BYTES,
+        ),
+        (
+            format!("[{}]\na = \"this\"\n", namespace(MAX_NAMESPACE_BYTES + 1)),
+            MAX_NAMESPACE_BYTES,
+        ),
+    ] {
+        assert!(
+            matches!(only_toml(&toml).kind, ErrorKind::Name(NameError::TooLong(_, at)) if at == max),
+            "{toml}"
+        );
+    }
+    let dotted = format!("{}.{}", "a".repeat(127), "b".repeat(128));
+    parsed_toml(&format!("[\"{dotted}\"]\na = \"this\"\n"));
+
+    let expression = |bytes: usize| format!("[t]\nr = \"this{}\"\n", " ".repeat(bytes - 4));
+    assert_eq!(
+        listed(&parsed_toml(&expression(MAX_EXPRESSION_BYTES)))[0].1,
+        This
+    );
+    assert!(matches!(
+        only_toml(&expression(MAX_EXPRESSION_BYTES + 1)).kind,
+        ErrorKind::ExpressionTooLong
+    ));
+
+    let relations = |count| toml_namespace_of(count, |_| "this".to_owned());
+    assert_eq!(
+        listed(&parsed_toml(&relations(MAX_RELATIONS))).len(),
+        MAX_RELATIONS
+    );
+    assert!(matches!(
+        only_toml(&relations(MAX_RELATIONS + 1)).kind,
+        ErrorKind::TooManyRelations(501)
+    ));
+
+    let document = |bytes: usize| {
+        let document = "[t]\na = \"this\"\n";
+        format!("{document}{}", " ".repeat(bytes - document.len()))
+    };
+    parsed_toml(&document(MAX_DOCUMENT_BYTES));
+    assert!(matches!(
+        only_toml(&document(MAX_DOCUMENT_BYTES + 1)).kind,
+        ErrorKind::TooLarge
+    ));
+}
+
+#[test]
+fn toml_errors_are_reported_in_document_order() {
+    let errors = namespace::parse_toml(
+        "[t]\nz = \"b |\"\nb = \"missing\"\nThis = \"this\"\nd = \"e\"\ne = \"d\"\na = 1\n",
+    )
+    .expect_err("a refused document");
+    let found: Vec<_> = errors
+        .iter()
+        .map(|error| (error.relation.as_deref().unwrap(), error.column))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("z", Some(4)),
+            ("b", None),
+            ("This", None),
+            ("d", None),
+            ("a", None)
+        ]
+    );
+}
+
+#[test]
+fn far_more_toml_relations_than_the_limit_are_refused() {
+    let many = toml_namespace_of(200_000, |_| "this".to_owned());
+    assert!(many.len() <= MAX_DOCUMENT_BYTES);
+    assert!(matches!(
+        only_toml(&many).kind,
+        ErrorKind::TooManyRelations(200_000)
+    ));
+}
+
+#[test]
+fn a_toml_byte_order_mark_is_refused() {
+    let bom = char::from_u32(0xFEFF).unwrap();
+    let error = only_toml(&format!("{bom}[t]\na = \"this\"\n"));
+    assert!(matches!(error.kind, ErrorKind::ByteOrderMark), "{error}");
+}
+
+#[test]
+fn toml_text_is_checked_like_json_text() {
+    let nul = format!("[t]\na = \"this{}\"\n", char::from(0));
+    assert!(matches!(only_toml(&nul).kind, ErrorKind::Toml { .. }));
+    let nested = format!("[t]\na = {}1{}\n", "[".repeat(10_000), "]".repeat(10_000));
+    assert!(matches!(only_toml(&nested).kind, ErrorKind::Toml { .. }));
+    let error = only_toml("[t]\na = \"a | \u{202e}\"\n");
+    assert_eq!(error.column, Some(5));
+    assert!(error.to_string().contains("u{202e}"), "{error}");
+}
+
+#[test]
+fn the_toml_printer_writes_the_canonical_form() {
+    let document = parsed_toml(TOML_SAMPLE);
+    assert_eq!(
+        namespace::print_toml(&document.namespace, &document.relations),
+        Ok(TOML_FILE.to_owned())
+    );
+    assert_eq!(
+        namespace::print_toml(&t(), &checked(&[])),
+        Ok("[t]\n".to_owned())
+    );
+    let dotted = NamespaceName::new_unchecked("drive.file");
+    assert_eq!(
+        namespace::print_toml(&dotted, &checked(&[("owner", This)])),
+        Ok("[\"drive.file\"]\nowner = \"this\"\n".to_owned())
+    );
+}
+
+#[test]
+fn the_toml_printer_refuses_caller_defects() {
+    let one = checked(&[("r", Union(nonempty![This]))]);
+    assert_eq!(
+        namespace::print_toml(&t(), &one),
+        Err(PrintError::OneOperand)
+    );
+    let unchecked = checked(&[("this", This)]);
+    assert!(matches!(
+        namespace::print_toml(&t(), &unchecked),
+        Err(PrintError::Name(_))
+    ));
+    let namespace = NamespaceName::new_unchecked("t.");
+    assert!(matches!(
+        namespace::print_toml(&namespace, &checked(&[("r", This)])),
+        Err(PrintError::Name(_))
+    ));
+}
+
+/// The namespaces the cross-form round trip names: plain and dotted.
+const NAMESPACES: [&str; 2] = ["t", "drive.file"];
+
+proptest! {
+    /// A namespace printed in either form parses back equal from that form,
+    /// prints the same text again, and equals the namespace the other form's
+    /// printing parses to.
+    #[test]
+    fn a_namespace_round_trips_through_either_form(
+        relations in namespace(),
+        at in 0..NAMESPACES.len(),
+    ) {
+        let name = NamespaceName::new_unchecked(NAMESPACES[at]);
+        let checked = Namespace::new(relations.clone()).expect("a valid namespace");
+        let toml = namespace::print_toml(&name, &checked).expect("a printable namespace");
+        let json = namespace::print(&name, &checked).expect("a printable namespace");
+        let from_toml = namespace::parse_toml(&toml)
+            .map_err(|errors| TestCaseError::fail(format!("{toml}\n{errors:?}")))?;
+        let from_json = namespace::parse(&json)
+            .map_err(|errors| TestCaseError::fail(format!("{json}\n{errors:?}")))?;
+        prop_assert_eq!(&from_toml.namespace, &name);
+        prop_assert_eq!(listed(&from_toml), relations);
+        prop_assert_eq!(&from_json.namespace, &name);
+        prop_assert_eq!(sorted(&from_toml), sorted(&from_json));
+        prop_assert_eq!(
+            namespace::print_toml(&from_toml.namespace, &from_toml.relations),
+            Ok(toml.clone())
+        );
+        prop_assert_eq!(
+            namespace::print_toml(&from_json.namespace, &from_json.relations),
+            Ok(toml)
+        );
+        prop_assert_eq!(
+            namespace::print(&from_toml.namespace, &from_toml.relations),
+            Ok(json)
+        );
+    }
+
+    /// Expression text built from the grammar's tokens either is refused, or
+    /// parses from TOML to a tree that prints and parses back equal.
+    #[test]
+    fn toml_expression_text_parses_print_and_parse_alike(
+        tokens in vec(proptest::sample::select(TOKENS.to_vec()), 1..40),
+    ) {
+        let expression = tokens.concat();
+        let toml = format!("[t]\nr = '{expression}'\nr0 = 'this'\nr1 = 'this'\nr2 = 'this'\n");
+        if let Ok(document) = namespace::parse_toml(&toml) {
+            let text = namespace::print_toml(&t(), &document.relations)
+                .map_err(|error| TestCaseError::fail(error.to_string()))?;
+            let again = namespace::parse_toml(&text)
+                .map_err(|errors| TestCaseError::fail(format!("{text}\n{errors:?}")))?;
+            prop_assert_eq!(listed(&again), sorted(&document));
+            prop_assert_eq!(namespace::print_toml(&t(), &again.relations), Ok(text));
+        }
+    }
+
+    /// The TOML parser never panics, whatever text it is given.
+    #[test]
+    fn any_text_is_parsed_or_refused_as_toml(text in any::<String>()) {
+        let _ = namespace::parse_toml(&text);
+    }
+
+    /// The TOML parser never panics on near-TOML text, or on any expression
+    /// in any kind of string.
+    #[test]
+    fn any_near_toml_is_parsed_or_refused(
+        text in r#"[\[\]"'=\n ,.#{} tThisr0-9_|&!()\\]{0,200}"#,
+        expression in any::<String>(),
+    ) {
+        let _ = namespace::parse_toml(&text);
+        for quote in ["\"", "'", "\"\"\"", "'''"] {
+            let _ = namespace::parse_toml(&format!("[t]\nr = {quote}{expression}{quote}\n"));
+        }
+    }
+}
