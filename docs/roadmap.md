@@ -12,21 +12,22 @@ Done means built, tested to the coverage floor and merged. It doesn't mean produ
 8. Write service: atomic batches with conditional writes.
 9. Expand service.
 10. Watch service: a changelog stream with heartbeat zookies.
-11. Namespace documents: the JSON form of a namespace, with its rewrite grammar, parser and printer (done).
-12. Versioned namespaces (done) and a namespace write service.
-13. HTTP and gRPC transports for each service.
-14. Error kinds: every domain error carries a kind, such as validation, not found, gone, conflict or unavailable, and a stable code, such as `fact.undeclared_relation`. Each transport maps kinds to its own status codes in one table.
-15. Authentication and authorization of Sungma's own callers.
-16. Rate limiting: each caller gets a request budget per service, and a caller over its budget is refused until the budget refills.
-17. Distributed storage adapter.
-18. Multi-region deployment with snapshot reads from local replicas.
-19. Garbage collection of fact history past a retention window.
-20. Check result caching.
-21. Index for large and deeply nested groups.
-22. Snapshot dumps for offline processing.
-23. Metrics, tracing and latency objectives.
-24. Client SDKs.
-25. Opaque zookies.
+11. Namespace documents: the JSON and TOML forms of a namespace, with its rewrite grammar, parser and printer (done).
+12. Accepted subjects: each relation declares the subjects its facts may bind, and namespace writes and fact writes check against them.
+13. Versioned namespaces (done) and a namespace write service.
+14. HTTP and gRPC transports for each service.
+15. Error kinds: every domain error carries a kind, such as validation, not found, gone, conflict or unavailable, and a stable code, such as `fact.undeclared_relation`. Each transport maps kinds to its own status codes in one table.
+16. Authentication and authorization of Sungma's own callers.
+17. Rate limiting: each caller gets a request budget per service, and a caller over its budget is refused until the budget refills.
+18. Distributed storage adapter.
+19. Multi-region deployment with snapshot reads from local replicas.
+20. Garbage collection of fact history past a retention window.
+21. Check result caching.
+22. Index for large and deeply nested groups.
+23. Snapshot dumps for offline processing.
+24. Metrics, tracing and latency objectives.
+25. Client SDKs.
+26. Opaque zookies.
 
 ## Deferred
 
