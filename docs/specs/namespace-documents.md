@@ -24,7 +24,7 @@ A caller names the form with the request's content type: `application/json` or `
 
 ## The name
 
-The namespaces that model one domain together form a [[theory]], in the logician's sense: a set of sentences that, together with the [[fact]]s, settles every question it can be asked. Here the sentences are rewrites, and each question asks whether a subject is a member of a [[subjectset]]. The rules in [Checks](#checks) exist to keep that true, so a theory and its facts give exactly one answer to each question.
+The namespaces that model one domain together form a [[theory]], in the logician's sense: a set of sentences that, together with the [[fact]]s, settles every question it can be asked. Here the sentences are rewrites, and each question asks whether a [[subject]] is in the [[closure]] of a [[subjectset]]. The rules in [Checks](#checks) exist to keep that true, so a theory and its facts give exactly one answer to each question.
 
 ## Sample
 
@@ -58,8 +58,8 @@ banned = "this"
 ## JSON form
 
 - A document is one JSON object with exactly one key, the namespace's name. Its value is an object mapping the namespace's relation names to their expressions.
-- Every expression is a string. A relation that takes only the facts bound to it is written `"owner": "this"`. A relation whose value is anything other than a non-empty string, such as `null`, `""`, a number or an object, is refused.
-- A namespace without relations is written `{}`. It names a kind of resource that is only ever a subject, `namespace:id`, of facts in other namespaces, as a `user` type does in other ReBAC models. Any other value for the namespace, such as `null` or `[]`, is refused.
+- Every expression is a string. A relation defined by its facts alone is written `"owner": "this"`. A relation whose value is anything other than a non-empty string, such as `null`, `""`, a number or an object, is refused.
+- A namespace without relations is written `{}`. It names a kind of [[resource]] that is only ever a subject, `namespace:id`, of facts in other namespaces, as a `user` type does in other ReBAC models. Any other value for the namespace, such as `null` or `[]`, is refused.
 - A document declares exactly one namespace. An empty document or `{}` declares nothing, and an object with two or more keys declares more than one, so both are refused as parse errors. An API that takes a document answers either as a bad request.
 - An object with the same key twice is refused, including a relation named twice. JSON leaves duplicate keys to the reader, and a reader that keeps the last one would hide a mistake.
 - Key order carries no meaning.
@@ -68,15 +68,15 @@ banned = "this"
 
 ## TOML form
 
-- A document is one TOML table. Its header is the namespace's name, and each key in it is a relation, whose value is the relation's expression.
+- A document is one TOML table. Its header is the namespace's name, and each key in it names a relation and holds its expression.
 - A dotted namespace name is quoted, as in `["drive.file"]`. TOML reads an unquoted dot as a nested table.
-- Every expression is a non-empty string. A relation that takes only the facts bound to it is written `owner = "this"`. Any other value, such as `true`, a number, an array or a nested table like `a.b = "x"`, is refused.
-- An expression may be any TOML string: basic `"…"`, literal `'…'`, or multi-line, for a rewrite that wraps. Strings hold no escapes, as in the JSON form, and a string with one is refused.
+- Every expression is a non-empty string. A relation defined by its facts alone is written `owner = "this"`. Any other value, such as `true`, a number, an array or a nested table like `a.b = "x"`, is refused.
+- An expression may be any TOML string: basic `"…"`, literal `'…'`, or multi-line when it wraps. Strings hold no escapes, as in the JSON form, and a string with one is refused.
 - A namespace without relations is a header with no keys.
 - A document declares exactly one namespace. An empty document, or one with two or more tables, is refused.
-- TOML refuses a key written twice, including a relation named twice.
-- Comments are allowed. They aren't kept, since Sungma stores the namespace, not the text that declared it.
-- A document is TOML 1.0, and carries no grammar version, as in the JSON form.
+- A relation named twice, or a table header written twice, is refused. TOML itself refuses both.
+- Comments are allowed. They aren't kept, because Sungma stores the namespace as the printer's JSON form.
+- A document is TOML 1.0. Like the JSON form, it carries no grammar version.
 
 ## Limits
 
@@ -93,7 +93,7 @@ The rewrite depth limit is under [Checks](#checks).
 
 ## Names
 
-A relation name is one name. A namespace name is one or more names joined by dots, such as `file` or `drive.file`; the dots carry no meaning. A namespace name is also the namespace part of a [[resource]] name, as `file` is in `file:design.md`. The grammars in this spec are EBNF: `::=` defines, `|` alternates, `{ }` repeats zero or more times, quoted text is literal, and `'x'…'y'` is an inclusive character range.
+A relation name is one name. A namespace name is one or more names joined by dots, such as `file` or `drive.file`; the dots carry no meaning. A namespace name is also the namespace part of a resource name, as `file` is in `file:design.md`. The grammars in this spec are EBNF: `::=` defines, `|` alternates, `{ }` repeats zero or more times, quoted text is literal, and `'x'…'y'` is an inclusive character range.
 
 ```ebnf
 ⟨namespace name⟩   ::= ⟨name⟩ { '.' ⟨name⟩ }
@@ -151,7 +151,7 @@ The following rules apply on top of the grammar:
 
 ## Meaning
 
-A relation's rewrite defines the [[closure]] of each [[subjectset]] formed from that relation. Each term contributes a set of [[subject]]s, taken for the subjectset in hand:
+A relation's rewrite defines the closure of each [[subjectset]] formed from that relation. Each term contributes a set of subjects, taken for the subjectset in hand:
 
 - `this` is the subjects the [[fact]]s bind to the subjectset.
 - A computed subjectset is the closure of the subjectset formed from the same resource and the named relation.
@@ -165,7 +165,7 @@ A namespace is checked whole when it is declared, and is refused if any of the f
 
 - A relation is declared twice.
 - A rewrite nests more than 100 levels deep. A leaf is one level, a run of `|` or `&` is one level however many operands it has, and each `!` adds a level. Grouping parentheses nested more than 100 deep are also refused, before the tree is built.
-- A computed subjectset, or the factset of a fact-to-subjectset, names a relation the namespace doesn't declare. The computed relation of a fact-to-subjectset belongs to the namespace of the resource each fact binds, so it isn't checked.
+- A computed subjectset, or the factset of a fact-to-subjectset, names a relation the namespace doesn't declare. The computed relation of a fact-to-subjectset belongs to the namespace of each fact's subject, so it isn't checked.
 - Computed subjectsets form a cycle, such as `"viewer": "editor"` with `"editor": "viewer"`, or `"viewer": "this ! viewer"`. A cycle through a fact-to-subjectset, such as folders inside folders, reads a fact at each step and is allowed.
 
 ## Errors
@@ -188,7 +188,7 @@ An error that quotes the document quotes at most 64 bytes of it, cut at a charac
 
 ## Printing
 
-The printer writes a document, in either form, that the parser reads back as an equal namespace. Sungma stores the JSON form, and Author shows the TOML form.
+The printer writes a document, in either form, that the parser reads back as an equal namespace. Sungma stores the JSON form, and Author, Sungma's UI, shows the TOML form.
 
 - In JSON, every relation prints as `"name": "expression"`, including `"name": "this"`, and a namespace without relations prints as `"name": {}`.
 - In TOML, every relation prints as `name = "expression"`, including `name = "this"`, and a namespace without relations prints as its header alone. A dotted namespace name prints quoted.
@@ -230,7 +230,7 @@ The cases each class covers, at minimum.
 3. A namespace without relations, `{}`, parses. A namespace whose value isn't an object is refused.
 4. A relation's value is a non-empty string. `null`, `""`, numbers, arrays and objects are refused.
 5. A relation named twice is one error.
-6. Text that isn't JSON is refused with the JSON library's error.
+6. Text that isn't valid JSON or TOML is refused with its library's error.
 7. JSON escapes are handled as the [JSON form](#json-form) section says.
 8. The TOML sample parses to the same namespace as the JSON sample.
 9. A TOML document with no table, two tables, a non-string value or a nested table is refused, and so is a string with an escape. Basic, literal and multi-line strings each parse.
@@ -280,7 +280,7 @@ The cases each class covers, at minimum.
 
 1. The printer writes the canonical form of the sample, and of a namespace without relations, in each form.
 2. The printer adds only the parentheses the grammar needs.
-3. The printer refuses, as a caller defect, a union or intersection with one operand, and a name made with `new_unchecked` that breaks the grammar or is `this`, so it never writes a document that parses differently or isn't JSON.
+3. The printer refuses, as a caller defect, a union or intersection with one operand, and a name made with `new_unchecked` that breaks the grammar or is `this`, so it never writes a document that parses differently or isn't valid in its form.
 
 #### Round trips
 
