@@ -128,7 +128,7 @@ The checks keep today's guard. Without them, a grant could land under a relation
 
 The write's items were stored before, so the commit stays this small however many facts the write carries.
 
-R comes from the revision-clock at commit time, and the writer waits out commit-wait before acknowledging. The revision is chosen at commit, not at the start. So if the head moves while a write is storing its items, nothing is lost: only the commit retries, with a new R. The items stay where they are.
+R comes from the revision-clock at commit time, and the writer waits out commit-wait before acknowledging. The revision is chosen at commit, not at the start. So if the head moves while a write is storing its items, nothing is lost: only the commit retries, with a new R. The items stay where they are. Before each try, the write is authorized again at the new head, as [Sungma's own authorization](../specs/sungma-authorization.md#authorizing-a-write) requires, and its namespace checks are made again. A role revoked by a write that committed in between can't carry it through.
 
 The item limit now applies only to the commit: the head, the status record, and about 98 namespaces judged. It no longer limits how many facts a write carries.
 
