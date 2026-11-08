@@ -246,6 +246,8 @@ The printer writes a document, in either form, that the parser reads back as an 
 
 ## Open
 
+- Whether the TOML form also accepts each relation as a table of its own, such as `["sungma.root".admin]` with `rewrite` and `subjects` on their own lines, and whether the printer writes that layout. It reads better than inline tables once relations carry more than an expression. Today a nested table is refused.
+- Whether a form of Sungma's own, written for people rather than borrowed from JSON or TOML, joins them one day. It would be a third form of the same namespace, parsed to the same thing.
 - When the factset of a fact-to-subjectset accepts a namespace that doesn't exist yet, whether the namespace write is refused or the check waits until that namespace is written. Two namespaces that reach each other can't both be written first.
 - How a request names its document's form. A write carries the document inside a request body, so the form can't come from the request's content type. The endpoints that take documents settle it.
 
