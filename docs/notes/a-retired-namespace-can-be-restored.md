@@ -34,6 +34,12 @@ Sungma's own facts are about a creation of a namespace, not its name, as [[sungm
 
 Facts in other namespaces that point into the restored one come back too, if they record their subject's epoch as the authorization spec proposes. A fact such as `file:secret#viewer@billing:acct-42#member` recorded the old epoch, so it counts again once that epoch is back.
 
+## Restoring facts
+
+The same history undoes a mistake in facts. A retired fact keeps its span, closed at the revision that retired it. To bring back facts retired by mistake, such as a bulk retire, Sungma reads them as they stood at a revision before the mistake and writes them again. The restored facts open new spans, so the history keeps both the mistake and its undoing.
+
+Undo is the guard against mistakes, rather than asking people to confirm destructive actions or splitting adding facts from retiring them.
+
 ## Who may restore
 
 The namespace's owners, or admins, with a recent sign-in as [[privileged-roles-need-a-recent-sign-in]] describes. Restoring brings back every old grant on purpose, so it's privileged, like retiring.

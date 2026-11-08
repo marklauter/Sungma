@@ -16,7 +16,7 @@ Done means built, tested to the coverage floor and merged. It doesn't mean produ
 12. Accepted subjects: each relation declares the subjects its facts may bind, and namespace writes and fact writes check against them.
 13. Conditions: a relation may declare a condition, an expression over named parameters, and a fact may carry it with some parameters filled in. A check supplies the rest as context, and answers allowed, denied, or conditional when context is missing. Uses include time windows such as building access from 7am to 8pm, elevation by requiring a recent `auth_time` for privileged relations, and grants that expire at a set time.
 14. Versioned namespaces (done) and a namespace write service.
-15. Restoring namespaces and relations: bring back a retired namespace, or a relation a version dropped, with its old epochs, so its facts count again without restoring the database. See [A retired namespace can be restored](notes/a-retired-namespace-can-be-restored.md).
+15. Restoring namespaces, relations and facts: bring back a retired namespace, or a relation a version dropped, with its old epochs, so its facts count again without restoring the database. Bring back facts retired by mistake, such as a bulk retire, by writing again the facts that counted at an earlier revision. See [A retired namespace can be restored](notes/a-retired-namespace-can-be-restored.md).
 16. HTTP and gRPC transports for each service.
 17. Error kinds: every domain error carries a kind, such as validation, not found, gone, conflict or unavailable, and a stable code, such as `fact.undeclared_relation`. Each transport maps kinds to its own status codes in one table.
 18. Authentication and authorization of Sungma's own callers.
