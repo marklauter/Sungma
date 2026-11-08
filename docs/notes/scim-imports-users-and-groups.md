@@ -21,6 +21,14 @@ Sungma implements a SCIM v2 endpoint, and its identity provider pushes user and 
 
 A fact that names an imported group's members, such as `sungma.namespace:billing#reader@sungma.group:<group>#member`, then reaches each member, as it does for any group.
 
+## Imported groups
+
+- **SCIM is an ordinary caller.** The SCIM endpoint authenticates as a client of its own and writes through Write's policies, as [[sungma-authorization]] describes. It holds `group_creator`, so it can create groups. Creating a group writes an `owner` fact for its creator, so it owns each group it imports, and `member` is written by a group's owners, so it writes the members. The model decides all of this, with no special code.
+- **The nesting rules apply.** A member fact that would form a cycle, or nest deeper or wider than the deployment's limits, is refused like any other. The import records each refusal, so it can be fixed in the identity provider.
+- **An imported group is named by its source and its SCIM `id`:** `scim/<source>/<id>`, such as `scim/entra/8f3a9c`. The `id` never changes, while the `displayName` can, so renaming a group in the identity provider changes nothing in Sungma. Author shows the display name. A group deleted and created again in the identity provider gets a new `id`, so it's a new group in Sungma too.
+- **The source is a short name** set for each SCIM source in the deployment's settings, such as `auth0` or `entra`, not the issuer's URL. It keeps groups from two sources apart, and it doesn't change when the identity provider moves to another host.
+- **Groups made in Author can't collide with imported ones.** No group named in Author may start with `scim/`.
+
 ## Deprovisioning
 
 When the identity provider deletes a person or client, Sungma retires every identity fact whose subject is their `sub`: in customers' namespaces, in Sungma's own namespaces, and their group memberships. A `sub` the identity provider issues again then inherits nothing.
@@ -30,7 +38,5 @@ When the identity provider deletes a person or client, Sungma retires every iden
 
 ## Open
 
-1. How groups are named. A SCIM group's `id` never changes and its `displayName` can, so a resource id taken from the display name would orphan every fact that names the group when it's renamed.
-2. Who creates an imported group and writes its members. The SCIM endpoint would write the group's `parent` and `member` facts, so creating a group wouldn't be for admins alone.
-3. Whether an imported group can be edited in Sungma. The next SCIM push would overwrite a change made in Author, so imported groups may be read-only in Sungma, with their members changed only in the identity provider.
-4. Whether the endpoint maps more than users and groups, such as custom attributes to relations.
+1. Whether an imported group can be edited in Sungma. The next SCIM push would overwrite a change made in Author, so imported groups may be read-only in Sungma, with their members changed only in the identity provider.
+2. Whether the endpoint maps more than users and groups, such as custom attributes to relations.
