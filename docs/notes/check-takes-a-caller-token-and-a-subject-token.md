@@ -21,7 +21,7 @@ Zanzibar trusts every service that calls Check to name the right [[subject]]. A 
 
 Sungma trusts one issuer, and a token's subject is that issuer's `sub` claim, as RFC 7519 defines it. This holds for both tokens, so the caller is the caller token's `sub`. A token without `sub` is refused.
 
-People and clients are both subjects, and Sungma doesn't tell them apart. A client in the client-credentials flow gets roles through the same facts as a person.
+People and clients are both subjects, and Sungma doesn't tell them apart. A client in the client-credentials flow is named in facts the same way as a person.
 
 The issuer is configured so every token it issues carries a `sub` that is stable and unique for each principal. A UPN or an email doesn't qualify: either can change, or pass to someone else, and the facts about the old value would follow. With Rauthy, client-credentials tokens carry `sub` only with `client_credentials_map_sub` turned on.
 

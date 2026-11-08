@@ -26,7 +26,7 @@ The namespaces that model one domain together form a [[theory]], in the logician
 
 ## Sample
 
-The `file` namespace: files sit in folders, and `(parent, viewer)` reads the viewers of the folder a file sits in, under the `folder` namespace. People and clients are each known by an [[identity]], and a group's members can be given a role as `group#member`.
+The `file` namespace: files sit in folders, and `(parent, viewer)` reads the viewers of the folder a file sits in, under the `folder` namespace. People and clients are each known by an [[identity]], and a group's members can be a fact's subject as `group#member`.
 
 ```json
 {
@@ -165,7 +165,7 @@ The following rules apply on top of the grammar:
 
 ## Accepted subjects
 
-A relation whose rewrite reads `this` declares which [[subject]]s its facts may bind. A fact whose subject isn't one of them is refused, so a mistake in the data can't quietly empty a role.
+A relation whose rewrite reads `this` declares which [[subject]]s its facts may bind. A fact whose subject isn't one of them is refused, so a mistake in the data can't quietly empty a closure.
 
 Each entry in `subjects` is one of:
 
