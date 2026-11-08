@@ -57,8 +57,10 @@ namespace: root
   reader: identity, group#member = this | auditor
   writer: identity, group#member = this | admin
   fact_writer: identity, group#member = this | admin
-  fact_reader: identity, group#member = this | fact_writer | auditor
-  directory_reader: identity, group#member = this | auditor
+  fact_reader: identity, group#member
+    = this | fact_writer | auditor
+  directory_reader: identity, group#member
+    = this | auditor
   access_reader = auditor
 
 namespace: namespace
@@ -68,9 +70,12 @@ namespace: namespace
   admin: identity, group#member = this | owner | (parent, admin) ! (protected, admin)
   writer: identity, group#member = this | admin | (parent, writer)
   reader: identity, group#member = this | writer | fact_reader | auditor | (parent, reader)
-  fact_writer: identity, group#member = this | admin | (parent, fact_writer)
-  fact_reader: identity, group#member = this | fact_writer | auditor | (parent, fact_reader)
-  auditor: identity, group#member = this | (parent, auditor)
+  fact_writer: identity, group#member
+    = this | admin | (parent, fact_writer)
+  fact_reader: identity, group#member
+    = this | fact_writer | auditor | (parent, fact_reader)
+  auditor: identity, group#member
+    = this | (parent, auditor)
   access_reader = admin | auditor
 
 namespace: relation
