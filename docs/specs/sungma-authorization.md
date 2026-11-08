@@ -335,6 +335,10 @@ Creating a namespace stores it, the `parent` fact tying it to the deployment, an
 
 A group holds a role for its members. One fact, such as `sungma.namespace:billing#reader@sungma.group:billing-ops#member`, makes every member of `billing-ops` a reader of `billing`. A group's members can include other groups, so membership nests, within the limits [Checks on the data](#checks-on-the-data) sets.
 
+Adding group H to group G is a fact on G, so it needs `owner` on G only. It changes nothing about H, the same way a fact that points into another namespace needs nothing there.
+
+A user, unlike a group, isn't a resource in Sungma. Users are identities, created and deleted upstream, and appear in facts only as subjects.
+
 Creating a group stores its `parent` fact and an `owner` fact for its creator in one unit of work, as creating a namespace does. Admins own every group through `parent`.
 
 ## New relations
