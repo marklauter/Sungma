@@ -74,10 +74,14 @@ subjects = ["identity", "sungma.group#member"]
 rewrite = "this | admin"
 subjects = ["identity", "sungma.group#member"]
 
+["sungma.root".reader]
+rewrite = "this | auditor"
+subjects = ["identity", "sungma.group#member"]
+
 ["sungma.root".access_reader]
 rewrite = "auditor"
 
-# Each namespace: who owns it, who writes its document, who works with all its facts, and who reads those roles
+# Each namespace: who owns it, who writes and reads its document, who works with all its facts, its auditors, and who can see who has access to it
 ["sungma.namespace"]
 
 ["sungma.namespace".parent]
@@ -95,7 +99,7 @@ rewrite = "this | owner"
 subjects = ["identity", "sungma.group#member"]
 
 ["sungma.namespace".reader]
-rewrite = "this | writer | fact_reader | (parent, auditor)"
+rewrite = "this | writer | fact_reader | auditor | (parent, reader)"
 subjects = ["identity", "sungma.group#member"]
 
 ["sungma.namespace".fact_writer]
@@ -103,11 +107,15 @@ rewrite = "this | owner"
 subjects = ["identity", "sungma.group#member"]
 
 ["sungma.namespace".fact_reader]
-rewrite = "this | fact_writer | (parent, auditor)"
+rewrite = "this | fact_writer | auditor"
+subjects = ["identity", "sungma.group#member"]
+
+["sungma.namespace".auditor]
+rewrite = "this | (parent, auditor)"
 subjects = ["identity", "sungma.group#member"]
 
 ["sungma.namespace".access_reader]
-rewrite = "owner | (parent, auditor)"
+rewrite = "owner | auditor"
 
 # Each relation: who writes and reads the facts under it
 ["sungma.relation"]
@@ -145,8 +153,8 @@ Drawn as a graph, each namespace is a node, and each relation's accepted subject
 ```mermaid
 flowchart LR
   relation["<b>sungma.relation</b><br/>parent<br/>writer<br/>reader"]
-  namespace["<b>sungma.namespace</b><br/>parent<br/>protected<br/>owner<br/>writer<br/>reader<br/>fact_writer<br/>fact_reader<br/>access_reader"]
-  root["<b>sungma.root</b><br/>owner<br/>admin<br/>namespace_creator<br/>group_creator<br/>operator<br/>auditor<br/>access_reader"]
+  namespace["<b>sungma.namespace</b><br/>parent<br/>protected<br/>owner<br/>writer<br/>reader<br/>fact_writer<br/>fact_reader<br/>auditor<br/>access_reader"]
+  root["<b>sungma.root</b><br/>owner<br/>admin<br/>namespace_creator<br/>group_creator<br/>operator<br/>auditor<br/>reader<br/>access_reader"]
   group["<b>sungma.group</b><br/>parent<br/>owner<br/>member<br/>access_reader"]
   identity(["identity"])
   relation -- parent --> namespace
@@ -273,6 +281,7 @@ Sungma's own facts are managed through dedicated endpoints, each with its own ha
 | Change a deployment setting | `.Check("admin", "sungma.root:sungma")` | Changes the setting. |
 | Read logs and metrics | `.Check("operator", "sungma.root:sungma")` | Reads them. |
 | Read and replay the audit records of decisions | `.Check("auditor", "sungma.root:sungma")` | Reads and replays them. |
+| Read and replay the audit records of decisions that involve namespace `N` | `.Check("auditor", "sungma.namespace:{N}")` | Reads and replays them for `N` only. Root auditors pass for every namespace, through `parent`. |
 
 Roles on a relation are guarded on the relation's namespace, so `sungma.relation` needs no `owner` of its own. The owners of `billing` add and remove roles on `billing` and on its relations, and on no other namespace.
 
@@ -423,6 +432,7 @@ Some rules need the request's context, which the model doesn't hold. Privileged 
 44. A writer who isn't an owner can't write a version that drops a relation the latest version declares, and an owner can. A writer can write a version that adds a relation or changes a rewrite.
 45. A Sungma release's version of one of Sungma's own namespaces stores no `parent` fact for its relations.
 46. Expanding a relation on one of Sungma's own resources is allowed to a caller in its `access_reader`, and shows holders reached through groups and `parent`, such as an admin owning a namespace. A caller outside `access_reader` is refused.
+47. A namespace's auditor reads its document, its facts and its audit records, and sees who has access to it, but nothing in other namespaces. A root auditor does all of that for every namespace, and a root reader reads every namespace's document.
 
 ## Open
 
