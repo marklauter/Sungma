@@ -4,6 +4,8 @@ type: specification
 summary: "Sungma decides who may change and read its own namespaces and facts with four namespaces of its own: `sungma.root` for the deployment, `sungma.namespace` for each namespace's document, `sungma.relation` for the facts under each relation, and `sungma.group` for groups of subjects. Each endpoint guards itself with one hard-coded check, a relation on a resource built from the route, and the model decides who passes it."
 status: evolving
 cites:
+  - "[[theory-documents]]"
+  - "[[theory]]"
   - "[[reusing-a-resource-id]]"
   - "[[scim-imports-users-and-groups]]"
   - "[[privileged-roles-need-a-recent-sign-in]]"
@@ -47,124 +49,120 @@ Neither implies the other. A namespace's writer can't write its facts unless the
 
 ## The model
 
-```toml
-# The root, one resource, sungma.root:sungma: roles across the whole deployment, which reach every namespace through parent
-["sungma.root"]
+The model is written as a [theory document](../notes/theory-documents.md). `theory = "sungma"` names the shared first segment once, so `root` means `sungma.root`, `group#member` means `sungma.group#member`, and so on. Each namespace is stored under its full name.
 
-["sungma.root".owner]
+```toml
+theory = "sungma"
+
+# The root, one resource, sungma.root:sungma: roles across the whole deployment, which reach every namespace through parent
+[root.owner]
 subjects = ["identity"]
 
-["sungma.root".admin]
+[root.admin]
 rewrite = "this | owner"
 subjects = ["identity"]
 
-["sungma.root".namespace_creator]
+[root.namespace_creator]
 rewrite = "this | admin"
-subjects = ["identity", "sungma.group#member"]
+subjects = ["identity", "group#member"]
 
-["sungma.root".group_creator]
+[root.group_creator]
 rewrite = "this | admin"
-subjects = ["identity", "sungma.group#member"]
+subjects = ["identity", "group#member"]
 
-["sungma.root".operator]
+[root.operator]
 rewrite = "this | admin"
-subjects = ["identity", "sungma.group#member"]
+subjects = ["identity", "group#member"]
 
-["sungma.root".auditor]
+[root.auditor]
 rewrite = "this | admin"
-subjects = ["identity", "sungma.group#member"]
+subjects = ["identity", "group#member"]
 
-["sungma.root".reader]
+[root.reader]
 rewrite = "this | auditor"
-subjects = ["identity", "sungma.group#member"]
+subjects = ["identity", "group#member"]
 
-["sungma.root".writer]
+[root.writer]
 rewrite = "this | admin"
-subjects = ["identity", "sungma.group#member"]
+subjects = ["identity", "group#member"]
 
-["sungma.root".fact_writer]
+[root.fact_writer]
 rewrite = "this | admin"
-subjects = ["identity", "sungma.group#member"]
+subjects = ["identity", "group#member"]
 
-["sungma.root".fact_reader]
+[root.fact_reader]
 rewrite = "this | fact_writer | auditor"
-subjects = ["identity", "sungma.group#member"]
+subjects = ["identity", "group#member"]
 
-["sungma.root".directory_reader]
+[root.directory_reader]
 rewrite = "this | auditor"
-subjects = ["identity", "sungma.group#member"]
+subjects = ["identity", "group#member"]
 
-["sungma.root".access_reader]
+[root.access_reader]
 rewrite = "auditor"
 
 # Each namespace: who owns it and may retire it, who administers it, who writes and reads its document, who works with all its facts, its auditors, and who can see who has access to it
-["sungma.namespace"]
+[namespace.parent]
+subjects = ["root"]
 
-["sungma.namespace".parent]
-subjects = ["sungma.root"]
+[namespace.protected]
+subjects = ["root"]
 
-["sungma.namespace".protected]
-subjects = ["sungma.root"]
-
-["sungma.namespace".owner]
+[namespace.owner]
 rewrite = "this | (parent, owner) ! (protected, owner)"
-subjects = ["identity", "sungma.group#member"]
+subjects = ["identity", "group#member"]
 
-["sungma.namespace".admin]
+[namespace.admin]
 rewrite = "this | owner | (parent, admin) ! (protected, admin)"
-subjects = ["identity", "sungma.group#member"]
+subjects = ["identity", "group#member"]
 
-["sungma.namespace".writer]
+[namespace.writer]
 rewrite = "this | admin | (parent, writer)"
-subjects = ["identity", "sungma.group#member"]
+subjects = ["identity", "group#member"]
 
-["sungma.namespace".reader]
+[namespace.reader]
 rewrite = "this | writer | fact_reader | auditor | (parent, reader)"
-subjects = ["identity", "sungma.group#member"]
+subjects = ["identity", "group#member"]
 
-["sungma.namespace".fact_writer]
+[namespace.fact_writer]
 rewrite = "this | admin | (parent, fact_writer)"
-subjects = ["identity", "sungma.group#member"]
+subjects = ["identity", "group#member"]
 
-["sungma.namespace".fact_reader]
+[namespace.fact_reader]
 rewrite = "this | fact_writer | auditor | (parent, fact_reader)"
-subjects = ["identity", "sungma.group#member"]
+subjects = ["identity", "group#member"]
 
-["sungma.namespace".auditor]
+[namespace.auditor]
 rewrite = "this | (parent, auditor)"
-subjects = ["identity", "sungma.group#member"]
+subjects = ["identity", "group#member"]
 
-["sungma.namespace".access_reader]
+[namespace.access_reader]
 rewrite = "admin | auditor"
 
 # Each relation: who writes and reads the facts under it
-["sungma.relation"]
+[relation.parent]
+subjects = ["namespace"]
 
-["sungma.relation".parent]
-subjects = ["sungma.namespace"]
-
-["sungma.relation".writer]
+[relation.writer]
 rewrite = "this | (parent, fact_writer)"
-subjects = ["identity", "sungma.group#member"]
+subjects = ["identity", "group#member"]
 
-["sungma.relation".reader]
+[relation.reader]
 rewrite = "this | writer | (parent, fact_reader)"
-subjects = ["identity", "sungma.group#member"]
+subjects = ["identity", "group#member"]
 
 # Each group: who owns it, who is in it, and who reads those roles
-["sungma.group"]
+[group.parent]
+subjects = ["root"]
 
-["sungma.group".parent]
-subjects = ["sungma.root"]
-
-["sungma.group".owner]
+[group.owner]
 rewrite = "this | (parent, admin)"
-subjects = ["identity", "sungma.group#member"]
+subjects = ["identity", "group#member"]
 
-["sungma.group".member]
-subjects = ["identity", "sungma.group#member"]
+[group.member]
+subjects = ["identity", "group#member"]
 
-["sungma.group".access_reader]
+[group.access_reader]
 rewrite = "owner | (parent, auditor)"
 ```
 
