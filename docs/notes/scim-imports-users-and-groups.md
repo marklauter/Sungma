@@ -21,6 +21,13 @@ Sungma implements a SCIM v2 endpoint, and its identity provider pushes user and 
 
 A role granted to an imported group then reaches its members, as a role granted to any group does.
 
+## Deprovisioning
+
+When the identity provider deletes a person or client, Sungma retires every identity fact whose subject is their `sub`: in customers' namespaces, in Sungma's own namespaces, and their group memberships. A `sub` the identity provider issues again then inherits nothing.
+
+- Identity facts are stored under their subjectset, across every namespace, so finding all the facts about one `sub` needs an index by subject. Until there is one, deprovisioning runs as a background job that reads the whole table.
+- The deployment's owners are the exception. Their facts are written only by deployment setup, and a deployment keeps at least two. Deleting an owner in the identity provider doesn't retire their `owner` fact. It records that setup needs to run.
+
 ## Open
 
 1. How groups are named. A SCIM group's `id` never changes and its `displayName` can, so a resource id taken from the display name would orphan every grant when the group is renamed.
