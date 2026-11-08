@@ -225,7 +225,7 @@ sungma.namespace:sungma.relation#protected@sungma.root:sungma#...
 sungma.namespace:sungma.group#protected@sungma.root:sungma#...
 ```
 
-The `owner` facts make the owners admins, and so auditors and every other deployment role. The `parent` facts let auditors read the documents of Sungma's own namespaces. The `protected` facts take the admins back out of their owners, as [Protected namespaces](#protected-namespaces) says. Setup writes no `parent` fact on any `sungma.relation` resource, so Sungma's own relations have none.
+The `owner` facts make the owners admins, and so auditors and every other deployment role. The `parent` facts let auditors read the documents of Sungma's own namespaces. The `protected` facts take the root's owners and admins back out of those namespaces' owners and admins, as [Protected namespaces](#protected-namespaces) says. Setup writes no `parent` fact on any `sungma.relation` resource, so Sungma's own relations have none.
 
 The endpoints that create things write facts of their own, always these and nothing a caller chooses. Here Carol creates `billing`, which declares `approver` and `viewer`:
 
@@ -236,7 +236,7 @@ sungma.relation:billing/approver#parent@sungma.namespace:billing#...
 sungma.relation:billing/viewer#parent@sungma.namespace:billing#...
 ```
 
-The first makes every admin an owner of `billing` and every auditor a reader of it. The last two let `billing`'s fact writers and fact readers reach the facts under its relations.
+The first makes every root owner an owner of `billing`, every root admin an admin of it, and every root auditor and reader a reader of it. The second makes Carol an owner, and so an admin, of `billing`. The last two let `billing`'s fact writers and fact readers reach the facts under its relations.
 
 A later version of `billing` that adds `payer` writes that relation's `parent`:
 
