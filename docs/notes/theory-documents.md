@@ -112,7 +112,7 @@ The rules on top of the grammar:
 - Errors carry a line and column in the document itself. Unlike in the JSON and TOML forms, a rewrite isn't inside a string, so its columns are the document's columns.
 - The limits in [Limits](../specs/namespace-documents.md#limits) apply to each namespace the document holds.
 
-The printer writes one relation per line, indents relations by two spaces, and pads names and subject lists so the brackets and the `=` line up within a namespace. Author shows and edits this form, and Sungma goes on storing JSON.
+The printer writes one relation per line, sorted by name and comparing bytes, as the other forms do. Alphabetical order is the easiest for readers to find a relation in. An author's own order is lost when a document is printed again. It indents relations by two spaces, and pads names and subject lists so the brackets and the `=` line up within a namespace. Author shows and edits this form, and Sungma goes on storing JSON.
 
 ## Open
 
@@ -121,4 +121,3 @@ The printer writes one relation per line, indents relations by two spaces, and p
 3. **Forms.** Whether a theory document has a JSON form as well as TOML, and how the printer writes one.
 4. **Limits.** How many namespaces a theory document may hold, and how big it may be.
 5. **The theory name.** Whether it must be one segment, and whether the reserved `sungma` theory is written only by releases.
-6. **Printing order.** A namespace holds its relations unordered, so the printer chooses their order, and an author's order is lost when a document is printed again. Sorting by name is stable, but readers follow a theory better when a relation comes after the relations its rewrite reads, such as `owner` before `admin`. Whether the printer orders relations that way, and breaks ties by name.
