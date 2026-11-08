@@ -95,7 +95,7 @@ pub enum ErrorKind {
         line: usize,
         column: usize,
     },
-    #[error("a TOML document doesn't start with a byte-order mark")]
+    #[error("a document doesn't start with a byte-order mark")]
     ByteOrderMark,
     #[error("a document is at most {MAX_DOCUMENT_BYTES} bytes")]
     TooLarge,
@@ -132,6 +132,8 @@ pub enum ErrorKind {
     Namespace(NamespaceError),
     #[error("too many errors; the first {MAX_ERRORS} are reported")]
     TooManyErrors,
+    #[error("namespace '{0}' is declared twice")]
+    DuplicateNamespace(String),
 }
 
 /// Parses and checks a namespace document, as the [module](self) describes.
@@ -276,11 +278,14 @@ fn read(
             Leaf::Text(Text::Plain(expression)) if expression.len() > MAX_EXPRESSION_BYTES => {
                 Err((None, ErrorKind::ExpressionTooLong))
             }
-            Leaf::Text(Text::Plain(expression)) => Parser::new(expression).parse(),
+            Leaf::Text(Text::Plain(expression)) => {
+                Parser::new(&lex(expression, Mode::Expression)).parse()
+            }
             Leaf::Text(Text::Escaped(expression)) => Err((None, form.escape(&expression))),
             Leaf::Other => Err((None, ErrorKind::NotAnExpression)),
         };
-        let rewrite = rewrite.unwrap_or_else(|(column, kind)| {
+        let rewrite = rewrite.unwrap_or_else(|(place, kind)| {
+            let column = place.map(|place| place.column);
             errors.at(at, name.as_str(), column, kind);
             Rewrite::This
         });
@@ -387,7 +392,7 @@ impl Errors {
 }
 
 /// A namespace problem with the names it carries quoted.
-fn quoted(problem: NamespaceError) -> NamespaceError {
+pub(crate) fn quoted(problem: NamespaceError) -> NamespaceError {
     match problem {
         NamespaceError::DuplicateRelation(relation) => {
             NamespaceError::DuplicateRelation(quote(&relation))
@@ -555,7 +560,7 @@ impl<'de> Deserialize<'de> for Leaf<'de> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Token {
+pub(crate) enum Token {
     /// The keyword `this`.
     This,
     Name,
@@ -565,16 +570,29 @@ enum Token {
     Union,
     Intersection,
     Exclusion,
+    Colon,
+    Equals,
     /// A character no token starts with.
     Unknown,
     End,
 }
 
+/// Where a lexeme starts: its line, and its column counting characters from
+/// 1. An expression is one line, however many line breaks it holds.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
+pub struct Place {
+    pub line: usize,
+    pub column: usize,
+}
+
 #[derive(Clone, Copy)]
-struct Lexeme<'a> {
-    token: Token,
-    text: &'a str,
-    column: usize,
+pub(crate) struct Lexeme<'a> {
+    pub(crate) token: Token,
+    pub(crate) text: &'a str,
+    pub(crate) place: Place,
+    /// The byte offsets of `text` in what was lexed.
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
 impl Lexeme<'_> {
@@ -586,29 +604,50 @@ impl Lexeme<'_> {
     }
 }
 
-fn lex(expression: &str) -> Vec<Lexeme<'_>> {
+/// What is being lexed: one expression from a JSON or TOML string, or a
+/// whole document in Sungma schema language, which has lines and comments.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Mode {
+    Expression,
+    Schema,
+}
+
+pub(crate) fn lex(text: &str, mode: Mode) -> Vec<Lexeme<'_>> {
     let mut lexemes = Vec::new();
-    let mut chars = expression.char_indices().enumerate().peekable();
-    while let Some((column, (start, c))) = chars.next() {
-        let column = column + 1;
+    let mut chars = text.char_indices().peekable();
+    let (mut line, mut column) = (1, 0);
+    while let Some((start, c)) = chars.next() {
+        column += 1;
+        let place = Place { line, column };
         let token = match c {
+            '\n' if mode == Mode::Schema => {
+                (line, column) = (line + 1, 0);
+                continue;
+            }
             ' ' | '\t' | '\n' | '\r' => continue,
+            '/' if mode == Mode::Schema && matches!(chars.peek(), Some((_, '/'))) => {
+                while chars.next_if(|&(_, c)| c != '\n').is_some() {
+                    column += 1;
+                }
+                continue;
+            }
             '(' => Token::Open,
             ')' => Token::Close,
             ',' => Token::Comma,
             '|' => Token::Union,
             '&' => Token::Intersection,
             '!' => Token::Exclusion,
+            ':' => Token::Colon,
+            '=' => Token::Equals,
             c if c.is_ascii_alphabetic() || c == '_' => {
                 let mut end = start + 1;
-                while let Some(&(_, (at, c))) = chars.peek() {
-                    if !(c.is_ascii_alphanumeric() || c == '_') {
-                        break;
-                    }
+                while let Some((at, _)) =
+                    chars.next_if(|&(_, c)| c.is_ascii_alphanumeric() || c == '_')
+                {
                     end = at + 1;
-                    chars.next();
+                    column += 1;
                 }
-                let text = &expression[start..end];
+                let text = &text[start..end];
                 let token = match text {
                     "this" => Token::This,
                     _ => Token::Name,
@@ -616,49 +655,73 @@ fn lex(expression: &str) -> Vec<Lexeme<'_>> {
                 lexemes.push(Lexeme {
                     token,
                     text,
-                    column,
+                    place,
+                    start,
+                    end,
                 });
                 continue;
             }
             _ => Token::Unknown,
         };
-        let text = &expression[start..start + c.len_utf8()];
+        let end = start + c.len_utf8();
         lexemes.push(Lexeme {
             token,
-            text,
-            column,
+            text: &text[start..end],
+            place,
+            start,
+            end,
         });
     }
     lexemes.push(Lexeme {
         token: Token::End,
         text: "",
-        column: expression.chars().count() + 1,
+        place: Place {
+            line,
+            column: column + 1,
+        },
+        start: text.len(),
+        end: text.len(),
     });
     lexemes
 }
 
-/// A syntax error's column and kind.
-type Failure = (Option<usize>, ErrorKind);
+/// What a term starts with.
+const TERM: &str = "'this', a relation name or '('";
+
+/// A syntax error's place and kind.
+pub(crate) type Failure = (Option<Place>, ErrorKind);
 
 type Node = Rewrite<RelationName>;
 
 /// Recursive descent over the rewrite grammar, one function per level.
-struct Parser<'a> {
-    lexemes: Vec<Lexeme<'a>>,
+pub(crate) struct Parser<'l, 'a> {
+    lexemes: &'l [Lexeme<'a>],
     at: usize,
+    /// Where the expression ends: the parser reads the lexeme here as the
+    /// end, whatever it is.
+    end: usize,
     groups: usize,
 }
 
-impl<'a> Parser<'a> {
-    fn new(expression: &'a str) -> Self {
+impl<'l, 'a> Parser<'l, 'a> {
+    /// A parser for one whole expression, `lexemes`, which end in
+    /// [`Token::End`].
+    pub(crate) fn new(lexemes: &'l [Lexeme<'a>]) -> Self {
+        Self::within(lexemes, 0, lexemes.len() - 1)
+    }
+
+    /// A parser for the expression from lexeme `start` up to lexeme `end`.
+    pub(crate) fn within(lexemes: &'l [Lexeme<'a>], start: usize, end: usize) -> Self {
         Self {
-            lexemes: lex(expression),
-            at: 0,
+            lexemes,
+            at: start,
+            end,
             groups: 0,
         }
     }
 
-    fn parse(mut self) -> Result<Rewrite<RelationName>, Failure> {
+    /// A whole expression: a rewrite, then the end.
+    pub(crate) fn parse(mut self) -> Result<Rewrite<RelationName>, Failure> {
         let rewrite = self.union()?;
         let next = self.peek();
         if next.token != Token::End {
@@ -668,7 +731,15 @@ impl<'a> Parser<'a> {
     }
 
     fn peek(&self) -> Lexeme<'a> {
-        self.lexemes[self.at]
+        let lexeme = self.lexemes[self.at];
+        if self.at == self.end {
+            Lexeme {
+                token: Token::End,
+                ..lexeme
+            }
+        } else {
+            lexeme
+        }
     }
 
     fn next(&mut self) -> Lexeme<'a> {
@@ -725,21 +796,21 @@ impl<'a> Parser<'a> {
             Token::Open => {
                 self.groups += 1;
                 if self.groups > MAX_REWRITE_DEPTH {
-                    return Err((Some(lexeme.column), ErrorKind::TooManyParentheses));
+                    return Err((Some(lexeme.place), ErrorKind::TooManyParentheses));
                 }
                 let node = self.union()?;
                 self.close()?;
                 self.groups -= 1;
                 Ok(node)
             }
-            _ => Err(syntax(lexeme, "'this', a relation name or '('")),
+            _ => Err(syntax(lexeme, TERM)),
         }
     }
 
     /// Whether the `(` just read opens `(factset, computed)`.
     fn peek_is_fact_to(&self) -> bool {
         matches!(
-            self.lexemes[self.at..],
+            self.lexemes[self.at..self.end],
             [
                 Lexeme {
                     token: Token::This | Token::Name,
@@ -763,33 +834,35 @@ impl<'a> Parser<'a> {
     }
 
     fn relation(&mut self) -> Result<RelationName, Failure> {
+        const EXPECTED: &str = "a relation name";
         let lexeme = self.next();
         match lexeme.token {
             Token::Name => relation(lexeme),
-            _ => Err(syntax(lexeme, "a relation name")),
+            _ => Err(syntax(lexeme, EXPECTED)),
         }
     }
 
     fn close(&mut self) -> Result<(), Failure> {
+        const EXPECTED: &str = "')'";
         let lexeme = self.next();
         match lexeme.token {
             Token::Close => Ok(()),
-            _ => Err(syntax(lexeme, "')'")),
+            _ => Err(syntax(lexeme, EXPECTED)),
         }
     }
 }
 
-fn syntax(lexeme: Lexeme<'_>, expected: &'static str) -> Failure {
+pub(crate) fn syntax(lexeme: Lexeme<'_>, expected: &'static str) -> Failure {
     let found = lexeme.found();
-    (Some(lexeme.column), ErrorKind::Syntax { found, expected })
+    (Some(lexeme.place), ErrorKind::Syntax { found, expected })
 }
 
-/// A name token as a relation name, refused at its column if it isn't one.
-fn relation(lexeme: Lexeme<'_>) -> Result<RelationName, Failure> {
+/// A name token as a relation name, refused at its place if it isn't one.
+pub(crate) fn relation(lexeme: Lexeme<'_>) -> Result<RelationName, Failure> {
     lexeme
         .text
         .parse()
-        .map_err(|error| (Some(lexeme.column), ErrorKind::Name(error)))
+        .map_err(|error| (Some(lexeme.place), ErrorKind::Name(error)))
 }
 
 /// Why [`print()`] or [`print_toml`] refused a namespace: no document can
@@ -802,6 +875,16 @@ pub enum PrintError {
     Name(#[from] NameError),
     #[error("a union or intersection has one operand")]
     OneOperand,
+    #[error("a schema document declares at least one namespace")]
+    NoNamespace,
+    #[error("namespace '{0}' isn't in the theory")]
+    OutsideTheory(String),
+    #[error("namespace '{0}' is given twice")]
+    DuplicateNamespace(String),
+    #[error("the printed document would be more than {MAX_DOCUMENT_BYTES} bytes")]
+    TooLarge,
+    #[error("a printed rule would be more than {MAX_EXPRESSION_BYTES} bytes")]
+    ExpressionTooLong,
 }
 
 /// Writes a namespace as a document that [`parse`] reads back as an equal
@@ -845,7 +928,7 @@ pub fn print_toml(
 
 /// A namespace's relations sorted by name, each with its expression, once
 /// every name is one a document can declare.
-fn printed<'a>(
+pub(crate) fn printed<'a>(
     namespace: &NamespaceName,
     relations: &'a Namespace<RelationName>,
 ) -> Result<Vec<(&'a str, String)>, PrintError> {

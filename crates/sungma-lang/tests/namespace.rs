@@ -1,5 +1,7 @@
 //! Namespace documents: parsed, checked whole, and printed back.
 
+mod grammar;
+
 use proptest::{collection::vec, prelude::*};
 use sungma::{
     name::{NameError, NamespaceName, RelationName},
@@ -1039,10 +1041,7 @@ fn an_escape_error_quotes_the_decoded_text_escaped() {
 
 // The grammar, token by token.
 
-/// Relations every grammar case may name, each declared as `this`.
-const DECLARED: [&str; 12] = [
-    "a", "b", "c", "d", "p", "_a", "a1", "_", "thisone", "this_", "_this", "THIS1",
-];
+use grammar::DECLARED;
 
 /// A document whose relation `r` has `expression`, beside every relation in
 /// [`DECLARED`].
@@ -1069,139 +1068,7 @@ fn intersection(operands: Vec<Rewrite<RelationName>>) -> Rewrite<RelationName> {
 
 #[test]
 fn every_valid_form_parses_to_its_tree_and_prints_canonically() {
-    let (a, b, c, d) = (name("a"), name("b"), name("c"), name("d"));
-    let cases = [
-        ("this", This, "this"),
-        ("a", a.clone(), "a"),
-        ("(p, a)", fact_to("p", "a"), "(p, a)"),
-        ("(p,a)", fact_to("p", "a"), "(p, a)"),
-        ("( p , a )", fact_to("p", "a"), "(p, a)"),
-        ("((p, a))", fact_to("p", "a"), "(p, a)"),
-        (
-            "(p, undeclared)",
-            fact_to("p", "undeclared"),
-            "(p, undeclared)",
-        ),
-        ("(this)", This, "this"),
-        ("((((a))))", a.clone(), "a"),
-        ("this ! this", exclusion(This, This), "this ! this"),
-        ("this & this", intersection(vec![This, This]), "this & this"),
-        ("this|this", union(vec![This, This]), "this | this"),
-        ("a|b", union(vec![a.clone(), b.clone()]), "a | b"),
-        ("(a)|(b)", union(vec![a.clone(), b.clone()]), "a | b"),
-        (
-            "a | b & c | d",
-            union(vec![
-                a.clone(),
-                intersection(vec![b.clone(), c.clone()]),
-                d.clone(),
-            ]),
-            "a | b & c | d",
-        ),
-        (
-            "a & b ! c & d",
-            intersection(vec![a.clone(), exclusion(b.clone(), c.clone()), d.clone()]),
-            "a & b ! c & d",
-        ),
-        (
-            "a ! b & c",
-            intersection(vec![exclusion(a.clone(), b.clone()), c.clone()]),
-            "a ! b & c",
-        ),
-        (
-            "a ! (b ! c)",
-            exclusion(a.clone(), exclusion(b.clone(), c.clone())),
-            "a ! (b ! c)",
-        ),
-        (
-            "(a ! b) ! c",
-            exclusion(exclusion(a.clone(), b.clone()), c.clone()),
-            "a ! b ! c",
-        ),
-        (
-            "(a | b) & c",
-            intersection(vec![union(vec![a.clone(), b.clone()]), c.clone()]),
-            "(a | b) & c",
-        ),
-        (
-            "a & (b | c)",
-            intersection(vec![a.clone(), union(vec![b.clone(), c.clone()])]),
-            "a & (b | c)",
-        ),
-        (
-            "(a & b) | c",
-            union(vec![intersection(vec![a.clone(), b.clone()]), c.clone()]),
-            "a & b | c",
-        ),
-        (
-            "a | (b | c)",
-            union(vec![a.clone(), union(vec![b.clone(), c.clone()])]),
-            "a | (b | c)",
-        ),
-        (
-            "(a & b) & c",
-            intersection(vec![intersection(vec![a.clone(), b.clone()]), c.clone()]),
-            "(a & b) & c",
-        ),
-        (
-            "a ! (b & c)",
-            exclusion(a.clone(), intersection(vec![b.clone(), c.clone()])),
-            "a ! (b & c)",
-        ),
-        (
-            "(a | b) ! c",
-            exclusion(union(vec![a.clone(), b.clone()]), c.clone()),
-            "(a | b) ! c",
-        ),
-        (
-            "(a ! b) & (c ! d)",
-            intersection(vec![
-                exclusion(a.clone(), b.clone()),
-                exclusion(c.clone(), d.clone()),
-            ]),
-            "a ! b & c ! d",
-        ),
-        (
-            "(p, a) ! (p, b)",
-            exclusion(fact_to("p", "a"), fact_to("p", "b")),
-            "(p, a) ! (p, b)",
-        ),
-        (
-            "a ! (p, b)",
-            exclusion(a.clone(), fact_to("p", "b")),
-            "a ! (p, b)",
-        ),
-        (
-            "(p, a) & (p, b) | this",
-            union(vec![
-                intersection(vec![fact_to("p", "a"), fact_to("p", "b")]),
-                This,
-            ]),
-            "(p, a) & (p, b) | this",
-        ),
-        (
-            "a ! b ! c & d ! a | b",
-            union(vec![
-                intersection(vec![
-                    exclusion(exclusion(a.clone(), b.clone()), c.clone()),
-                    exclusion(d.clone(), a.clone()),
-                ]),
-                b.clone(),
-            ]),
-            "a ! b ! c & d ! a | b",
-        ),
-        (
-            "_a | a1 | _ | thisone | this_ | _this | THIS1",
-            union(
-                ["_a", "a1", "_", "thisone", "this_", "_this", "THIS1"]
-                    .into_iter()
-                    .map(name)
-                    .collect(),
-            ),
-            "_a | a1 | _ | thisone | this_ | _this | THIS1",
-        ),
-    ];
-    for (expression, tree, canonical) in cases {
+    for (expression, tree, canonical) in grammar::valid() {
         let document = parsed(&grammar_case(expression));
         assert_eq!(listed(&document)[0].1, tree, "{expression}");
         assert_eq!(printed_expression(tree.clone()), canonical, "{expression}");
@@ -1212,51 +1079,7 @@ fn every_valid_form_parses_to_its_tree_and_prints_canonically() {
 
 #[test]
 fn every_invalid_form_is_refused_where_it_goes_wrong() {
-    const TERM: &str = "'this', a relation name or '('";
-    const END: &str = "an operator or the end";
-    const CLOSE: &str = "')'";
-    const RELATION: &str = "a relation name";
-    let cases = [
-        ("   ", 4, "the end", TERM),
-        ("| a", 1, "'|'", TERM),
-        ("& a", 1, "'&'", TERM),
-        ("! a", 1, "'!'", TERM),
-        ("a !", 4, "the end", TERM),
-        ("a &", 4, "the end", TERM),
-        ("a || b", 4, "'|'", TERM),
-        ("a !! b", 4, "'!'", TERM),
-        ("a & | b", 5, "'|'", TERM),
-        ("a ! & b", 5, "'&'", TERM),
-        ("a)", 2, "')'", END),
-        (")a", 1, "')'", TERM),
-        ("()", 2, "')'", TERM),
-        ("((a)", 5, "the end", CLOSE),
-        ("(a))", 4, "')'", END),
-        ("(a)(b)", 4, "'('", END),
-        ("a (b)", 3, "'('", END),
-        ("this(a)", 5, "'('", END),
-        ("a b", 3, "'b'", END),
-        ("this this", 6, "'this'", END),
-        ("a,b", 2, "','", END),
-        ("(,a)", 2, "','", TERM),
-        ("(a,)", 4, "')'", RELATION),
-        ("(a, b, c)", 6, "','", CLOSE),
-        ("(a b, c)", 4, "'b'", CLOSE),
-        ("(a | b, c)", 7, "','", CLOSE),
-        ("(a, (p, b))", 5, "'('", RELATION),
-        ("(this, a)", 2, "'this'", RELATION),
-        ("(a, this)", 5, "'this'", RELATION),
-        ("(p, a", 6, "the end", CLOSE),
-        ("a.b", 2, "'.'", END),
-        ("1a", 1, "'1'", TERM),
-        ("a#b", 2, "'#'", END),
-        ("a:b", 2, "':'", END),
-        ("a-b", 2, "'-'", END),
-        ("a | b ; c", 7, "';'", END),
-        ("a ~ b", 3, "'~'", END),
-        ("a | b/", 6, "'/'", END),
-    ];
-    for (expression, column, found, expected) in cases {
+    for (expression, column, found, expected) in grammar::invalid() {
         let error = only(&grammar_case(expression));
         assert_eq!(error.relation.as_deref(), Some("r"), "{expression}");
         assert_eq!(error.column, Some(column), "{expression}");
@@ -1270,17 +1093,8 @@ fn every_invalid_form_is_refused_where_it_goes_wrong() {
 
 #[test]
 fn a_reserved_or_overlong_name_is_refused_where_it_appears() {
-    let long = "n".repeat(MAX_RELATION_BYTES + 1);
-    let fact_to_long = format!("a & (p, {long})");
-    let cases = [
-        ("THIS", 1),
-        ("a | This", 5),
-        ("(p, tHIS)", 5),
-        ("(THIS, a)", 2),
-        (long.as_str(), 1),
-        (fact_to_long.as_str(), 9),
-    ];
-    for (expression, column) in cases {
+    for (expression, column) in grammar::reserved() {
+        let expression = expression.as_str();
         let error = only(&grammar_case(expression));
         assert_eq!(error.column, Some(column), "{expression}");
         assert!(
@@ -1461,6 +1275,13 @@ fn every_kind_of_toml_string_parses() {
         let document = parsed_toml(&format!("[t]\na = \"this\"\nr = {value}\n"));
         assert_eq!(listed(&document)[1].1, union, "{value}");
     }
+}
+
+#[test]
+fn a_column_in_a_multi_line_toml_string_counts_across_its_line_breaks() {
+    let error = only_toml("[t]\nr = '''this\n| )'''\n");
+    assert_eq!(error.relation.as_deref(), Some("r"));
+    assert_eq!(error.column, Some(8), "{error}");
 }
 
 #[test]

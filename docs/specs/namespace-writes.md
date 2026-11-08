@@ -62,11 +62,11 @@ Dropping a relation empties it everywhere, including in other namespaces that re
 
 ## Answered elsewhere
 
-- **The response,** such as whether a write returns the new version's revision token and printed document: the transports, roadmap item 14.
-- **Reading namespaces,** a namespace at a revision token and a list of its versions: the transports, roadmap item 14.
-- **Errors,** the status and body for each refusal: the transports, roadmap item 14.
-- **Propagation,** how a new version reaches other nodes and appears in the Watch stream: the Watch service, roadmap item 11. Namespace versions go into the same change log as facts.
-- **Who may write:** authentication and authorization, roadmap item 15. See [[check-takes-a-caller-token-and-a-subject-token]].
+- **The response,** such as whether a write returns the new version's revision token and printed document: the transports on the roadmap.
+- **Reading namespaces,** a namespace at a revision token and a list of its versions: the transports on the roadmap.
+- **Errors,** the status and body for each refusal: the transports on the roadmap.
+- **Propagation,** how a new version reaches other nodes and appears in the Watch stream: the Watch service on the roadmap. Namespace versions go into the same change log as facts.
+- **Who may write:** [Sungma's own authorization](sungma-authorization.md).
 
 ## Required tests
 

@@ -1,8 +1,8 @@
 name: Clock platforms
 
-# The clocks on real machines: Linux with chrony synced, and NTS over the
-# internet on Linux and Windows. Weekly and by hand, not on every change,
-# because runner minutes are limited.
+# The clock on a real Linux machine with chrony synced, and NTS over the
+# internet. Sungma runs on Linux only. Weekly and by hand, not on every
+# change, because runner minutes are limited.
 on:
   schedule:
     - cron: "41 7 * * 2"
@@ -32,15 +32,6 @@ jobs:
 
     - name: The Linux clock reads the kernel's bound
       run: cargo test -p sungma-clock --locked --test platform -- --ignored --nocapture
-
-    - name: NTS against public servers
-      run: cargo test -p sungma-clock --locked --test nts public_nts_servers_sync -- --ignored --nocapture
-
-  windows:
-    runs-on: windows-latest
-    steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-    - uses: ./.github/actions/setup-rust
 
     - name: NTS against public servers
       run: cargo test -p sungma-clock --locked --test nts public_nts_servers_sync -- --ignored --nocapture

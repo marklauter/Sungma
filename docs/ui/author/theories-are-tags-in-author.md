@@ -1,7 +1,7 @@
 ---
 title: Theories are tags in Author
 type: note
-summary: Author lets a person group namespaces into a named theory with a tag kept in Author's own store; Sungma's model stays flat, and Check, Read and Write never read a theory.
+summary: Author lets a person group namespaces into a named theory with a tag kept in Author's own store; Sungma stores no theory layer, and Check, Read and Write never read a theory.
 status: evolving
 cites:
   - "[[theory]]"
@@ -12,14 +12,14 @@ cites:
 
 ## The need
 
-The Namespaces screen lists every namespace flat. A system with many namespaces, such as Sungma authorizing its own services with one namespace per service plus one for itself, needs them grouped so a person can find and manage them together.
+The Namespaces screen lists every namespace flat. A system with many namespaces, such as an organization authorizing its own services with one namespace per service, needs them grouped so a person can find and manage them together.
 
 ## The decision
 
 A [[theory]] in Author is a tag: a name a person puts on a set of [[namespace]]s. The tags are Author's data, kept in Author's own store. Check, Read and Write never read them, and no namespace carries one.
 
-- **The model stays flat.** A stored theory layer in Sungma would be a namespace of namespaces. The references between namespaces already imply which belong together, so a second place to declare it could only disagree with them.
-- **Tags, not a naming convention.** Names like `sungma.check` would group by prefix, but a group would exist only by agreement, and moving a namespace to another group would mean renaming it. A tag changes without touching the namespace, and a namespace can carry more than one.
+- **Sungma stores no theory layer.** A stored theory layer in Sungma would be a namespace of namespaces. The references between namespaces already imply which belong together, so a second place to declare it could only disagree with them.
+- **Tags, not a naming convention.** Names like `billing.invoice` and `billing.refund` would group by their first segment, but a group would exist only by agreement, and moving a namespace to another group would mean renaming it. A tag changes without touching the namespace, and a namespace can carry more than one. The reserved first segment `sungma` names the theory Sungma's own namespaces are written in, but Author groups by tag, not by first segment.
 - **The glossary still holds.** A theory is a set of namespaces that together settle one domain's questions. Author lets a person write one down.
 
 ## On the screen

@@ -1,6 +1,6 @@
 ---
 title: Ideas from Kingo
-summary: Fourteen ideas from Kingo, the legacy ReBAC, each with its Sungma status as of 2026-10-04. One runs counter to Sungma, and two confirmed bugs surfaced along the way.
+summary: Fourteen ideas from Kingo, the legacy ReBAC, each with its Sungma status as of 2026-10-04. Two confirmed bugs surfaced along the way.
 status: evolving
 ---
 
@@ -23,18 +23,18 @@ Both were reproduced with throwaway tests on 2026-10-04.
 
 | # | Idea | Sungma status |
 |---|---|---|
-| 1 | Relation epoch keeps orphaned facts from resurrecting | Missing |
-| 4 | Drift prevented at write time | Missing |
+| 1 | Relation epoch keeps orphaned facts from resurrecting | Done |
+| 4 | Drift prevented at write time | Partial |
 | 5 | Facts and namespaces share one timeline | Open, leaning this way |
 | 6 | Writes are apply and drop only | Partial |
 | 7 | Name grammar enforced | Missing |
 | 8 | Every error reported, with stable codes | Missing |
-| 9 | Invalid rewrite trees can't be built | Partial |
-| 10 | Rewrite text grammar and round-trip printer | Missing |
+| 9 | Invalid rewrite trees can't be built | Done |
+| 10 | Rewrite text grammar and round-trip printer | Done |
 | 11 | Grounds kept from callers | Partial |
 | 12 | Tenant isolation is structural | Missing |
 | 13 | Actor catalog with attack paths | Missing |
-| 14 | Core carries no formats or adapters | Counter |
+| 14 | Core carries no formats or adapters | Partial |
 | 15 | Stricter build gates | Partial |
 | 16 | Smaller evaluation rules | Mixed |
 
@@ -44,12 +44,12 @@ The proposed mechanism for ideas 1, 4 and 5 is in [[one-timeline]].
 
 ### 1. A relation epoch keeps orphaned facts from resurrecting
 
-The epoch exists for one purpose: when a later namespace version re-declares a dropped relation, the facts orphaned by the drop must not come back to life. Without it, re-adding `owner` in `file` v3 would revive every `owner` fact orphaned by v2, restoring grants that were dropped. A namespace version that drops a relation leaves the facts stored under it in place. Under that version they count as nonexistent, because the relation is undeclared there. Each namespace version records, for each relation, the revision at which it was last declared: its epoch. Evaluation counts a fact only if its span covers the revision and its `written` revision is at or after the relation's epoch in the namespace version the snapshot selects.
+The epoch exists for one purpose: when a later namespace version re-declares a dropped relation, the facts orphaned by the drop must not come back to life. Without it, re-adding `owner` in `file` v3 would revive every `owner` fact orphaned by v2, restoring facts that were dropped. A namespace version that drops a relation leaves the facts stored under it in place. Under that version they count as nonexistent, because the relation is undeclared there. Each namespace version records, for each relation, the revision at which it was last declared: its epoch. Evaluation counts a fact only if its span covers the revision and its `written` revision is at or after the relation's epoch in the namespace version the snapshot selects.
 
-- Re-adding a dropped relation in a later version moves its epoch, so older facts under it stay dead and old grants don't resurrect.
+- Re-adding a dropped relation in a later version moves its epoch, so older facts under it stay dead and old facts don't resurrect.
 - A replay or expand at an earlier revision reads the earlier version and its epoch, so the facts are valid there.
 - The namespace write is cheap: no fact is rewritten, no cross-namespace scan runs, and facts carry no namespace version. Late binding means the catalog can't see which other namespaces reach a dropped relation, and scanning the fact graph on every namespace write is impractical. Dropping a relation therefore empties it everywhere, including on the excluded side of another namespace's exclusion, which can widen access there. That widening is accepted.
-- Re-applying a fact whose span started before the epoch opens a new span (`crates/sungma-write/src/fact.rs`, `opens_span`), so a re-asserted grant counts again.
+- Re-applying a fact whose span started before the epoch opens a new span (`crates/sungma-write/src/fact.rs`, `opens_span`), so a re-asserted fact counts again.
 - Every reader of the graph applies the same epoch filter: Check, Expand, Read, Watch and dumps. A reader that skips it shows orphans as live.
 - The eager alternative closes the orphans' spans in the namespace write. It gives the same visible facts at every revision and needs no reader filter, but the write costs as much as there are orphans.
 - This replaces the namespace-write half of idea 4, which refuses a namespace write that strands live facts. It depends on idea 5: `replay` reads the namespaces of the decision's revision ([[namespace-writes-wait-on-namespace-versioning]]).
@@ -58,14 +58,14 @@ The epoch exists for one purpose: when a later namespace version re-declares a d
 
 ### 4. Fact/namespace drift is prevented at write time
 
-Fact writes are checked against the latest namespace version. A namespace write that would strand live facts is refused, so removal takes two steps.
+Fact writes are checked against the latest namespace version. A namespace write that would strand live facts is refused, so retiring takes two steps.
 
-- **Sungma: missing.** There is no namespace write path; this feeds roadmap items 9 and 13.
+- **Sungma: partial.** Fact writes are checked against the latest namespace version, and namespace writes never refuse over live facts; see [[one-timeline]].
 - Source: `docs/decisions/preventing-drift-between-facts-and-theories.md`.
 
 ### 5. Facts and namespaces share one timeline
 
-Namespace versions take revisions from the fact sequence, the zookie selects the namespace version, and a decision records only the zookie.
+Namespace versions take revisions from the fact sequence, the revision token selects the namespace version, and a decision records only the revision token.
 
 - **Sungma: open.** [[namespace-writes-wait-on-namespace-versioning]] asks these questions and leans this way.
 - Source: `docs/todos/storage-versioning-design.md`, `docs/specs/catalog.md`.
@@ -104,7 +104,7 @@ Empty operators can't be built, and excess depth is refused at construction.
 
 Precedence `!` > `&` > `|`, left-associative `!`, minimal parentheses on print, and a hostile-input suite: 20k nested parentheses, a 20k `!` chain, and a 500-wide union that isn't depth.
 
-- **Sungma: missing.** Namespaces load from JSON only; roadmap item 12.
+- **Sungma: done.** Rewrites are expression strings with this grammar, a printer that adds only the parentheses it needs, and hostile-input tests; see [Namespace documents](../specs/namespace-documents.md).
 - Source: `src/Kingo.Documents/RewriteExpressionParser.cs`, `RewriteExpressionPrinter.cs`, `tests/Kingo.Documents.Tests/`.
 
 ### 11. Grounds are kept from callers

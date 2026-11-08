@@ -104,7 +104,7 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 
 1. **Document shape.** Each rule in [Document](#document) holds, for valid documents and for each way of breaking it.
 2. **Subjects.** Each kind of subject is read from its keys, and every other set of keys is refused.
-3. **Names.** Namespace and relation names follow the namespace document grammar, including the reserved `this`.
+3. **Names.** Namespace and relation names follow the namespace document grammar, including the reserved `this`. A fact may name Sungma's own namespaces, such as `sungma.group`: the reserved first segment `sungma` limits which namespaces can be created, not which names a fact may use.
 4. **Resources and identities.** Printable ASCII is accepted, any other character and empty text are refused, and case is kept.
 5. **Limits.** Each limit at its value and one past it.
 6. **Errors.** Each error carries the line and column of the value at fault, and quoted text is bounded and escaped.
