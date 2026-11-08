@@ -103,7 +103,7 @@ Each relation reads like a signature: its name, a colon and the subjects its fac
 
 The rules on top of the grammar:
 
-- Whitespace, line breaks included, only separates tokens. Indentation is for readers, and a long rewrite can wrap onto as many lines as it needs.
+- Whitespace, line breaks included, only separates tokens. Indentation is for readers. A rewrite can start on the signature's line or on the next one, `=` included, and can wrap onto as many lines as it needs.
 - A subject list or a rewrite ends where its grammar can't take the next token. Subjects are separated by commas, and two terms never sit side by side without an operator, so the next relation's name ends the one before it, and a relation needs no terminator.
 - `namespace:` opens a namespace, and its relations run until the next `namespace:` or the end of the document.
 - `theory` and `namespace` are reserved relation names, in every form, as `this` is. Otherwise `namespace: root` could be a relation named `namespace` that accepts `root`. Reserving them in every form keeps every namespace printable in this one. They stay usable as namespace names, so `sungma.namespace` and `parent: namespace` are fine.
