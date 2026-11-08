@@ -44,10 +44,10 @@ JSON and TOML are fine on the wire, but a person can't reason about a theory wri
 Sungma's own model, written in it:
 
 ```text
-theory sungma
+theory: sungma
 
 // The deployment, one resource: sungma.root:sungma
-namespace root
+namespace: root
   owner             [identity]
   admin             [identity]               = this | owner
   namespace_creator [identity, group#member] = this | admin
@@ -61,7 +61,7 @@ namespace root
   directory_reader  [identity, group#member] = this | auditor
   access_reader                              = auditor
 
-namespace namespace
+namespace: namespace
   parent        [root]
   protected     [root]
   owner         [identity, group#member] = this | (parent, owner) ! (protected, owner)
@@ -73,12 +73,12 @@ namespace namespace
   auditor       [identity, group#member] = this | (parent, auditor)
   access_reader                          = admin | auditor
 
-namespace relation
+namespace: relation
   parent [namespace]
   writer [identity, group#member] = this | (parent, fact_writer)
   reader [identity, group#member] = this | writer | (parent, fact_reader)
 
-namespace group
+namespace: group
   parent        [root]
   owner         [identity, group#member] = this | (parent, admin)
   member        [identity, group#member]
@@ -94,8 +94,8 @@ Each relation is one line: its name, the subjects its facts may bind in brackets
 - The rewrite is the rewrite grammar of the namespace document spec, unchanged.
 
 ```ebnf
-⟨document⟩  ::= [ 'theory' ⟨namespace name⟩ ] ⟨namespace⟩ { ⟨namespace⟩ }
-⟨namespace⟩ ::= 'namespace' ⟨namespace name⟩ { ⟨relation⟩ }
+⟨document⟩  ::= [ 'theory' ':' ⟨namespace name⟩ ] ⟨namespace⟩ { ⟨namespace⟩ }
+⟨namespace⟩ ::= 'namespace' ':' ⟨namespace name⟩ { ⟨relation⟩ }
 ⟨relation⟩  ::= ⟨relation name⟩ ⟨subjects⟩ [ '=' ⟨rewrite⟩ ]
               | ⟨relation name⟩ '=' ⟨rewrite⟩
 ⟨subjects⟩  ::= '[' ⟨accepted subject⟩ { ',' ⟨accepted subject⟩ } ']'
@@ -105,14 +105,14 @@ The rules on top of the grammar:
 
 - Whitespace, line breaks included, only separates tokens. Indentation and alignment are for readers, and a long rewrite can wrap onto as many lines as it needs.
 - A rewrite ends where its grammar can't take the next token. Two terms never sit side by side without an operator, so the next relation's name ends the rewrite before it, and a relation needs no terminator.
-- `namespace` followed by a name opens a namespace, and its relations run until the next one or the end of the document. A relation can still be called `namespace`, because a relation's name is followed by `[` or `=`.
+- `namespace:` opens a namespace, and its relations run until the next `namespace:` or the end of the document. A relation can still be called `namespace` or `theory`, because a relation's name is followed by `[` or `=`, never `:`.
 - `//` starts a comment that runs to the end of the line. `#` can't start a comment, because subjectsets use it. Comments aren't kept, because Sungma stores the JSON form.
 - There are no quotes, escapes, numbers or booleans. Every token is a name, a keyword or punctuation, so the parser never has to guess a value's type, and `no` or `on` is only ever a name.
-- With `theory`, unqualified namespace names in the document get the theory's prefix, as [It's shorthand](#its-shorthand) says. Without it, the document holds full names, and a document with one namespace and no `theory` is a namespace document in this form.
+- With `theory:`, unqualified namespace names in the document get the theory's prefix, as [It's shorthand](#its-shorthand) says. Without it, the document holds full names, and a document with one namespace and no `theory:` is a namespace document in this form.
 - Errors carry a line and column in the document itself. Unlike in the JSON and TOML forms, a rewrite isn't inside a string, so its columns are the document's columns.
 - The limits in [Limits](../specs/namespace-documents.md#limits) apply to each namespace the document holds.
 
-The printer writes one relation per line, sorted by name and comparing bytes, as the other forms do. Alphabetical order is the easiest for readers to find a relation in. An author's own order is lost when a document is printed again. It indents relations by two spaces, and pads names and subject lists so the brackets and the `=` line up within a namespace. Author shows and edits this form, and Sungma goes on storing JSON.
+The printer writes one relation per line, sorted by name and comparing bytes, as the other forms do. Alphabetical order is the easiest for readers to find a relation in. An author's own order is lost when a document is printed again. The printer indents relations by two spaces, and pads names and subject lists so the brackets and the `=` line up within a namespace. Author shows and edits this form, and Sungma goes on storing JSON.
 
 ## Open
 
