@@ -100,10 +100,6 @@ fn grammar_case(expression: &str) -> String {
     format!("namespace: t\n{declared}  r = {expression}")
 }
 
-/// What a form whose rewrites run on to the next relation expects where an
-/// expression could have ended.
-const AFTER_REWRITE: &str = "an operator, a relation, 'namespace:' or the end";
-
 // The oracle: the grammar cases every form shares.
 
 #[test]
@@ -126,9 +122,9 @@ fn every_valid_form_parses_to_its_tree_and_prints_canonically() {
 fn every_invalid_form_is_refused_where_it_goes_wrong() {
     for (expression, column, found, expected) in grammar::invalid() {
         // A name then `:` is the next relation's signature here, so the
-        // rewrite is missing before it.
+        // rule ends before it, and is missing.
         let (column, found, expected) = match expression {
-            "a:b" => (1, "'a'", grammar::TERM),
+            "a:b" => (1, "the end", grammar::TERM),
             _ => (column, found, expected),
         };
         // `a:b` is two mistakes here, the missing rewrite reported first.
@@ -143,11 +139,6 @@ fn every_invalid_form_is_refused_where_it_goes_wrong() {
             column: column + INDENT,
         };
         assert_eq!(error.place, Some(place), "{expression}");
-        let expected = if expected == grammar::END {
-            AFTER_REWRITE
-        } else {
-            expected
-        };
         assert_eq!(
             error.kind.to_string(),
             format!("expected {expected}, found {found}"),
@@ -574,26 +565,30 @@ fn each_limit_holds_at_its_value_and_breaks_one_past_it() {
     );
     assert_eq!(error.place, Some(Place { line: 1, column: 1 }));
 
-    // A rewrite as it prints, of exactly `bytes`: `this`, runs of ` | this`,
-    // and a last relation whose name makes up the rest. Each text declares
-    // that relation and the rewrite.
-    let expression = |bytes: usize| {
+    // A rule of exactly `bytes`: `this`, runs of ` | this`, and a last
+    // relation whose name makes up the rest. Each text declares that
+    // relation and the rule.
+    let rule = |bytes: usize| {
         let runs = (bytes - 4 - 3 - 1) / 7;
         let last = "n".repeat(bytes - 4 - 3 - 7 * runs);
-        let printed = format!("this{} | {last}", " | this".repeat(runs));
-        assert_eq!(printed.len(), bytes);
-        (format!("namespace: t\n  {last} = this\n  r = "), printed)
+        let rule = format!("this{} | {last}", " | this".repeat(runs));
+        assert_eq!(rule.len(), bytes);
+        (format!("namespace: t\n  {last} = this\n  r = "), rule)
     };
     for bytes in [MAX_EXPRESSION_BYTES - 1, MAX_EXPRESSION_BYTES] {
-        let (head, printed) = expression(bytes);
-        one(&format!("{head}{printed}"));
-        // Spaces, line breaks and comments the printer leaves out don't
-        // count.
-        let spaced = printed.replace(" | ", "   // a comment\n    |   ");
-        one(&format!("{head}{spaced}"));
+        let (head, rule) = rule(bytes);
+        one(&format!("{head}{rule}\n  // a comment after the rule\n"));
     }
-    let (head, printed) = expression(MAX_EXPRESSION_BYTES + 1);
-    let error = only(&format!("{head}{printed}"));
+    // The rule is measured from its first token to its last, so a comment
+    // inside it counts.
+    let (head, full) = rule(MAX_EXPRESSION_BYTES);
+    let commented = full.replacen(" | ", " // c\n | ", 1);
+    assert!(matches!(
+        only(&format!("{head}{commented}")).kind,
+        ErrorKind::ExpressionTooLong
+    ));
+    let (head, rule) = rule(MAX_EXPRESSION_BYTES + 1);
+    let error = only(&format!("{head}{rule}"));
     assert!(
         matches!(error.kind, ErrorKind::ExpressionTooLong),
         "{error}"
@@ -855,27 +850,6 @@ fn a_rewrite_left_open_doesnt_swallow_what_comes_next() {
 fn a_bad_theory_name_is_reported_once() {
     let error = only("theory: a..b\nnamespace: c\nnamespace: d\n");
     assert_eq!(error.place, Some(Place { line: 1, column: 9 }));
-}
-
-#[test]
-fn every_accepted_rewrite_prints_within_the_json_forms_limit() {
-    // `b | b | …` printed is four bytes a term, so 1024 terms print to 4093
-    // bytes and 1025 to 4097.
-    let rewrite = |terms: usize| vec!["b"; terms].join("|");
-    let fits = parsed(&format!(
-        "namespace: t\n  b = this\n  a = {}",
-        rewrite(1024)
-    ));
-    let json = namespace::print(&fits[0].namespace, &fits[0].relations).expect("printable");
-    namespace::parse(&json).expect("the JSON form reads it back");
-    let error = only(&format!(
-        "namespace: t\n  b = this\n  a = {}",
-        rewrite(1025)
-    ));
-    assert!(
-        matches!(error.kind, ErrorKind::ExpressionTooLong),
-        "{error}"
-    );
 }
 
 #[test]

@@ -698,48 +698,33 @@ type Node = Rewrite<RelationName>;
 /// Recursive descent over the rewrite grammar, one function per level.
 pub(crate) struct Parser<'l, 'a> {
     lexemes: &'l [Lexeme<'a>],
-    pub(crate) at: usize,
+    at: usize,
+    /// Where the expression ends: the parser reads the lexeme here as the
+    /// end, whatever it is.
+    end: usize,
     groups: usize,
-    /// The bytes of the lexemes read so far, and how many may be read: the
-    /// parser reads a lexeme past the limit as the end.
-    bytes: usize,
-    limit: usize,
-    /// Whether a name followed by `:` or `=` ends the rewrite, as the next
-    /// relation's signature in Sungma schema language.
-    signatures: bool,
 }
 
 impl<'l, 'a> Parser<'l, 'a> {
     /// A parser for one whole expression, `lexemes`, which end in
     /// [`Token::End`].
     pub(crate) fn new(lexemes: &'l [Lexeme<'a>]) -> Self {
-        Self {
-            lexemes,
-            at: 0,
-            groups: 0,
-            bytes: 0,
-            limit: usize::MAX,
-            signatures: false,
-        }
+        Self::within(lexemes, 0, lexemes.len() - 1)
     }
 
-    /// A parser for the rewrite at `at` in a schema document's `lexemes`,
-    /// which reads at most [`MAX_EXPRESSION_BYTES`] of lexemes, whitespace
-    /// and comments not counted, and stops before a relation's signature.
-    pub(crate) fn schema(lexemes: &'l [Lexeme<'a>], at: usize) -> Self {
+    /// A parser for the expression from lexeme `start` up to lexeme `end`.
+    pub(crate) fn within(lexemes: &'l [Lexeme<'a>], start: usize, end: usize) -> Self {
         Self {
             lexemes,
-            at,
+            at: start,
+            end,
             groups: 0,
-            bytes: 0,
-            limit: MAX_EXPRESSION_BYTES,
-            signatures: true,
         }
     }
 
     /// A whole expression: a rewrite, then the end.
-    fn parse(mut self) -> Result<Rewrite<RelationName>, Failure> {
-        let rewrite = self.rewrite()?;
+    pub(crate) fn parse(mut self) -> Result<Rewrite<RelationName>, Failure> {
+        let rewrite = self.union()?;
         let next = self.peek();
         if next.token != Token::End {
             return Err(syntax(next, "an operator or the end"));
@@ -747,23 +732,9 @@ impl<'l, 'a> Parser<'l, 'a> {
         Ok(rewrite)
     }
 
-    /// A rewrite, ending at the first lexeme the grammar can't take.
-    pub(crate) fn rewrite(&mut self) -> Result<Node, Failure> {
-        self.union()
-    }
-
-    /// Whether the parser stopped at a lexeme past its byte limit.
-    pub(crate) fn stopped_by_limit(&self) -> bool {
-        self.past_limit(self.lexemes[self.at])
-    }
-
-    fn past_limit(&self, lexeme: Lexeme<'_>) -> bool {
-        lexeme.token != Token::End && self.bytes + lexeme.text.len() > self.limit
-    }
-
     fn peek(&self) -> Lexeme<'a> {
         let lexeme = self.lexemes[self.at];
-        if self.past_limit(lexeme) {
+        if self.at == self.end {
             Lexeme {
                 token: Token::End,
                 ..lexeme
@@ -777,20 +748,8 @@ impl<'l, 'a> Parser<'l, 'a> {
         let lexeme = self.peek();
         if lexeme.token != Token::End {
             self.at += 1;
-            self.bytes += lexeme.text.len();
         }
         lexeme
-    }
-
-    /// Whether a relation's signature, a name then `:` or `=`, comes next.
-    fn at_signature(&self) -> bool {
-        let token = |ahead: usize| {
-            self.lexemes
-                .get(self.at + ahead)
-                .map_or(Token::End, |lexeme| lexeme.token)
-        };
-        matches!(token(0), Token::Name | Token::This)
-            && matches!(token(1), Token::Colon | Token::Equals)
     }
 
     fn union(&mut self) -> Result<Node, Failure> {
@@ -830,17 +789,8 @@ impl<'l, 'a> Parser<'l, 'a> {
         Ok(base)
     }
 
-    /// The next lexeme, unless it starts the next relation's signature,
-    /// which the rewrite has to leave for it.
-    fn take(&mut self, expected: &'static str) -> Result<Lexeme<'a>, Failure> {
-        if self.signatures && self.at_signature() {
-            return Err(syntax(self.peek(), expected));
-        }
-        Ok(self.next())
-    }
-
     fn term(&mut self) -> Result<Node, Failure> {
-        let lexeme = self.take(TERM)?;
+        let lexeme = self.next();
         match lexeme.token {
             Token::This => Ok(Rewrite::This),
             Token::Name => Ok(Rewrite::Computed(relation(lexeme)?)),
@@ -862,7 +812,7 @@ impl<'l, 'a> Parser<'l, 'a> {
     /// Whether the `(` just read opens `(factset, computed)`.
     fn peek_is_fact_to(&self) -> bool {
         matches!(
-            self.lexemes[self.at..],
+            self.lexemes[self.at..self.end],
             [
                 Lexeme {
                     token: Token::This | Token::Name,
@@ -887,7 +837,7 @@ impl<'l, 'a> Parser<'l, 'a> {
 
     fn relation(&mut self) -> Result<RelationName, Failure> {
         const EXPECTED: &str = "a relation name";
-        let lexeme = self.take(EXPECTED)?;
+        let lexeme = self.next();
         match lexeme.token {
             Token::Name => relation(lexeme),
             _ => Err(syntax(lexeme, EXPECTED)),
@@ -896,7 +846,7 @@ impl<'l, 'a> Parser<'l, 'a> {
 
     fn close(&mut self) -> Result<(), Failure> {
         const EXPECTED: &str = "')'";
-        let lexeme = self.take(EXPECTED)?;
+        let lexeme = self.next();
         match lexeme.token {
             Token::Close => Ok(()),
             _ => Err(syntax(lexeme, EXPECTED)),
@@ -996,10 +946,7 @@ pub(crate) fn printed<'a>(
         .collect()
 }
 
-pub(crate) fn expression(
-    text: &mut String,
-    rewrite: &Rewrite<RelationName>,
-) -> Result<(), PrintError> {
+fn expression(text: &mut String, rewrite: &Rewrite<RelationName>) -> Result<(), PrintError> {
     match rewrite {
         Rewrite::This => text.push_str("this"),
         Rewrite::Computed(relation) => text.push_str(printable(relation)?),

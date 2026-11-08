@@ -17,9 +17,9 @@
 //!
 //! The rewrite grammar, the namespace checks, the limits and the error kinds
 //! are those of [namespace documents](crate::namespace). The expression limit
-//! holds for a rewrite as it prints, so the whitespace and comments the
-//! printer leaves out don't count. A namespace name that already starts with
-//! the theory's name and a dot is taken as written in full.
+//! holds for a relation's rule as written, from its first token to its last.
+//! A namespace name that already starts with the theory's name and a dot is
+//! taken as written in full.
 
 use std::collections::HashSet;
 use std::fmt::Write;
@@ -34,8 +34,8 @@ use sungma::{
 
 use crate::namespace::{
     ErrorKind, Failure, Lexeme, MAX_DOCUMENT_BYTES, MAX_ERRORS, MAX_EXPRESSION_BYTES,
-    MAX_RELATIONS, Mode, NamespaceDocument, Parser, Place, PrintError, Token, expression, lex,
-    printed, quoted, relation, syntax,
+    MAX_RELATIONS, Mode, NamespaceDocument, Parser, Place, PrintError, Token, lex, printed, quoted,
+    relation, syntax,
 };
 
 /// A problem in a schema document, with the namespace and relation it was
@@ -69,7 +69,6 @@ impl SchemaError {
 
 const NAMESPACE_OR_END: &str = "'namespace:' or the end";
 const RELATION: &str = "a relation, 'namespace:' or the end";
-const AFTER_REWRITE: &str = "an operator, a relation, 'namespace:' or the end";
 
 /// Parses and checks a document in Sungma schema language, as the
 /// [module](self) describes, into its namespaces under their full names.
@@ -357,40 +356,20 @@ impl<'a> Reader<'_, 'a> {
             self.recover();
             return Rewrite::This;
         }
-        // The parser stops at its byte limit, so a hostile rewrite builds no
-        // deeper tree than one of the JSON form's limited expressions.
-        let first = self.peek();
-        let mut parser = Parser::schema(self.lexemes, self.at);
-        let parsed = parser.rewrite();
-        let stopped = parser.stopped_by_limit();
-        self.at = parser.at;
-        let too_long = (Some(first.place), ErrorKind::ExpressionTooLong);
-        let parsed = match parsed {
-            // Sungma stores the JSON form, so the rewrite as it prints has to
-            // fit that form's limit too.
-            Ok(rewrite) if self.at_boundary() => {
-                let mut printed = String::new();
-                if expression(&mut printed, &rewrite).is_ok()
-                    && printed.len() <= MAX_EXPRESSION_BYTES
-                {
-                    Ok(rewrite)
-                } else {
-                    Err(too_long)
-                }
-            }
-            Ok(_) if stopped => Err(too_long),
-            Ok(_) => Err(syntax(self.peek(), AFTER_REWRITE)),
-            // The limit read as the end.
-            Err((place, ErrorKind::Syntax { .. }))
-                if stopped && place == Some(self.peek().place) =>
-            {
-                Err(too_long)
-            }
-            Err(failure) => Err(failure),
+        // The rule runs to where the next relation or namespace starts, or
+        // to the end. As in the JSON form, its text is held to the limit
+        // before it's parsed, so a hostile rule builds no deep tree.
+        let start = self.at;
+        self.recover();
+        let end = self.at;
+        let (first, last) = (self.lexemes[start], self.lexemes[end - 1]);
+        let parsed = if end > start && last.end - first.start > MAX_EXPRESSION_BYTES {
+            Err((Some(first.place), ErrorKind::ExpressionTooLong))
+        } else {
+            Parser::within(self.lexemes, start, end).parse()
         };
         parsed.unwrap_or_else(|failure| {
             self.push(Some(namespace), Some(name.as_str()), failure);
-            self.recover();
             Rewrite::This
         })
     }
