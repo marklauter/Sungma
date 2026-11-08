@@ -48,30 +48,30 @@ theory: sungma
 
 // The deployment, one resource: sungma.root:sungma
 namespace: root
-  owner:             identity
-  admin:             identity               = this | owner
+  owner: identity
+  admin: identity = this | owner
   namespace_creator: identity, group#member = this | admin
-  group_creator:     identity, group#member = this | admin
-  operator:          identity, group#member = this | admin
-  auditor:           identity, group#member = this | admin
-  reader:            identity, group#member = this | auditor
-  writer:            identity, group#member = this | admin
-  fact_writer:       identity, group#member = this | admin
-  fact_reader:       identity, group#member = this | fact_writer | auditor
-  directory_reader:  identity, group#member = this | auditor
-  access_reader                             = auditor
+  group_creator: identity, group#member = this | admin
+  operator: identity, group#member = this | admin
+  auditor: identity, group#member = this | admin
+  reader: identity, group#member = this | auditor
+  writer: identity, group#member = this | admin
+  fact_writer: identity, group#member = this | admin
+  fact_reader: identity, group#member = this | fact_writer | auditor
+  directory_reader: identity, group#member = this | auditor
+  access_reader = auditor
 
 namespace: namespace
-  parent:        root
-  protected:     root
-  owner:         identity, group#member = this | (parent, owner) ! (protected, owner)
-  admin:         identity, group#member = this | owner | (parent, admin) ! (protected, admin)
-  writer:        identity, group#member = this | admin | (parent, writer)
-  reader:        identity, group#member = this | writer | fact_reader | auditor | (parent, reader)
-  fact_writer:   identity, group#member = this | admin | (parent, fact_writer)
-  fact_reader:   identity, group#member = this | fact_writer | auditor | (parent, fact_reader)
-  auditor:       identity, group#member = this | (parent, auditor)
-  access_reader                         = admin | auditor
+  parent: root
+  protected: root
+  owner: identity, group#member = this | (parent, owner) ! (protected, owner)
+  admin: identity, group#member = this | owner | (parent, admin) ! (protected, admin)
+  writer: identity, group#member = this | admin | (parent, writer)
+  reader: identity, group#member = this | writer | fact_reader | auditor | (parent, reader)
+  fact_writer: identity, group#member = this | admin | (parent, fact_writer)
+  fact_reader: identity, group#member = this | fact_writer | auditor | (parent, fact_reader)
+  auditor: identity, group#member = this | (parent, auditor)
+  access_reader = admin | auditor
 
 namespace: relation
   parent: namespace
@@ -79,10 +79,10 @@ namespace: relation
   reader: identity, group#member = this | writer | (parent, fact_reader)
 
 namespace: group
-  parent:        root
-  owner:         identity, group#member = this | (parent, admin)
-  member:        identity, group#member
-  access_reader                         = owner | (parent, auditor)
+  parent: root
+  owner: identity, group#member = this | (parent, admin)
+  member: identity, group#member
+  access_reader = owner | (parent, auditor)
 ```
 
 Each relation reads like a signature: its name, a colon and the subjects its facts may bind, then its rewrite after `=`.
@@ -103,7 +103,7 @@ Each relation reads like a signature: its name, a colon and the subjects its fac
 
 The rules on top of the grammar:
 
-- Whitespace, line breaks included, only separates tokens. Indentation and alignment are for readers, and a long rewrite can wrap onto as many lines as it needs.
+- Whitespace, line breaks included, only separates tokens. Indentation is for readers, and a long rewrite can wrap onto as many lines as it needs.
 - A subject list or a rewrite ends where its grammar can't take the next token. Subjects are separated by commas, and two terms never sit side by side without an operator, so the next relation's name ends the one before it, and a relation needs no terminator.
 - `namespace:` opens a namespace, and its relations run until the next `namespace:` or the end of the document.
 - `theory` and `namespace` are reserved relation names, in every form, as `this` is. Otherwise `namespace: root` could be a relation named `namespace` that accepts `root`. Reserving them in every form keeps every namespace printable in this one. They stay usable as namespace names, so `sungma.namespace` and `parent: namespace` are fine.
@@ -113,7 +113,7 @@ The rules on top of the grammar:
 - Errors carry a line and column in the document itself. Unlike in the JSON and TOML forms, a rewrite isn't inside a string, so its columns are the document's columns.
 - The limits in [Limits](../specs/namespace-documents.md#limits) apply to each namespace the document holds.
 
-The printer writes one relation per line, sorted by name and comparing bytes, as the other forms do. Alphabetical order is the easiest for readers to find a relation in. An author's own order is lost when a document is printed again. The printer indents relations by two spaces, and pads names and subject lists so the subjects and the `=` line up within a namespace. Author shows and edits this form, and Sungma goes on storing JSON.
+The printer writes one relation per line, sorted by name and comparing bytes, as the other forms do. Alphabetical order is the easiest for readers to find a relation in. An author's own order is lost when a document is printed again. The printer indents relations by two spaces and puts one space after a colon or comma and around `=` and each operator, with no padding to line columns up. Author shows and edits this form, and Sungma goes on storing JSON.
 
 ## Open
 
