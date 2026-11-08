@@ -39,7 +39,7 @@ It works like a file-scoped `namespace Sungma;` declaration in C#: it saves writ
 
 ## Proposed: Sungma schema language
 
-JSON and TOML are fine on the wire, but a person can't reason about a theory written in them. The keys, quotes and table headers bury the rewrites, and one relation's subjects and rewrite end up on separate lines. Sungma schema language is a third form, written for people. It parses to the same namespaces as the other two forms.
+JSON and TOML are fine on the wire, but a person can't reason about a theory written in them. The keys, quotes and table headers bury the rewrites, and one relation's subjects and rewrite end up on separate lines. Sungma schema language is a third form beside JSON and TOML, written for people. It parses to the same namespaces as the other two forms.
 
 Sungma's own model, written in it:
 
@@ -121,5 +121,4 @@ The printer writes one relation per line, indents relations by two spaces, and p
 3. **Forms.** Whether a theory document has a JSON form as well as TOML, and how the printer writes one.
 4. **Limits.** How many namespaces a theory document may hold, and how big it may be.
 5. **The theory name.** Whether it must be one segment, and whether the reserved `sungma` theory is written only by releases.
-6. **Schema language and TOML.** Whether Sungma schema language replaces TOML as the form people write, leaving JSON for the wire and storage, or joins it as a third form.
-7. **Printing order.** A namespace holds its relations unordered, so the printer chooses their order, and an author's order is lost when a document is printed again. Sorting by name is stable, but readers follow a theory better when a relation comes after the relations its rewrite reads, such as `owner` before `admin`. Whether the printer orders relations that way, and breaks ties by name.
+6. **Printing order.** A namespace holds its relations unordered, so the printer chooses their order, and an author's order is lost when a document is printed again. Sorting by name is stable, but readers follow a theory better when a relation comes after the relations its rewrite reads, such as `owner` before `admin`. Whether the printer orders relations that way, and breaks ties by name.
