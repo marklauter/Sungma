@@ -74,7 +74,7 @@ subjects = ["identity", "sungma.group#member"]
 rewrite = "this | admin"
 subjects = ["identity", "sungma.group#member"]
 
-["sungma.root".role_reader]
+["sungma.root".access_reader]
 rewrite = "auditor"
 
 # Each namespace: who owns it, who writes its document, who works with all its facts, and who reads those roles
@@ -106,7 +106,7 @@ subjects = ["identity", "sungma.group#member"]
 rewrite = "this | fact_writer | (parent, auditor)"
 subjects = ["identity", "sungma.group#member"]
 
-["sungma.namespace".role_reader]
+["sungma.namespace".access_reader]
 rewrite = "owner | (parent, auditor)"
 
 # Each relation: who writes and reads the facts under it
@@ -136,7 +136,7 @@ subjects = ["identity", "sungma.group#member"]
 ["sungma.group".member]
 subjects = ["identity", "sungma.group#member"]
 
-["sungma.group".role_reader]
+["sungma.group".access_reader]
 rewrite = "owner | (parent, auditor)"
 ```
 
@@ -145,9 +145,9 @@ Drawn as a graph, each namespace is a node, and each relation's accepted subject
 ```mermaid
 flowchart LR
   relation["<b>sungma.relation</b><br/>parent<br/>writer<br/>reader"]
-  namespace["<b>sungma.namespace</b><br/>parent<br/>protected<br/>owner<br/>writer<br/>reader<br/>fact_writer<br/>fact_reader<br/>role_reader"]
-  root["<b>sungma.root</b><br/>owner<br/>admin<br/>namespace_creator<br/>group_creator<br/>operator<br/>auditor<br/>role_reader"]
-  group["<b>sungma.group</b><br/>parent<br/>owner<br/>member<br/>role_reader"]
+  namespace["<b>sungma.namespace</b><br/>parent<br/>protected<br/>owner<br/>writer<br/>reader<br/>fact_writer<br/>fact_reader<br/>access_reader"]
+  root["<b>sungma.root</b><br/>owner<br/>admin<br/>namespace_creator<br/>group_creator<br/>operator<br/>auditor<br/>access_reader"]
+  group["<b>sungma.group</b><br/>parent<br/>owner<br/>member<br/>access_reader"]
   identity(["identity"])
   relation -- parent --> namespace
   namespace -- parent --> root
@@ -163,7 +163,7 @@ flowchart LR
   group -. "owner, member" .-> group
 ```
 
-Each `role_reader` accepts no facts. It names who reads the roles on a resource, and the endpoints that list roles guard with it:
+Each `access_reader` accepts no facts. It names who reads the roles on a resource, and the endpoints that list roles guard with it:
 
 - On `sungma.root`, the auditors. Every admin is an auditor, so admins and owners read the deployment's roles too.
 - On `sungma.namespace`, the namespace's owners and the deployment's auditors. It covers the roles on the namespace's relations too.
@@ -266,9 +266,10 @@ Sungma's own facts are managed through dedicated endpoints, each with its own ha
 | Retire `N` | `.Check("owner", "sungma.namespace:{N}")` | Retires the namespace. |
 | Read `N`'s document at a [[revision]], or list its versions | `.Check("reader", "sungma.namespace:{N}")` | Reads the document or its versions. |
 | List the [[catalog]] | `.Check("reader", "sungma.namespace:{N}")` for each namespace `N` | Lists only the namespaces whose guard the caller passes. |
-| Read the roles on namespace `N` and its relations | `.Check("role_reader", "sungma.namespace:{N}")` | Lists the role facts on `sungma.namespace:{N}` and on each `sungma.relation:{N}/{R}`. |
-| Read a group's members and owners | `.Check("role_reader", "sungma.group:{G}")` | Lists the `member` and `owner` facts on `sungma.group:{G}`. |
-| Read the deployment's roles | `.Check("role_reader", "sungma.root:sungma")` | Lists the role facts on `sungma.root:sungma`. |
+| Read the roles on namespace `N` and its relations | `.Check("access_reader", "sungma.namespace:{N}")` | Lists the role facts on `sungma.namespace:{N}` and on each `sungma.relation:{N}/{R}`. |
+| Read a group's members and owners | `.Check("access_reader", "sungma.group:{G}")` | Lists the `member` and `owner` facts on `sungma.group:{G}`. |
+| Read the deployment's roles | `.Check("access_reader", "sungma.root:sungma")` | Lists the role facts on `sungma.root:sungma`. |
+| Expand a relation on one of Sungma's own resources, such as `sungma.namespace:{N}#owner` or `sungma.group:{G}#member` | `.Check("access_reader", "<that resource>")`, on the resource of the subjectset being expanded | Shows everyone who holds the relation, including through groups, `parent` and rewrites, so people can see whether the model is set up the way they meant. |
 | Change a deployment setting | `.Check("admin", "sungma.root:sungma")` | Changes the setting. |
 | Read logs and metrics | `.Check("operator", "sungma.root:sungma")` | Reads them. |
 | Read and replay the audit records of decisions | `.Check("auditor", "sungma.root:sungma")` | Reads and replays them. |
@@ -401,7 +402,7 @@ Some rules need the request's context, which the model doesn't hold. Privileged 
 23. Removing a role on a dropped relation is allowed, and a role on a relation the namespace doesn't declare can't be added.
 24. A relation declared again has a `parent` fact whose span opens at the new version.
 25. A role given to a group that hasn't been created is refused.
-26. An owner reads the roles on their namespace and its relations, and the members and owners of their group, and a caller without `role_reader` can't.
+26. An owner reads the roles on their namespace and its relations, and the members and owners of their group, and a caller without `access_reader` can't.
 27. A member removing themselves from a group is refused unless they own it, because the membership endpoint's guard is the group's `owner`.
 28. Changing a deployment setting needs `admin`.
 29. A read at a snapshot taken after a role was removed is refused for the caller who lost it.
@@ -421,6 +422,7 @@ Some rules need the request's context, which the model doesn't hold. Privileged 
 43. Listing the catalog holds only the namespaces the caller reads.
 44. A writer who isn't an owner can't write a version that drops a relation the latest version declares, and an owner can. A writer can write a version that adds a relation or changes a rewrite.
 45. A Sungma release's version of one of Sungma's own namespaces stores no `parent` fact for its relations.
+46. Expanding a relation on one of Sungma's own resources is allowed to a caller in its `access_reader`, and shows holders reached through groups and `parent`, such as an admin owning a namespace. A caller outside `access_reader` is refused.
 
 ## Open
 
