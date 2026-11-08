@@ -1,7 +1,7 @@
 ---
 title: Writes could commit through a write id
 type: note
-summary: "A write that needs more items than one DynamoDB transaction holds can still be atomic if its items carry a write id, not a revision, and one small transaction commits the write by recording the revision that id stands for. Its items need no transaction at all. Adopting it changes how every write and every read works."
+summary: "A write that needs more items than one DynamoDB transaction holds can still be atomic if its items carry a write id, not a revision, and one small transaction commits the write by recording the revision that id stands for. Its items need only small transactions, one per fact. Adopting it changes how every write and every read works."
 status: evolving
 cites:
   - "[[revision]]"
@@ -18,7 +18,7 @@ It's a proposal. [Table](../specs/table.md) describes how writes work today, and
 
 ## The problem
 
-Sungma keeps everything in one DynamoDB table, as [Table](../specs/table.md) specifies. A [[fact]] is one grant, such as "Carol owns file a". A [[namespace]] declares the relations its facts can use, and changes by new versions. Each write takes a [[revision]], a commit timestamp from the writer's [[revision-clock]], and everything lives on one timeline of revisions.
+Sungma keeps everything in one DynamoDB table, as [Table](../specs/table.md) specifies. A [[fact]] is one assertion, such as "Carol owns file a". A [[namespace]] declares the relations its facts can use, and changes by new versions. Each write takes a [[revision]], a commit timestamp from the writer's [[revision-clock]], and everything lives on one timeline of revisions.
 
 The table holds these items:
 
@@ -132,11 +132,11 @@ Apart from the opening, the commit is the write's only transaction. It holds:
 2. The write's status record, set to committed at R, on condition it is still open.
 3. A check for each namespace latest item the write judged facts against, that the item is unchanged and carries no open claim.
 
-The checks keep today's guard. Without them, a grant could land under a relation that was dropped and declared again while the write was storing its items.
+The checks keep today's guard. Without them, a fact could land under a relation that was dropped and declared again while the write was storing its items.
 
 The write's items were stored before, so the commit stays this small however many facts the write carries.
 
-R comes from the revision-clock at commit time, and the writer waits out commit-wait before acknowledging. The revision is chosen at commit, not at the start. So if the head moves while a write is storing its items, nothing is lost: only the commit retries, with a new R. The items stay where they are. Before each try, the write is authorized again at the new head, as [Sungma's own authorization](../specs/sungma-authorization.md#authorizing-a-write) requires, and its namespace checks are made again. A role revoked by a write that committed in between can't carry it through.
+R comes from the revision-clock at commit time, and the writer waits out commit-wait before acknowledging. The revision is chosen at commit, not at the start. So if the head moves while a write is storing its items, nothing is lost: only the commit retries, with a new R. The items stay where they are. Before each try, the write is authorized again at the new head, as [Sungma's own authorization](../specs/sungma-authorization.md#authorizing-a-write) requires, and its namespace checks are made again. A role retired by a write that committed in between can't carry it through.
 
 The item limit now applies only to the commit: the head, the status record, and about 98 namespaces judged. It no longer limits how many facts a write carries.
 
@@ -165,7 +165,7 @@ So either keys keep a revision, with the write id as an attribute and the item s
 
 ### The sweep's restores
 
-To undo an aborted write, the sweep clears its claims and stamps, each on condition it still holds the aborted write's id. A later write may have met the aborted claim and taken the fact over. An unconditional restore would wipe that later write out, losing a committed write or bringing back a deleted fact.
+To undo an aborted write, the sweep clears its claims and stamps, each on condition it still holds the aborted write's id. A later write may have met the aborted claim and taken the fact over. An unconditional restore would wipe that later write out, losing a committed write or bringing back a retired fact.
 
 Because a pointer keeps its committed state apart from its claim, clearing the claim is the whole restore. The sweep never has to remember a previous value.
 
@@ -219,9 +219,9 @@ Writes A and B both change fact x.
 Each hazard below is handled in the design above.
 
 1. **Epochs.** A version that adds or brings back a relation takes its own revision as that relation's epoch, which isn't known until commit. The epoch is stamped with the write id and resolved on read ([What gets stamped](#what-gets-stamped)).
-2. **Dropped and redeclared relations.** A fact write that stores its items before its commit could land a grant under a relation that was dropped and declared again meanwhile. The commit checks each namespace latest item the write judged against ([The commit](#the-commit)).
+2. **Dropped and redeclared relations.** A fact write that stores its items before its commit could land a fact under a relation that was dropped and declared again meanwhile. The commit checks each namespace latest item the write judged against ([The commit](#the-commit)).
 3. **Restoring after an abort.** Restoring a pointer would need its previous value. The pointer and latest item keep the claim apart from the committed state, so a restore only clears the claim ([Claims](#claims)).
-4. **Unconditional restores.** Clearing a claim that a later write has taken over would lose that write, or bring back a deleted fact. The sweep clears a claim only if it still holds the aborted write's id ([The sweep's restores](#the-sweeps-restores)).
+4. **Unconditional restores.** Clearing a claim that a later write has taken over would lose that write, or bring back a retired fact. The sweep clears a claim only if it still holds the aborted write's id ([The sweep's restores](#the-sweeps-restores)).
 5. **A slow write renewing after abort.** An aborted write could renew its lease and then commit. Renewal and commit both require the status to be still open ([Leases](#leases)).
 6. **Finding an aborted write's items.** Without a list, the sweep would have to scan the table. The status record lists the partitions the write touched ([The status record](#the-status-record)).
 7. **Half a write within one read.** A read paging through a partition could see a write open on one page and committed on the next. A read looks each write id up once and uses that answer throughout ([Reads](#reads)).
@@ -233,7 +233,7 @@ Each hazard below is handled in the design above.
 
 ## Its own crate
 
-The protocol knows nothing about facts or namespaces. Write ids, status records, leases, claims, the commit, the sweep and idempotency keys make writes of any size atomic on a store that offers only single-item operations. So the protocol is a crate of its own, generic over a small key-value trait: get, put, conditional put and a range read. Each store implements that trait. Sungma's table is its first user.
+The protocol knows nothing about facts or namespaces. Write ids, status records, leases, claims, the commit, the sweep and idempotency keys make writes of any size atomic on a store that offers single items and small transactions. So the protocol is a crate of its own, generic over a small key-value trait: get, put, conditional put, a range read, and a small transaction of conditional puts. Each store implements that trait. Sungma's table is its first user.
 
 Every store runs the same protocol, including stores that have transactions of any size, such as SQLite. One mechanism means one code path, one test suite run against every store, and the same behavior wherever Sungma runs.
 
@@ -243,7 +243,7 @@ What a read does with a write id stays in Sungma's read path. The crate resolves
 
 It changes every write and every read, so it is all or nothing: reads must handle write ids wherever they appear, and every write must respect other writes' claims.
 
-- [Table](../specs/table.md): the status record as a new item kind, keyed by caller, idempotency key and attempt, write ids in place of revisions, claims on pointers and latest items, the key question above, and the unit of work for each kind of write.
+- [Table](../specs/table.md): the status record and the index item by subject as new item kinds, keyed by caller, idempotency key and attempt, write ids in place of revisions, claims on pointers and latest items, the key question above, and the unit of work for each kind of write.
 - [One timeline](../specs/one-timeline.md): how a read decides what counts, as in [Reads](#reads).
 - [Namespace writes](../specs/namespace-writes.md): a namespace write may store more than one unit of work holds, and may store facts.
 - The API: every write request carries an `Idempotency-Key` header.

@@ -48,10 +48,10 @@ namespace: namespace
   protected: root
   owner: identity, group#member = this | (parent, owner) ! (protected, owner)
   admin: identity, group#member = this | owner | (parent, admin) ! (protected, admin)
-  writer: identity, group#member = this | admin | (parent, writer)
+  writer: identity, group#member = this | admin | (parent, writer) ! (protected, writer)
   reader: identity, group#member = this | writer | fact_reader | auditor | (parent, reader)
   fact_writer: identity, group#member
-    = this | admin | (parent, fact_writer)
+    = this | admin | (parent, fact_writer) ! (protected, fact_writer)
   fact_reader: identity, group#member
     = this | fact_writer | auditor | (parent, fact_reader)
   auditor: identity, group#member

@@ -249,7 +249,7 @@ An error that quotes the document quotes at most 64 bytes of it, cut at a charac
 
 ## Printing
 
-The printer writes a document, in either form, that the parser reads back as an equal namespace. Sungma stores the JSON form, and Author, Sungma's UI, shows the TOML form.
+The printer writes a document, in either form, that the parser reads back as an equal namespace. Sungma stores the JSON form, and Author, Sungma's UI, shows Sungma schema language.
 
 - A relation that accepts no facts prints as its expression in JSON, `"name": "expression"`, and in TOML as a table of its own with `rewrite` alone, so every relation reads the same way.
 - A relation that accepts subjects prints in the accepted-subjects form, `"name": { "rewrite": "expression", "subjects": [...] }` in JSON, and in TOML as a table of its own, `[namespace.name]` with `rewrite = "expression"` and `subjects = [...]` on their own lines. `rewrite` is left out when it is `this`, and subjects print sorted, comparing bytes. In TOML, every relation is its own table, and the namespace's header stands alone above them.
@@ -266,7 +266,7 @@ The printer writes a document, in either form, that the parser reads back as an 
 
 ## Open
 
-- Whether a form of Sungma's own, written for people rather than borrowed from JSON or TOML, joins them one day. It would be a third form of the same namespace, parsed to the same thing.
+- A namespace document can also be written in Sungma schema language, as [Theory documents](theory-documents.md#sungma-schema-language) says.
 - When the factset of a fact-to-subjectset accepts a namespace that doesn't exist yet, whether the namespace write is refused or the check waits until that namespace is written. Two namespaces that reach each other can't both be written first.
 - How a request names its document's form. A write carries the document inside a request body, so the form can't come from the request's content type. The endpoints that take documents settle it.
 

@@ -1,7 +1,7 @@
 ---
 title: Namespace writes wait on namespace versioning
 type: note
-summary: One timeline settles namespace versioning, and namespaces are written as whole documents through the write context; the response, reads, errors, propagation and who may write are open.
+summary: One timeline settles namespace versioning, and namespaces are written as whole documents through the write context; the response, reads, errors and propagation are open.
 status: evolving
 ---
 
@@ -57,8 +57,7 @@ Each is answered with the roadmap item that needs it, so the namespace writes sp
 4. **Propagation.** How a new version reaches other nodes, and how namespace changes appear in the Watch stream.
    Partly settled: namespace versions go into the same change log as facts, and a node behind a request's revision token replays the log up to it.
    Deferred to the Watch service on the roadmap.
-5. **Who may write.** Authorization of namespace writes.
-   Deferred to authentication and authorization on the roadmap; see [[check-takes-a-caller-token-and-a-subject-token]].
+5. **Who may write.** Settled by [Sungma's own authorization](../specs/sungma-authorization.md).
 
 ## The clock port
 
