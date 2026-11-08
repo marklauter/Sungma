@@ -32,7 +32,8 @@ Done means built, tested to the coverage floor and merged. It doesn't mean produ
 28. Client SDKs.
 29. Model simulation and review: load a set of namespaces and facts locally, without writing them to a deployment, run Check and Expand against them, and report who can reach what, including paths by which a role reaches more than it was granted.
 30. Namespace diagrams: Author draws the model as a graph, with each namespace as a node and each relation's accepted subjects as edges.
-31. Opaque zookies.
+31. Token-exchanging proxy: a reverse proxy in front of Sungma that exchanges a caller's token for one from Sungma's issuer of record, so callers that trust other identity providers need no exchange code of their own.
+32. Opaque zookies.
 
 ## Deferred
 

@@ -29,6 +29,13 @@ The issuer is configured so every token it issues carries a `sub` that is stable
 
 Sungma trusts one identity provider, its issuer of record. A service may trust any identity provider it likes, but to call Sungma it exchanges its token for one from Sungma's issuer, through OAuth 2.0 Token Exchange (RFC 8693). The calling service exchanges the token itself, or a reverse proxy in front of Sungma exchanges it for every caller. Trust between identity providers is configured in the identity providers, so swapping one token for another stays their job, and Sungma never maps another provider's claims.
 
+This design is chosen because:
+
+1. **It's less code.** OAuth already specifies token exchange, so Sungma adds nothing of its own.
+2. **Identity providers already hold trust.** Deciding which providers to trust, and how their tokens map to one another, is their job.
+3. **Sungma's ids stay simple.** Every identity is a `sub` from one issuer, with no prefix and no mapping.
+4. **Callers can still skip the exchange,** through a reverse proxy that does it for them, which is a small project of its own.
+
 Two other designs were weighed. Trusting many issuers, each prefixed onto its subjects, needs no exchange, but one person becomes a different subject at each provider, and Sungma would map every issuer's claims. Adding a Sungma person that each provider's accounts link to fixes the first cost, but makes Sungma keep a store of people and link accounts safely, which is an identity provider's job.
 
 ## On behalf of
