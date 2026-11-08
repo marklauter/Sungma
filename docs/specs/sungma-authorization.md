@@ -49,7 +49,7 @@ Neither implies the other. A namespace's writer can't write its facts unless the
 
 ## The model
 
-The model is written as a [theory document](../notes/theory-documents.md). `theory = "sungma"` names the shared first segment once, so `root` means `sungma.root`, `group#member` means `sungma.group#member`, and so on. Each namespace is stored under its full name.
+The model is written as a [theory document](theory-documents.md). `theory = "sungma"` names the shared first segment once, so `root` means `sungma.root`, `group#member` means `sungma.group#member`, and so on. Each namespace is stored under its full name.
 
 ```toml
 theory = "sungma"
