@@ -49,121 +49,56 @@ Neither implies the other. A namespace's writer can't write its facts unless the
 
 ## The model
 
-The model is written as a [theory document](theory-documents.md). `theory = "sungma"` names the shared first segment once, so `root` means `sungma.root`, `group#member` means `sungma.group#member`, and so on. Each namespace is stored under its full name.
+The model is written as a [theory document](theory-documents.md) in Sungma schema language. `theory: sungma` names the shared first segment once, so `root` means `sungma.root`, `group#member` means `sungma.group#member`, and so on. Each namespace is stored under its full name.
 
-```toml
-theory = "sungma"
+```text
+theory: sungma
 
-# The root, one resource, sungma.root:sungma: roles across the whole deployment, which reach every namespace through parent
-[root.owner]
-subjects = ["identity"]
+// The root, one resource, sungma.root:sungma: roles across the whole deployment
+namespace: root
+  owner: identity
+  admin: identity = this | owner
+  namespace_creator: identity, group#member = this | admin
+  group_creator: identity, group#member = this | admin
+  operator: identity, group#member = this | admin
+  auditor: identity, group#member = this | admin
+  reader: identity, group#member = this | auditor
+  writer: identity, group#member = this | admin
+  fact_writer: identity, group#member = this | admin
+  fact_reader: identity, group#member = this | fact_writer | auditor
+  directory_reader: identity, group#member = this | auditor
+  access_reader = auditor
 
-[root.admin]
-rewrite = "this | owner"
-subjects = ["identity"]
+// Each namespace: who owns it, administers it, reads and writes it and its facts, and audits it
+namespace: namespace
+  parent: root
+  protected: root
+  owner: identity, group#member = this | (parent, owner) ! (protected, owner)
+  admin: identity, group#member
+    = this | owner | (parent, admin) ! (protected, admin)
+  writer: identity, group#member
+    = this | admin | (parent, writer) ! (protected, writer)
+  reader: identity, group#member
+    = this | writer | fact_reader | auditor | (parent, reader)
+  fact_writer: identity, group#member
+    = this | admin | (parent, fact_writer) ! (protected, fact_writer)
+  fact_reader: identity, group#member
+    = this | fact_writer | auditor | (parent, fact_reader)
+  auditor: identity, group#member = this | (parent, auditor)
+  access_reader = admin | auditor
 
-[root.namespace_creator]
-rewrite = "this | admin"
-subjects = ["identity", "group#member"]
+// Each relation: who writes and reads the facts under it
+namespace: relation
+  parent: namespace
+  writer: identity, group#member = this | (parent, fact_writer)
+  reader: identity, group#member = this | writer | (parent, fact_reader)
 
-[root.group_creator]
-rewrite = "this | admin"
-subjects = ["identity", "group#member"]
-
-[root.operator]
-rewrite = "this | admin"
-subjects = ["identity", "group#member"]
-
-[root.auditor]
-rewrite = "this | admin"
-subjects = ["identity", "group#member"]
-
-[root.reader]
-rewrite = "this | auditor"
-subjects = ["identity", "group#member"]
-
-[root.writer]
-rewrite = "this | admin"
-subjects = ["identity", "group#member"]
-
-[root.fact_writer]
-rewrite = "this | admin"
-subjects = ["identity", "group#member"]
-
-[root.fact_reader]
-rewrite = "this | fact_writer | auditor"
-subjects = ["identity", "group#member"]
-
-[root.directory_reader]
-rewrite = "this | auditor"
-subjects = ["identity", "group#member"]
-
-[root.access_reader]
-rewrite = "auditor"
-
-# Each namespace: who owns it and may retire it, who administers it, who writes and reads its document, who works with all its facts, its auditors, and who can see who has access to it
-[namespace.parent]
-subjects = ["root"]
-
-[namespace.protected]
-subjects = ["root"]
-
-[namespace.owner]
-rewrite = "this | (parent, owner) ! (protected, owner)"
-subjects = ["identity", "group#member"]
-
-[namespace.admin]
-rewrite = "this | owner | (parent, admin) ! (protected, admin)"
-subjects = ["identity", "group#member"]
-
-[namespace.writer]
-rewrite = "this | admin | (parent, writer) ! (protected, writer)"
-subjects = ["identity", "group#member"]
-
-[namespace.reader]
-rewrite = "this | writer | fact_reader | auditor | (parent, reader)"
-subjects = ["identity", "group#member"]
-
-[namespace.fact_writer]
-rewrite = "this | admin | (parent, fact_writer) ! (protected, fact_writer)"
-subjects = ["identity", "group#member"]
-
-[namespace.fact_reader]
-rewrite = "this | fact_writer | auditor | (parent, fact_reader)"
-subjects = ["identity", "group#member"]
-
-[namespace.auditor]
-rewrite = "this | (parent, auditor)"
-subjects = ["identity", "group#member"]
-
-[namespace.access_reader]
-rewrite = "admin | auditor"
-
-# Each relation: who writes and reads the facts under it
-[relation.parent]
-subjects = ["namespace"]
-
-[relation.writer]
-rewrite = "this | (parent, fact_writer)"
-subjects = ["identity", "group#member"]
-
-[relation.reader]
-rewrite = "this | writer | (parent, fact_reader)"
-subjects = ["identity", "group#member"]
-
-# Each group: who owns it, who is in it, and who reads those roles
-[group.parent]
-subjects = ["root"]
-
-[group.owner]
-rewrite = "this | (parent, admin)"
-subjects = ["identity", "group#member"]
-
-[group.member]
-subjects = ["identity", "group#member"]
-
-[group.access_reader]
-rewrite = "owner | (parent, auditor)"
+// Each group: who owns it and who is in it
+namespace: group
+  parent: root
+  owner: identity, group#member = this | (parent, admin)
+  member: identity, group#member
+  access_reader = owner | (parent, auditor)
 ```
 
 Drawn as a graph, each namespace is a node, and each relation's accepted subjects are its edges. Solid edges are the `parent` and `protected` links that rewrites follow. Dashed edges go to identities, the keys of the people and clients who hold roles, and to groups, which hold roles for their members.
