@@ -168,22 +168,22 @@ Drawn as a graph, each namespace is a node, and each relation's accepted subject
 
 ```mermaid
 flowchart LR
-  relation["<b>sungma.relation</b><br/>parent<br/>writer<br/>reader"]
+  root["<b>sungma.root</b><br/>owner<br/>admin<br/>namespace_creator<br/>group_creator<br/>operator<br/>auditor<br/>reader<br/>writer<br/>fact_writer<br/>fact_reader<br/>directory_reader<br/>access_reader"]
   namespace["<b>sungma.namespace</b><br/>parent<br/>protected<br/>owner<br/>writer<br/>reader<br/>fact_writer<br/>fact_reader<br/>auditor<br/>access_reader"]
-  root["<b>sungma.root</b><br/>owner<br/>admin<br/>namespace_creator<br/>group_creator<br/>operator<br/>auditor<br/>reader<br/>writer<br/>fact_reader<br/>fact_writer<br/>directory_reader<br/>access_reader"]
+  relation["<b>sungma.relation</b><br/>parent<br/>writer<br/>reader"]
   group["<b>sungma.group</b><br/>parent<br/>owner<br/>member<br/>access_reader"]
   identity(["identity"])
-  relation -- parent --> namespace
   namespace -- parent --> root
   namespace -- protected --> root
+  relation -- parent --> namespace
   group -- parent --> root
+  root -. "owner, admin, namespace_creator, group_creator, operator, auditor, reader, writer, fact_writer, fact_reader, directory_reader" .-> identity
+  root -. "namespace_creator, group_creator, operator, auditor, reader, writer, fact_writer, fact_reader, directory_reader" .-> group
+  namespace -. "owner, writer, reader, fact_writer, fact_reader, auditor" .-> identity
+  namespace -. "owner, writer, reader, fact_writer, fact_reader, auditor" .-> group
   relation -. "writer, reader" .-> identity
-  namespace -. "owner, writer, reader, fact_writer, fact_reader" .-> identity
-  root -. "owner, admin, namespace_creator, group_creator, operator, auditor" .-> identity
+  relation -. "writer, reader" .-> group
   group -. "owner, member" .-> identity
-  relation -. "every role" .-> group
-  namespace -. "every role" .-> group
-  root -. "namespace_creator, group_creator, operator, auditor" .-> group
   group -. "owner, member" .-> group
 ```
 
