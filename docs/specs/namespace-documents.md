@@ -92,7 +92,7 @@ The rewrite depth limit is under [Checks](#checks).
 
 ## Names
 
-A relation name is one name. A namespace name is one or more segments joined by dots, such as `file` or `drive.file`. Each segment is a name. A namespace name whose first segment is `sungma` belongs to Sungma, so `sungma` and `sungma.audit` are reserved for Sungma's own namespaces, and `sungmax` isn't. A namespace name is also the namespace part of a resource name, as `file` is in `file:design.md`. The grammars in this spec are EBNF: `::=` defines, `|` alternates, `{ }` repeats zero or more times, quoted text is literal, and `'x'…'y'` is an inclusive character range.
+A relation name is one name. A namespace name is one or more segments joined by dots, such as `file` or `drive.file`. Each segment is a name. A namespace name whose first segment is `sungma` belongs to Sungma, so `sungma`, `sungma.root` and `sungma.audit` are reserved for Sungma's own namespaces, and `sungmax` isn't. A namespace name is also the namespace part of a resource name, as `file` is in `file:design.md`. The grammars in this spec are EBNF: `::=` defines, `|` alternates, `{ }` repeats zero or more times, quoted text is literal, and `'x'…'y'` is an inclusive character range.
 
 ```ebnf
 ⟨namespace name⟩   ::= ⟨name⟩ { '.' ⟨name⟩ }
