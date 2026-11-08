@@ -16,21 +16,22 @@ Done means built, tested to the coverage floor and merged. It doesn't mean produ
 12. Accepted subjects: each relation declares the subjects its facts may bind, and namespace writes and fact writes check against them.
 13. Conditions: a relation may declare a condition, an expression over named parameters, and a fact may carry it with some parameters filled in. A check supplies the rest as context, and answers allowed, denied, or conditional when context is missing. Uses include time windows such as building access from 7am to 8pm, elevation by requiring a recent `auth_time` for privileged relations, and grants that expire at a set time.
 14. Versioned namespaces (done) and a namespace write service.
-15. HTTP and gRPC transports for each service.
-16. Error kinds: every domain error carries a kind, such as validation, not found, gone, conflict or unavailable, and a stable code, such as `fact.undeclared_relation`. Each transport maps kinds to its own status codes in one table.
-17. Authentication and authorization of Sungma's own callers.
-18. Rate limiting: each caller gets a request budget per service, and a caller over its budget is refused until the budget refills.
-19. Distributed storage adapter.
-20. Multi-region deployment with snapshot reads from local replicas.
-21. Garbage collection of fact history past a retention window.
-22. Check result caching.
-23. Index for large and deeply nested groups.
-24. Snapshot dumps for offline processing.
-25. Metrics, tracing and latency objectives.
-26. Client SDKs.
-27. Model simulation and review: load a set of namespaces and facts locally, without writing them to a deployment, run Check and Expand against them, and report who can reach what, including paths by which a role reaches more than it was granted.
-28. Namespace diagrams: Author draws the model as a graph, with each namespace as a node and each relation's accepted subjects as edges.
-29. Opaque zookies.
+15. Restoring namespaces and relations: bring back a retired namespace, or a relation a version dropped, with its old epochs, so its facts count again without restoring the database. See [A retired namespace can be restored](notes/a-retired-namespace-can-be-restored.md).
+16. HTTP and gRPC transports for each service.
+17. Error kinds: every domain error carries a kind, such as validation, not found, gone, conflict or unavailable, and a stable code, such as `fact.undeclared_relation`. Each transport maps kinds to its own status codes in one table.
+18. Authentication and authorization of Sungma's own callers.
+19. Rate limiting: each caller gets a request budget per service, and a caller over its budget is refused until the budget refills.
+20. Distributed storage adapter.
+21. Multi-region deployment with snapshot reads from local replicas.
+22. Garbage collection of fact history past a retention window.
+23. Check result caching.
+24. Index for large and deeply nested groups.
+25. Snapshot dumps for offline processing.
+26. Metrics, tracing and latency objectives.
+27. Client SDKs.
+28. Model simulation and review: load a set of namespaces and facts locally, without writing them to a deployment, run Check and Expand against them, and report who can reach what, including paths by which a role reaches more than it was granted.
+29. Namespace diagrams: Author draws the model as a graph, with each namespace as a node and each relation's accepted subjects as edges.
+30. Opaque zookies.
 
 ## Deferred
 
