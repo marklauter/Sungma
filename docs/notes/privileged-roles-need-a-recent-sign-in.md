@@ -21,7 +21,7 @@ Sungma does the same. Signing in gives everyday work. Using a privileged role ta
 
 These roles in [[sungma-authorization]] change the authorization model itself, or who holds other roles:
 
-- On the deployment: `admin` and `namespace_creator`.
+- On `sungma.root`: `admin`, `namespace_creator` and `group_creator`.
 - On a namespace: `owner` and `writer`.
 - On a group: `owner`.
 

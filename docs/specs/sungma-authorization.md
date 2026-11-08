@@ -48,7 +48,7 @@ Neither implies the other. A namespace's writer can't write its facts unless the
 ## The model
 
 ```toml
-# The deployment, the one resource sungma.root:sungma: its owners and admins, operators and auditors, who may create namespaces and groups, and who reads those roles
+# The root, one resource, sungma.root:sungma: owners, admins, operators, auditors, and who may create namespaces and groups
 ["sungma.root"]
 owner = { subjects = ["identity"] }
 admin = { rewrite = "this | owner", subjects = ["identity"] }
