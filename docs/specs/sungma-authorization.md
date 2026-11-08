@@ -50,7 +50,6 @@ Neither implies the other. A namespace's writer can't write its facts unless the
 ```toml
 # The root, one resource, sungma.root:sungma: owners, admins, operators, auditors, and who may create namespaces and groups
 ["sungma.root"]
-role_reader = "auditor"
 
 ["sungma.root".owner]
 subjects = ["identity"]
@@ -75,9 +74,11 @@ subjects = ["identity", "sungma.group#member"]
 rewrite = "this | admin"
 subjects = ["identity", "sungma.group#member"]
 
+["sungma.root".role_reader]
+rewrite = "auditor"
+
 # Each namespace: who owns it, who writes its document, who works with all its facts, and who reads those roles
 ["sungma.namespace"]
-role_reader = "owner | (parent, auditor)"
 
 ["sungma.namespace".parent]
 subjects = ["sungma.root"]
@@ -105,6 +106,9 @@ subjects = ["identity", "sungma.group#member"]
 rewrite = "this | fact_writer | (parent, auditor)"
 subjects = ["identity", "sungma.group#member"]
 
+["sungma.namespace".role_reader]
+rewrite = "owner | (parent, auditor)"
+
 # Each relation: who writes and reads the facts under it
 ["sungma.relation"]
 
@@ -121,7 +125,6 @@ subjects = ["identity", "sungma.group#member"]
 
 # Each group: who owns it, who is in it, and who reads those roles
 ["sungma.group"]
-role_reader = "owner | (parent, auditor)"
 
 ["sungma.group".parent]
 subjects = ["sungma.root"]
@@ -132,6 +135,9 @@ subjects = ["identity", "sungma.group#member"]
 
 ["sungma.group".member]
 subjects = ["identity", "sungma.group#member"]
+
+["sungma.group".role_reader]
+rewrite = "owner | (parent, auditor)"
 ```
 
 Drawn as a graph, each namespace is a node, and each relation's accepted subjects are its edges. Solid edges are the `parent` and `protected` links that rewrites follow. Dashed edges go to identities, the keys of the people and clients who hold roles, and to groups, which hold roles for their members.

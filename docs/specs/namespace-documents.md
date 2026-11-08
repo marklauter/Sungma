@@ -199,7 +199,7 @@ subjects = ["group#member", "identity"]
 "parent": { "subjects": ["folder"] }
 ```
 
-A relation whose rewrite doesn't read `this` is written as a plain string. It accepts no facts.
+A relation whose rewrite doesn't read `this` accepts no facts. It's written as a plain string, or as an object or table with `rewrite` alone and no `subjects`.
 
 Writing a namespace checks the declarations:
 
@@ -251,8 +251,8 @@ An error that quotes the document quotes at most 64 bytes of it, cut at a charac
 
 The printer writes a document, in either form, that the parser reads back as an equal namespace. Sungma stores the JSON form, and Author, Sungma's UI, shows the TOML form.
 
-- A relation that accepts no facts prints as its expression, `"name": "expression"` in JSON and `name = "expression"` in TOML.
-- A relation that accepts subjects prints in the accepted-subjects form, `"name": { "rewrite": "expression", "subjects": [...] }` in JSON, and in TOML as a table of its own, `[namespace.name]` with `rewrite = "expression"` and `subjects = [...]` on their own lines. `rewrite` is left out when it is `this`, and subjects print sorted, comparing bytes. Relations that accept no facts print as keys under the namespace's header, before the relations' own tables.
+- A relation that accepts no facts prints as its expression in JSON, `"name": "expression"`, and in TOML as a table of its own with `rewrite` alone, so every relation reads the same way.
+- A relation that accepts subjects prints in the accepted-subjects form, `"name": { "rewrite": "expression", "subjects": [...] }` in JSON, and in TOML as a table of its own, `[namespace.name]` with `rewrite = "expression"` and `subjects = [...]` on their own lines. `rewrite` is left out when it is `this`, and subjects print sorted, comparing bytes. In TOML, every relation is its own table, and the namespace's header stands alone above them.
 - A namespace without relations prints as `"name": {}` in JSON and as its header alone in TOML. A dotted namespace name prints quoted in TOML.
 - Operators print with a space on each side, and a fact-to-subjectset prints as `(factset, computed)`.
 - The printer adds parentheses only where the grammar needs them:
