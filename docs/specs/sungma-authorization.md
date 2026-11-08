@@ -351,6 +351,17 @@ A write is authorized at the [head](table.md#the-head) it's based on, in its own
 
 A read is authorized at the snapshot it reads, so a role removed before that snapshot can't read data written after it.
 
+## Ownership
+
+Ownership sits in both the domain model and the access model:
+
+- **The domain model holds ownership as a fact about the thing,** such as which channel a video belongs to. The system the thing belongs to is the truth for it, because more than access depends on it.
+- **The access model holds what ownership allows,** as an `owner` fact, with rewrites saying what owners can do.
+
+The domain decides who owns something, and the access model decides what owning it allows. Neither does the other's job.
+
+For Sungma's own entities, Sungma is both. The catalog holds the namespace, and its `owner` facts say who owns it. The endpoint that creates a namespace stores both in one unit of work, so they can't disagree. A customer's application keeps its own domain and writes the matching `owner` facts to Sungma when ownership changes. An outbox keeps the two in step, so a crash between the writes can't leave them disagreeing.
+
 ## Names and creations
 
 Namespaces, relations and groups each have a name and a creation. The name is what people write, such as `billing`, and it never changes: Sungma has no rename. Each time an entity with that name is created, the creation gets an id of its own, the revision it was created at.
