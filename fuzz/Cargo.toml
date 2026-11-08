@@ -29,6 +29,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "schema"
+path = "fuzz_targets/schema.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "fact"
 path = "fuzz_targets/fact.rs"
 test = false
