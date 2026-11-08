@@ -50,37 +50,88 @@ Neither implies the other. A namespace's writer can't write its facts unless the
 ```toml
 # The root, one resource, sungma.root:sungma: owners, admins, operators, auditors, and who may create namespaces and groups
 ["sungma.root"]
-owner = { subjects = ["identity"] }
-admin = { rewrite = "this | owner", subjects = ["identity"] }
-namespace_creator = { rewrite = "this | admin", subjects = ["identity", "sungma.group#member"] }
-group_creator = { rewrite = "this | admin", subjects = ["identity", "sungma.group#member"] }
-operator = { rewrite = "this | admin", subjects = ["identity", "sungma.group#member"] }
-auditor = { rewrite = "this | admin", subjects = ["identity", "sungma.group#member"] }
 role_reader = "auditor"
+
+["sungma.root".owner]
+subjects = ["identity"]
+
+["sungma.root".admin]
+rewrite = "this | owner"
+subjects = ["identity"]
+
+["sungma.root".namespace_creator]
+rewrite = "this | admin"
+subjects = ["identity", "sungma.group#member"]
+
+["sungma.root".group_creator]
+rewrite = "this | admin"
+subjects = ["identity", "sungma.group#member"]
+
+["sungma.root".operator]
+rewrite = "this | admin"
+subjects = ["identity", "sungma.group#member"]
+
+["sungma.root".auditor]
+rewrite = "this | admin"
+subjects = ["identity", "sungma.group#member"]
 
 # Each namespace: who owns it, who writes its document, who works with all its facts, and who reads those roles
 ["sungma.namespace"]
-parent = { subjects = ["sungma.root"] }
-protected = { subjects = ["sungma.root"] }
-owner = { rewrite = "this | (parent, admin) ! (protected, admin)", subjects = ["identity", "sungma.group#member"] }
-writer = { rewrite = "this | owner", subjects = ["identity", "sungma.group#member"] }
-reader = { rewrite = "this | writer | fact_reader | (parent, auditor)", subjects = ["identity", "sungma.group#member"] }
-fact_writer = { rewrite = "this | owner", subjects = ["identity", "sungma.group#member"] }
-fact_reader = { rewrite = "this | fact_writer | (parent, auditor)", subjects = ["identity", "sungma.group#member"] }
 role_reader = "owner | (parent, auditor)"
+
+["sungma.namespace".parent]
+subjects = ["sungma.root"]
+
+["sungma.namespace".protected]
+subjects = ["sungma.root"]
+
+["sungma.namespace".owner]
+rewrite = "this | (parent, admin) ! (protected, admin)"
+subjects = ["identity", "sungma.group#member"]
+
+["sungma.namespace".writer]
+rewrite = "this | owner"
+subjects = ["identity", "sungma.group#member"]
+
+["sungma.namespace".reader]
+rewrite = "this | writer | fact_reader | (parent, auditor)"
+subjects = ["identity", "sungma.group#member"]
+
+["sungma.namespace".fact_writer]
+rewrite = "this | owner"
+subjects = ["identity", "sungma.group#member"]
+
+["sungma.namespace".fact_reader]
+rewrite = "this | fact_writer | (parent, auditor)"
+subjects = ["identity", "sungma.group#member"]
 
 # Each relation: who writes and reads the facts under it
 ["sungma.relation"]
-parent = { subjects = ["sungma.namespace"] }
-writer = { rewrite = "this | (parent, fact_writer)", subjects = ["identity", "sungma.group#member"] }
-reader = { rewrite = "this | writer | (parent, fact_reader)", subjects = ["identity", "sungma.group#member"] }
+
+["sungma.relation".parent]
+subjects = ["sungma.namespace"]
+
+["sungma.relation".writer]
+rewrite = "this | (parent, fact_writer)"
+subjects = ["identity", "sungma.group#member"]
+
+["sungma.relation".reader]
+rewrite = "this | writer | (parent, fact_reader)"
+subjects = ["identity", "sungma.group#member"]
 
 # Each group: who owns it, who is in it, and who reads those roles
 ["sungma.group"]
-parent = { subjects = ["sungma.root"] }
-owner = { rewrite = "this | (parent, admin)", subjects = ["identity", "sungma.group#member"] }
-member = { subjects = ["identity", "sungma.group#member"] }
 role_reader = "owner | (parent, auditor)"
+
+["sungma.group".parent]
+subjects = ["sungma.root"]
+
+["sungma.group".owner]
+rewrite = "this | (parent, admin)"
+subjects = ["identity", "sungma.group#member"]
+
+["sungma.group".member]
+subjects = ["identity", "sungma.group#member"]
 ```
 
 Drawn as a graph, each namespace is a node, and each relation's accepted subjects are its edges. Solid edges are the `parent` and `protected` links that rewrites follow. Dashed edges go to identities, the keys of the people and clients who hold roles, and to groups, which hold roles for their members.

@@ -45,12 +45,27 @@ The same namespace in TOML:
 
 ```toml
 [file]
-owner = { subjects = ["identity"] }
-parent = { subjects = ["folder"] }
-editor = { rewrite = "this | owner", subjects = ["group#member", "identity"] }
-viewer = { rewrite = "(this | editor | (parent, viewer)) ! banned", subjects = ["group#member", "identity"] }
-auditor = { rewrite = "this & viewer", subjects = ["identity"] }
-banned = { subjects = ["identity"] }
+
+[file.auditor]
+rewrite = "this & viewer"
+subjects = ["identity"]
+
+[file.banned]
+subjects = ["identity"]
+
+[file.editor]
+rewrite = "this | owner"
+subjects = ["group#member", "identity"]
+
+[file.owner]
+subjects = ["identity"]
+
+[file.parent]
+subjects = ["folder"]
+
+[file.viewer]
+rewrite = "(this | editor | (parent, viewer)) ! banned"
+subjects = ["group#member", "identity"]
 ```
 
 ## JSON form
@@ -66,12 +81,12 @@ banned = { subjects = ["identity"] }
 
 ## TOML form
 
-- A document is one TOML table. Its header is the namespace's name, and each key in it names a relation and holds that relation's value.
-- A dotted namespace name is quoted, as in `["drive.file"]`. TOML reads an unquoted dot as a nested table.
-- A relation's value is its expression, a non-empty string, or an inline table that also declares the subjects it accepts, as [Accepted subjects](#accepted-subjects) says. Any other value, such as `true`, a number, an array or a nested table like `a.b = "x"`, is refused.
+- A document is one TOML table, whose header is the namespace's name. Each relation is either a key in that table, holding the relation's value, or a table of its own under it, such as `[file.viewer]`, holding the relation's `rewrite` and `subjects`.
+- A dotted namespace name is quoted, as in `["drive.file"]` and `["drive.file".viewer]`. TOML reads an unquoted dot as a nested table.
+- A relation's value is its expression, a non-empty string, or a table that also declares the subjects it accepts, as [Accepted subjects](#accepted-subjects) says. The table may be inline, `viewer = { rewrite = "…", subjects = ["…"] }`, or a table of its own. Both read as the same relation. Any other value, such as `true`, a number or an array, is refused, and so is a relation's table with a key other than `rewrite` or `subjects`, or a table nested deeper than a relation.
 - An expression may be any TOML string: basic `"…"`, literal `'…'`, or multi-line when it wraps. Strings hold no escapes, as in the JSON form, and a string with one is refused.
 - A namespace without relations is a header with no keys.
-- A document declares exactly one namespace. An empty document, or one with two or more tables, is refused.
+- A document declares exactly one namespace. An empty document, or one with two or more namespaces' tables, is refused.
 - A relation named twice, or a table header written twice, is refused. TOML itself refuses both.
 - Comments are allowed. They aren't kept, because Sungma stores the namespace as the printer's JSON form.
 - A document is TOML, version 1.0 or later. Like the JSON form, it carries no grammar version.
@@ -166,13 +181,18 @@ Each entry in `subjects` is one of:
 
 No entry accepts every subject. A relation that would take anything can't have its links checked, so each one names what it takes.
 
-A relation that declares subjects is written as an object in JSON and an inline table in TOML, with a `subjects` key and an optional `rewrite` key, and no other keys. `rewrite` is a non-empty expression string. Left out, it is `this`:
+A relation that declares subjects is written as an object in JSON and a table in TOML, with a `subjects` key and an optional `rewrite` key, and no other keys. `rewrite` is a non-empty expression string. Left out, it is `this`:
 
 ```toml
-[folder]
-owner = { subjects = ["identity"] }
-parent = { subjects = ["folder"] }
-viewer = { rewrite = "this | owner | (parent, viewer)", subjects = ["identity", "group#member"] }
+[folder.owner]
+subjects = ["identity"]
+
+[folder.parent]
+subjects = ["folder"]
+
+[folder.viewer]
+rewrite = "this | owner | (parent, viewer)"
+subjects = ["group#member", "identity"]
 ```
 
 ```json
@@ -232,7 +252,7 @@ An error that quotes the document quotes at most 64 bytes of it, cut at a charac
 The printer writes a document, in either form, that the parser reads back as an equal namespace. Sungma stores the JSON form, and Author, Sungma's UI, shows the TOML form.
 
 - A relation that accepts no facts prints as its expression, `"name": "expression"` in JSON and `name = "expression"` in TOML.
-- A relation that accepts subjects prints in the accepted-subjects form, `"name": { "rewrite": "expression", "subjects": [...] }` in JSON and `name = { rewrite = "expression", subjects = [...] }` in TOML. `rewrite` is left out when it is `this`, and subjects print sorted, comparing bytes.
+- A relation that accepts subjects prints in the accepted-subjects form, `"name": { "rewrite": "expression", "subjects": [...] }` in JSON, and in TOML as a table of its own, `[namespace.name]` with `rewrite = "expression"` and `subjects = [...]` on their own lines. `rewrite` is left out when it is `this`, and subjects print sorted, comparing bytes. Relations that accept no facts print as keys under the namespace's header, before the relations' own tables.
 - A namespace without relations prints as `"name": {}` in JSON and as its header alone in TOML. A dotted namespace name prints quoted in TOML.
 - Operators print with a space on each side, and a fact-to-subjectset prints as `(factset, computed)`.
 - The printer adds parentheses only where the grammar needs them:
@@ -241,12 +261,11 @@ The printer writes a document, in either form, that the parser reads back as an 
   - A union or intersection on the left of `!` is parenthesized.
   - Any operator node on the right of `!` is parenthesized.
 - Relations print sorted by name, comparing bytes. Order carries no meaning, so a namespace holds its relations unordered, and the printer sorts them so one namespace always prints as the same text.
-- JSON objects indent by two spaces, one key per line. The TOML form prints one key per line under its header. Lines end in `\n` on every platform.
+- JSON objects indent by two spaces, one key per line. The TOML form prints one key per line, with a blank line before each table. Lines end in `\n` on every platform.
 - Printing refuses, with a `PrintError`, a name made with `new_unchecked` that breaks the grammar, including `this`, or a union or intersection with one operand.
 
 ## Open
 
-- Whether the TOML form also accepts each relation as a table of its own, such as `["sungma.root".admin]` with `rewrite` and `subjects` on their own lines, and whether the printer writes that layout. It reads better than inline tables once relations carry more than an expression. Today a nested table is refused.
 - Whether a form of Sungma's own, written for people rather than borrowed from JSON or TOML, joins them one day. It would be a third form of the same namespace, parsed to the same thing.
 - When the factset of a fact-to-subjectset accepts a namespace that doesn't exist yet, whether the namespace write is refused or the check waits until that namespace is written. Two namespaces that reach each other can't both be written first.
 - How a request names its document's form. A write carries the document inside a request body, so the form can't come from the request's content type. The endpoints that take documents settle it.
@@ -282,7 +301,7 @@ The cases each class covers, at minimum.
 6. Text that isn't valid JSON or TOML is refused with its library's error.
 7. JSON escapes are handled as the [JSON form](#json-form) section says.
 8. The TOML sample parses to the same namespace as the JSON sample.
-9. A TOML document with no table, two tables, a non-string value or a nested table is refused, and so is a string with an escape. Basic, literal and multi-line strings each parse.
+9. A TOML document with no table, two namespaces' tables, a non-string value, a relation's table with an unknown key, or a table nested deeper than a relation is refused, and so is a string with an escape. Basic, literal and multi-line strings each parse. A relation written inline and the same relation written as a table of its own parse to equal namespaces.
 10. A dotted namespace name parses quoted. Unquoted, it's refused as a nested table.
 11. Comments are allowed anywhere TOML allows them, and change nothing.
 12. The accepted-subjects form parses in each form, with and without `rewrite`. A key other than `rewrite` or `subjects`, an empty `subjects`, an entry written twice, an entry that breaks the grammar, and an empty `rewrite` are each refused.
