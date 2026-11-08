@@ -51,7 +51,7 @@ Neither implies the other. A namespace's writer can't write its facts unless the
 
 The model is written as a [theory document](theory-documents.md) in Sungma schema language. `theory: sungma` names the shared first segment once, so `root` means `sungma.root`, `group#member` means `sungma.group#member`, and so on. Each namespace is stored under its full name.
 
-```text
+```c
 theory: sungma
 
 // The root, one resource, sungma.root:sungma: roles across the whole deployment
