@@ -308,7 +308,7 @@ Roles on a relation are guarded on the relation's namespace, so `sungma.relation
 Each protection rests on a guard, or on an endpoint that doesn't exist:
 
 - No endpoint writes `sungma.root:sungma#owner`, so no caller adds or retires an owner, an owner included. No one takes the deployment over through the API, and no one locks its owners out. [The deployment's owners](#the-deployments-owners) says how owners are set.
-- Adding or retiring an admin needs `owner` on the deployment. Admins run everything else but can't add or retire an admin, so no admin can remove another.
+- Adding or retiring an admin needs `owner` on the deployment. Admins run everything else but can't add or retire an admin, so no admin can retire another's admin fact.
 - No endpoint writes Sungma's own `parent` and `protected` facts. Setup writes them, and the endpoints that create a namespace or a group, or write a version, store only the facts [Base facts](#base-facts) gives. A caller who could add a `parent` fact could tie a namespace to a resource they control. A caller who could retire one could cut a namespace, relation or group off from the admins and auditors who reach it through `parent`. A caller who could retire a `protected` fact could make the admins owners of one of Sungma's own namespaces.
 - Changing a group's members needs the group's `owner`, so a member can't leave a group on their own.
 
@@ -398,7 +398,7 @@ A Sungma release's versions of Sungma's own namespaces store no `parent` fact fo
 
 Some rules aren't about who may write, but about the shape of the data. Write checks them separately from the guards, for every caller:
 
-- Adding a fact under `sungma.relation:<namespace>/<relation>` is refused unless the namespace's latest version declares that relation. Otherwise a role on a relation that doesn't exist yet would lie hidden, then take effect the day a version declares it. Retiring one is always allowed, so a role on a dropped relation can still be removed before the relation returns.
+- Adding a fact under `sungma.relation:<namespace>/<relation>` is refused unless the namespace's latest version declares that relation. Otherwise a role on a relation that doesn't exist yet would lie hidden, then take effect the day a version declares it. Retiring one is always allowed, so a role on a dropped relation can still be retired before the relation returns.
 - Adding a fact whose subject is `sungma.group:<name>#member` is refused unless that group has been created. Otherwise a role given to a group that doesn't exist yet would take effect the day someone creates it.
 - Creating a namespace whose first segment is `sungma` is refused, as [Protected namespaces](#protected-namespaces) says.
 - Nesting is bounded, so a check that reaches a group never has to walk an unbounded graph.

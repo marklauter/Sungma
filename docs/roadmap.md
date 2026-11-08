@@ -21,7 +21,7 @@ Done means built, tested to the coverage floor and merged. It doesn't mean produ
 17. HTTP and gRPC transports for each service.
 18. Error kinds: every domain error carries a kind, such as validation, not found, gone, conflict or unavailable, and a stable code, such as `fact.undeclared_relation`. Each transport maps kinds to its own status codes in one table.
 19. Authentication and authorization of Sungma's own callers.
-20. Rate limiting: each caller gets a request budget per endpoint, and a caller over its budget is refused until the budget refills. Requests that only retire facts, whether through an endpoint that retires a group member's or a role's fact or through the fact endpoint, have budgets of their own, so a caller's revocations never wait behind its own adds. Every write competes for the head, so without budgets one caller flooding writes can make everyone else's, revocations included, run out of retries.
+20. Rate limiting: each caller gets request budgets, and a caller over a budget is refused until it refills. A budget covers one endpoint or a group of endpoints that share it, such as every endpoint that only retires facts, so a caller's retires draw on a budget of their own, so a caller's revocations never wait behind its own adds. Every write competes for the head, so without budgets one caller flooding writes can make everyone else's, revocations included, run out of retries.
 21. SQLite storage adapter: run Sungma in one container on a SQLite file, with the same write-id protocol as DynamoDB, as a free, self-hosted edition.
 22. Distributed storage adapter.
 23. Multi-region deployment with snapshot reads from local replicas.
