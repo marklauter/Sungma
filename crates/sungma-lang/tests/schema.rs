@@ -924,17 +924,69 @@ fn a_malformed_namespace_name_is_one_name_error() {
     }
 }
 
+// The final mutation run's survivors, each pinned.
+
+/// A rule that prints as exactly `bytes`: `this`, runs of ` | this`, and a
+/// last relation whose name makes up the rest, with that relation declared.
+fn rule_of(bytes: usize) -> (String, String) {
+    let runs = (bytes - 4 - 3 - 1) / 7;
+    let last = "n".repeat(bytes - 4 - 3 - 7 * runs);
+    let rule = format!("this{} | {last}", " | this".repeat(runs));
+    assert_eq!(rule.len(), bytes);
+    (format!("  {last} = this\n"), rule)
+}
+
 #[test]
-fn a_document_declares_at_most_max_namespaces() {
-    let namespaces =
-        |count: usize| -> String { (0..count).map(|i| format!("namespace: n{i}\n")).collect() };
-    assert_eq!(
-        parsed(&namespaces(schema::MAX_NAMESPACES)).len(),
-        schema::MAX_NAMESPACES
-    );
-    let error = only(&namespaces(schema::MAX_NAMESPACES + 1));
-    assert!(
-        matches!(error.kind, ErrorKind::TooManyNamespaces(count) if count == schema::MAX_NAMESPACES + 1),
-        "{error}"
-    );
+fn errors_from_a_later_namespace_count_toward_the_cap() {
+    let first: String = (0..MAX_ERRORS)
+        .map(|i| format!("  r{i} = undeclared\n"))
+        .collect();
+    let text = format!("namespace: a\n{first}namespace: b\n  r = undeclared\n");
+    let errors = refused(&text);
+    assert_eq!(errors.len(), MAX_ERRORS + 1);
+    assert!(matches!(errors[MAX_ERRORS].kind, ErrorKind::TooManyErrors));
+}
+
+#[test]
+fn a_name_still_starting_with_the_theory_prints_in_full() {
+    let documents = parsed("theory: t\nnamespace: t.t.a\n");
+    assert_eq!(documents[0].namespace.as_str(), "t.t.a");
+    let printed = print(Some("t"), &documents).expect("a printable namespace");
+    assert_eq!(parsed(&printed)[0].namespace.as_str(), "t.t.a");
+}
+
+#[test]
+fn the_printer_writes_a_rule_exactly_at_the_limit() {
+    let (declared, rule) = rule_of(MAX_EXPRESSION_BYTES);
+    let documents = parsed(&format!("namespace: t\n{declared}  r = {rule}"));
+    print(None, &documents).expect("a rule at the limit prints");
+}
+
+#[test]
+fn the_printer_writes_a_document_exactly_at_the_limit() {
+    // Namespaces of one long rule each, then a last one whose rule makes
+    // up the rest of the limit. Written as the printer writes them, so the
+    // document is its own printed form. The last namespace declares every
+    // name `rule_of` may end on, so its size doesn't depend on which.
+    let (declared, rule) = rule_of(3000);
+    let namespace = |name: &str, declared: &str, rule: &str| {
+        format!("namespace: {name}\n{declared}  r = {rule}\n")
+    };
+    let each = namespace("n0000", &declared, &rule).len() + 1;
+    // Leaves the last rule between 100 bytes and one namespace more,
+    // within the rule limit.
+    let count = (MAX_DOCUMENT_BYTES - 200) / each;
+    let body: Vec<_> = (0..count)
+        .map(|i| namespace(&format!("n{i:04}"), &declared, &rule))
+        .collect();
+    let body = body.join("\n");
+    let every: String = (1..=7)
+        .map(|n| format!("  {} = this\n", "n".repeat(n)))
+        .collect();
+    let room = MAX_DOCUMENT_BYTES - body.len() - 1 - namespace("z", &every, "").len();
+    let (_, last_rule) = rule_of(room);
+    let text = format!("{body}\n{}", namespace("z", &every, &last_rule));
+    assert_eq!(text.len(), MAX_DOCUMENT_BYTES);
+    let printed = print(None, &parsed(&text)).expect("a document at the limit prints");
+    assert_eq!(printed, text);
 }
