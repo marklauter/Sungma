@@ -830,11 +830,17 @@ impl<'l, 'a> Parser<'l, 'a> {
         Ok(base)
     }
 
-    fn term(&mut self) -> Result<Node, Failure> {
+    /// The next lexeme, unless it starts the next relation's signature,
+    /// which the rewrite has to leave for it.
+    fn take(&mut self, expected: &'static str) -> Result<Lexeme<'a>, Failure> {
         if self.signatures && self.at_signature() {
-            return Err(syntax(self.peek(), TERM));
+            return Err(syntax(self.peek(), expected));
         }
-        let lexeme = self.next();
+        Ok(self.next())
+    }
+
+    fn term(&mut self) -> Result<Node, Failure> {
+        let lexeme = self.take(TERM)?;
         match lexeme.token {
             Token::This => Ok(Rewrite::This),
             Token::Name => Ok(Rewrite::Computed(relation(lexeme)?)),
@@ -880,18 +886,20 @@ impl<'l, 'a> Parser<'l, 'a> {
     }
 
     fn relation(&mut self) -> Result<RelationName, Failure> {
-        let lexeme = self.next();
+        const EXPECTED: &str = "a relation name";
+        let lexeme = self.take(EXPECTED)?;
         match lexeme.token {
             Token::Name => relation(lexeme),
-            _ => Err(syntax(lexeme, "a relation name")),
+            _ => Err(syntax(lexeme, EXPECTED)),
         }
     }
 
     fn close(&mut self) -> Result<(), Failure> {
-        let lexeme = self.next();
+        const EXPECTED: &str = "')'";
+        let lexeme = self.take(EXPECTED)?;
         match lexeme.token {
             Token::Close => Ok(()),
-            _ => Err(syntax(lexeme, "')'")),
+            _ => Err(syntax(lexeme, EXPECTED)),
         }
     }
 }
@@ -988,7 +996,10 @@ pub(crate) fn printed<'a>(
         .collect()
 }
 
-fn expression(text: &mut String, rewrite: &Rewrite<RelationName>) -> Result<(), PrintError> {
+pub(crate) fn expression(
+    text: &mut String,
+    rewrite: &Rewrite<RelationName>,
+) -> Result<(), PrintError> {
     match rewrite {
         Rewrite::This => text.push_str("this"),
         Rewrite::Computed(relation) => text.push_str(printable(relation)?),

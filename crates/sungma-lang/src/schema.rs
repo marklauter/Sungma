@@ -17,7 +17,9 @@
 //!
 //! The rewrite grammar, the namespace checks, the limits and the error kinds
 //! are those of [namespace documents](crate::namespace). The expression limit
-//! counts a rewrite's tokens, not the whitespace or comments between them.
+//! holds for a rewrite as it prints, so the whitespace and comments the
+//! printer leaves out don't count. A namespace name that already starts with
+//! the theory's name and a dot is taken as written in full.
 
 use std::collections::HashSet;
 use std::fmt::Write;
@@ -31,8 +33,9 @@ use sungma::{
 };
 
 use crate::namespace::{
-    ErrorKind, Failure, Lexeme, MAX_DOCUMENT_BYTES, MAX_ERRORS, MAX_RELATIONS, Mode,
-    NamespaceDocument, Parser, Place, PrintError, Token, lex, printed, quoted, relation, syntax,
+    ErrorKind, Failure, Lexeme, MAX_DOCUMENT_BYTES, MAX_ERRORS, MAX_EXPRESSION_BYTES,
+    MAX_RELATIONS, Mode, NamespaceDocument, Parser, Place, PrintError, Token, expression, lex,
+    printed, quoted, relation, syntax,
 };
 
 /// A problem in a schema document, with the namespace and relation it was
@@ -202,9 +205,7 @@ impl<'a> Reader<'_, 'a> {
         let theory = if self.at_keyword("theory") {
             self.next();
             self.next();
-            let errors = self.errors.len();
-            let theory = self.namespace_name(None);
-            (self.errors.len() == errors).then_some(theory)
+            self.namespace_name(None).ok()
         } else {
             None
         };
@@ -214,11 +215,18 @@ impl<'a> Reader<'_, 'a> {
             if self.at_keyword("namespace") {
                 let place = self.next().place;
                 self.next();
-                let name = self.namespace_name(theory.as_ref());
-                if !seen.insert(name.clone()) {
-                    let kind = ErrorKind::DuplicateNamespace(quote(name.as_str()));
-                    self.push(Some(&name), None, (Some(place), kind));
-                }
+                // A name that fails is reported once, and isn't a duplicate
+                // of another that fails.
+                let name = match self.namespace_name(theory.as_ref()) {
+                    Ok(name) => {
+                        if !seen.insert(name.clone()) {
+                            let kind = ErrorKind::DuplicateNamespace(quote(name.as_str()));
+                            self.push(Some(&name), None, (Some(place), kind));
+                        }
+                        name
+                    }
+                    Err(name) => name,
+                };
                 if let Some(relations) = self.relations(&name, place) {
                     namespaces.push(NamespaceDocument {
                         namespace: name,
@@ -247,11 +255,20 @@ impl<'a> Reader<'_, 'a> {
     }
 
     /// A namespace name, its segments written without spaces between them,
-    /// with the theory's name before it. A name that fails is kept,
-    /// unchecked, for the checks that follow; the document is refused, so it
-    /// never leaves.
-    fn namespace_name(&mut self, theory: Option<&NamespaceName>) -> NamespaceName {
+    /// with the theory's name before it unless it's written in full. A name
+    /// that fails is reported, and kept, unchecked, as the error, for the
+    /// checks that follow; the document is refused, so it never leaves.
+    fn namespace_name(
+        &mut self,
+        theory: Option<&NamespaceName>,
+    ) -> Result<NamespaceName, NamespaceName> {
+        const EXPECTED: &str = "a namespace name";
         let first = self.peek();
+        // A missing name leaves the next header or relation alone.
+        if self.at_relation() {
+            self.push(None, None, syntax(first, EXPECTED));
+            return Err(NamespaceName::new_unchecked(""));
+        }
         let mut end = first.start;
         for lexeme in &self.lexemes[self.at..] {
             let segment = matches!(lexeme.token, Token::Name | Token::This | Token::Dot);
@@ -262,16 +279,18 @@ impl<'a> Reader<'_, 'a> {
             self.at += 1;
         }
         if end == first.start {
-            let failure = syntax(self.next(), "a namespace name");
+            let failure = syntax(self.next(), EXPECTED);
             self.push(None, None, failure);
-            return NamespaceName::new_unchecked("");
+            return Err(NamespaceName::new_unchecked(""));
         }
         let written = &self.text[first.start..end];
         let name = match theory {
-            Some(theory) => format!("{theory}.{written}"),
-            None => written.to_owned(),
+            Some(theory) if !written.starts_with(&format!("{theory}.")) => {
+                format!("{theory}.{written}")
+            }
+            _ => written.to_owned(),
         };
-        name.parse().unwrap_or_else(|error| {
+        name.parse().map_err(|error| {
             self.push(None, None, (Some(first.place), ErrorKind::Name(error)));
             NamespaceName::new_unchecked(name)
         })
@@ -347,7 +366,18 @@ impl<'a> Reader<'_, 'a> {
         self.at = parser.at;
         let too_long = (Some(first.place), ErrorKind::ExpressionTooLong);
         let parsed = match parsed {
-            Ok(rewrite) if self.at_boundary() => Ok(rewrite),
+            // Sungma stores the JSON form, so the rewrite as it prints has to
+            // fit that form's limit too.
+            Ok(rewrite) if self.at_boundary() => {
+                let mut printed = String::new();
+                if expression(&mut printed, &rewrite).is_ok()
+                    && printed.len() <= MAX_EXPRESSION_BYTES
+                {
+                    Ok(rewrite)
+                } else {
+                    Err(too_long)
+                }
+            }
             Ok(_) if stopped => Err(too_long),
             Ok(_) => Err(syntax(self.peek(), AFTER_REWRITE)),
             // The limit read as the end.
@@ -413,11 +443,14 @@ pub fn print(
             return Err(PrintError::DuplicateNamespace(quote(name.as_str())));
         }
         previous = Some(name.as_str());
+        // A name that still starts with the theory once it's taken off is
+        // written in full, as the parser reads it.
         let written = match &prefix {
-            Some(prefix) => name
-                .as_str()
-                .strip_prefix(prefix.as_str())
-                .ok_or_else(|| PrintError::OutsideTheory(quote(name.as_str())))?,
+            Some(prefix) => match name.as_str().strip_prefix(prefix.as_str()) {
+                Some(rest) if rest.starts_with(prefix.as_str()) => name.as_str(),
+                Some(rest) => rest,
+                None => return Err(PrintError::OutsideTheory(quote(name.as_str()))),
+            },
             None => name.as_str(),
         };
         let relations = printed(name, relations)?;
@@ -428,9 +461,11 @@ pub fn print(
         for (relation, expression) in relations {
             let _ = writeln!(text, "  {relation} = {expression}");
         }
-    }
-    if text.len() > MAX_DOCUMENT_BYTES {
-        return Err(PrintError::TooLarge);
+        // Checked as it grows, so a caller's oversized input is refused
+        // without being printed whole.
+        if text.len() > MAX_DOCUMENT_BYTES {
+            return Err(PrintError::TooLarge);
+        }
     }
     Ok(text)
 }

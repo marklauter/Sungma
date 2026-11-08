@@ -574,37 +574,31 @@ fn each_limit_holds_at_its_value_and_breaks_one_past_it() {
     );
     assert_eq!(error.place, Some(Place { line: 1, column: 1 }));
 
-    // `this` and runs of `|this`, in as many parentheses as make up the
-    // rest of `bytes`.
+    // A rewrite as it prints, of exactly `bytes`: `this`, runs of ` | this`,
+    // and a last relation whose name makes up the rest. Each text declares
+    // that relation and the rewrite.
     let expression = |bytes: usize| {
-        let mut runs = (bytes - 4) / 5;
-        while !(bytes - 4 - 5 * runs).is_multiple_of(2) {
-            runs -= 1;
-        }
-        let parentheses = (bytes - 4 - 5 * runs) / 2;
-        let text = format!(
-            "{}this{}{}",
-            "(".repeat(parentheses),
-            "|this".repeat(runs),
-            ")".repeat(parentheses)
-        );
-        assert_eq!(text.len(), bytes);
-        text
+        let runs = (bytes - 4 - 3 - 1) / 7;
+        let last = "n".repeat(bytes - 4 - 3 - 7 * runs);
+        let printed = format!("this{} | {last}", " | this".repeat(runs));
+        assert_eq!(printed.len(), bytes);
+        (format!("namespace: t\n  {last} = this\n  r = "), printed)
     };
     for bytes in [MAX_EXPRESSION_BYTES - 1, MAX_EXPRESSION_BYTES] {
-        one(&format!("namespace: t\n  r = {}", expression(bytes)));
+        let (head, printed) = expression(bytes);
+        one(&format!("{head}{printed}"));
+        // Spaces, line breaks and comments the printer leaves out don't
+        // count.
+        let spaced = printed.replace(" | ", "   // a comment\n    |   ");
+        one(&format!("{head}{spaced}"));
     }
-    // The limit counts tokens: spaces, line breaks and comments between them
-    // don't count.
-    let spaced = expression(MAX_EXPRESSION_BYTES).replace('|', " // a comment\n    | ");
-    one(&format!("namespace: t\n  r = {spaced}"));
-    let text = expression(MAX_EXPRESSION_BYTES + 1);
-    let error = only(&format!("namespace: t\n  r = {text}"));
+    let (head, printed) = expression(MAX_EXPRESSION_BYTES + 1);
+    let error = only(&format!("{head}{printed}"));
     assert!(
         matches!(error.kind, ErrorKind::ExpressionTooLong),
         "{error}"
     );
-    assert_eq!(error.place, Some(Place { line: 2, column: 7 }));
+    assert_eq!(error.place, Some(Place { line: 3, column: 7 }));
 
     let name = "n".repeat(MAX_NAMESPACE_BYTES - 2);
     one(&format!("theory: t\nnamespace: {name}"));
@@ -810,19 +804,13 @@ fn a_long_chain_of_exclusions_is_refused_without_a_crash() {
 }
 
 #[test]
-fn a_dense_rewrite_prints_as_a_document_that_parses_back() {
-    let dense = vec!["b"; 1030].join("|");
-    let documents = parsed(&format!("namespace: t\n  b = this\n  a = {dense}"));
-    let printed = print(None, &documents).expect("a printable namespace");
-    let again = parsed(&printed);
-    assert_eq!(sorted(&again[0].relations), sorted(&documents[0].relations));
-}
-
-#[test]
 fn the_printer_refuses_a_document_past_the_size_limit() {
-    let dense = vec!["b"; 1900].join("|");
-    let relations: String = (0..499).map(|i| format!("r{i}={dense}\n")).collect();
-    let text = format!("namespace: s\nb=this\n{relations}namespace: t\nb=this\n{relations}");
+    // Each rewrite prints at the expression limit, at twice the bytes it's
+    // written in.
+    let dense = vec!["b"; 1024].join("|");
+    let relations: String = (0..400).map(|i| format!("r{i}={dense}\n")).collect();
+    let namespace = |name: &str| format!("namespace: {name}\nb=this\n{relations}");
+    let text = format!("{}{}{}", namespace("s"), namespace("t"), namespace("u"));
     assert!(text.len() < MAX_DOCUMENT_BYTES);
     let documents = parsed(&text);
     assert_eq!(print(None, &documents), Err(PrintError::TooLarge));
@@ -867,4 +855,73 @@ fn a_rewrite_left_open_doesnt_swallow_what_comes_next() {
 fn a_bad_theory_name_is_reported_once() {
     let error = only("theory: a..b\nnamespace: c\nnamespace: d\n");
     assert_eq!(error.place, Some(Place { line: 1, column: 9 }));
+}
+
+#[test]
+fn every_accepted_rewrite_prints_within_the_json_forms_limit() {
+    // `b | b | …` printed is four bytes a term, so 1024 terms print to 4093
+    // bytes and 1025 to 4097.
+    let rewrite = |terms: usize| vec!["b"; terms].join("|");
+    let fits = parsed(&format!(
+        "namespace: t\n  b = this\n  a = {}",
+        rewrite(1024)
+    ));
+    let json = namespace::print(&fits[0].namespace, &fits[0].relations).expect("printable");
+    namespace::parse(&json).expect("the JSON form reads it back");
+    let error = only(&format!(
+        "namespace: t\n  b = this\n  a = {}",
+        rewrite(1025)
+    ));
+    assert!(
+        matches!(error.kind, ErrorKind::ExpressionTooLong),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_namespace_named_in_full_under_its_theory_is_the_same_namespace() {
+    let error = only("theory: t\nnamespace: a\nnamespace: t.a\n");
+    assert!(
+        matches!(error.kind, ErrorKind::DuplicateNamespace(_)),
+        "{error}"
+    );
+    let documents = parsed("theory: t\nnamespace: t.b\n");
+    assert_eq!(documents[0].namespace.as_str(), "t.b");
+}
+
+#[test]
+fn an_unclosed_parenthesis_doesnt_swallow_the_next_relation() {
+    for text in [
+        "namespace: x\n  b = this\n  r = (b\n  a = this\n  c = a\n",
+        "namespace: x\n  b = this\n  r = (b,\n  a = this\n  c = a\n",
+    ] {
+        let error = only(text);
+        assert_eq!(error.relation.as_deref(), Some("r"), "{text:?}");
+    }
+}
+
+#[test]
+fn namespaces_missing_their_names_arent_duplicates() {
+    let errors = refused("namespace: =\nnamespace: =\n");
+    assert!(
+        errors
+            .iter()
+            .all(|error| !matches!(error.kind, ErrorKind::DuplicateNamespace(_))),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn a_missing_name_doesnt_take_the_next_lines_keyword() {
+    for (text, found) in [
+        ("theory:\nnamespace: x\n  a = this\n", "'namespace'"),
+        ("namespace:\n  owner = this\n", "'owner'"),
+    ] {
+        let error = only(text);
+        assert_eq!(
+            error.kind.to_string(),
+            format!("expected a namespace name, found {found}"),
+            "{text:?}"
+        );
+    }
 }
