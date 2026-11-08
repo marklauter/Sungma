@@ -53,5 +53,5 @@ Forwarding can come first and exchange later without changing the check request,
 
 ## Open
 
-- How Sungma models which clients may check which namespaces, and which may act for users.
+- Which clients may act for users, beyond the read policies in [[sungma-authorization]], which already decide which callers may check which relations.
 - Whether a check against an unknown namespace or relation answers `Unknown`, which shows a prober the names that exist, or `Denied`.
