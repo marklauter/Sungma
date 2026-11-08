@@ -1,7 +1,7 @@
 ---
 title: Namespace documents
 type: specification
-summary: "A namespace document is the JSON or TOML form of one namespace: its name, each relation's rewrite written as an expression string, and the subjects each relation's facts may bind. Both forms parse to the same namespace."
+summary: "A namespace document is the JSON or TOML form of one namespace: its name, each relation's rewrite written as an expression string, the subjects each relation's facts may bind, and which relation may write them. Both forms parse to the same namespace."
 status: evolving
 cites:
   - "[[namespace]]"
@@ -166,13 +166,13 @@ Each entry in `subjects` is one of:
 
 No entry accepts every subject. A relation that would take anything can't have its links checked, so each one names what it takes.
 
-A relation that declares subjects is written as an object in JSON and an inline table in TOML, with a `subjects` key and an optional `rewrite` key, and no other keys. `rewrite` is a non-empty expression string. Left out, it is `this`:
+A relation that declares subjects is written as an object in JSON and an inline table in TOML, with a `subjects` key, an optional `rewrite` key and an optional `written_by` key, and no other keys. `rewrite` is a non-empty expression string. Left out, it is `this`. `written_by` is a relation name on the same namespace, or the keyword `sungma`. It names who may write the relation's facts, as [Sungma's own authorization](sungma-authorization.md#who-writes-each-relation) says:
 
 ```toml
 [folder]
 owner = { subjects = ["identity"] }
 parent = { subjects = ["folder"] }
-viewer = { rewrite = "this | owner | (parent, viewer)", subjects = ["identity", "group#member"] }
+viewer = { rewrite = "this | owner | (parent, viewer)", subjects = ["identity", "group#member"], written_by = "owner" }
 ```
 
 ```json
@@ -186,8 +186,9 @@ Writing a namespace checks the declarations:
 - A rewrite that reads `this` without declaring subjects is refused, and so is a relation that declares subjects without reading `this`.
 - For each fact-to-subjectset, every namespace its factset accepts must declare its computed relation. `(parent, viewer)` is refused unless `folder` declares `viewer`.
 - Every accepted subject `namespace#relation` names a relation that namespace declares. `group#member` is refused unless `group` declares `member`.
+- `written_by` names a relation the namespace declares, or is `sungma`. `written_by = "editor"` is refused unless the namespace declares `editor`.
 
-`identity` is reserved: no namespace may be named `identity`.
+`identity` is reserved: no namespace may be named `identity`. `sungma` is reserved as a `written_by` value: no relation may be named `sungma`.
 
 ## Meaning
 
@@ -232,7 +233,7 @@ An error that quotes the document quotes at most 64 bytes of it, cut at a charac
 The printer writes a document, in either form, that the parser reads back as an equal namespace. Sungma stores the JSON form, and Author, Sungma's UI, shows the TOML form.
 
 - A relation that accepts no facts prints as its expression, `"name": "expression"` in JSON and `name = "expression"` in TOML.
-- A relation that accepts subjects prints in the accepted-subjects form, `"name": { "rewrite": "expression", "subjects": [...] }` in JSON and `name = { rewrite = "expression", subjects = [...] }` in TOML. `rewrite` is left out when it is `this`, and subjects print sorted, comparing bytes.
+- A relation that accepts subjects prints in the accepted-subjects form, `"name": { "rewrite": "expression", "subjects": [...] }` in JSON and `name = { rewrite = "expression", subjects = [...] }` in TOML. `written_by` prints after `subjects`, as `"written_by": "relation"` in JSON and `written_by = "relation"` in TOML, and is left out when absent. `rewrite` is left out when it is `this`, and subjects print sorted, comparing bytes.
 - A namespace without relations prints as `"name": {}` in JSON and as its header alone in TOML. A dotted namespace name prints quoted in TOML.
 - Operators print with a space on each side, and a fact-to-subjectset prints as `(factset, computed)`.
 - The printer adds parentheses only where the grammar needs them:
@@ -283,7 +284,7 @@ The cases each class covers, at minimum.
 9. A TOML document with no table, two tables, a non-string value or a nested table is refused, and so is a string with an escape. Basic, literal and multi-line strings each parse.
 10. A dotted namespace name parses quoted. Unquoted, it's refused as a nested table.
 11. Comments are allowed anywhere TOML allows them, and change nothing.
-12. The accepted-subjects form parses in each form, with and without `rewrite`. A key other than `rewrite` or `subjects`, an empty `subjects`, an entry written twice, an entry that breaks the grammar, and an empty `rewrite` are each refused.
+12. The accepted-subjects form parses in each form, with and without `rewrite`, and with and without `written_by`. A key other than `rewrite`, `subjects` or `written_by`, an empty `subjects`, an entry written twice, an entry that breaks the grammar, an empty `rewrite`, and a `written_by` that isn't a string or breaks the relation name grammar are each refused.
 
 #### Names
 
@@ -315,6 +316,8 @@ The cases each class covers, at minimum.
 9. A fact whose subject isn't among its relation's accepted subjects is refused, and so is a fact under a relation that accepts none.
 10. A namespace named `identity` is refused. The reserved first segment `sungma` is enforced when a namespace is written, as [Sungma's own authorization](sungma-authorization.md#protected-namespaces) says, so the parser still reads Sungma's own namespaces and facts that name them.
 11. An accepted subject `namespace#relation` is refused when that namespace doesn't declare the relation.
+12. `written_by` naming a relation the namespace declares is allowed, and so is `written_by = "sungma"`. `written_by` naming a relation the namespace doesn't declare is refused.
+13. A relation named `sungma` is refused.
 
 #### Errors
 
@@ -331,13 +334,13 @@ The cases each class covers, at minimum.
 
 #### Printing
 
-1. The printer writes the canonical form of the sample, and of a namespace without relations, in each form. `rewrite` is left out when it is `this`, and subjects print sorted.
+1. The printer writes the canonical form of the sample, and of a namespace without relations, in each form. `rewrite` is left out when it is `this`, subjects print sorted, and `written_by` prints after `subjects` and is left out when absent.
 2. The printer adds only the parentheses the grammar needs.
 3. The printer refuses, as a caller defect, a union or intersection with one operand, and a name made with `new_unchecked` that breaks the grammar or is `this`, so it never writes a document that parses differently or isn't valid in its form.
 
 #### Round trips
 
-1. A property test builds namespaces, prints them in each form, parses them back to equal namespaces, and prints the same text again. A namespace printed in one form and parsed from the other is equal too. The generated trees include both depth limits and wide runs of one operator, and the generated relations include accepted subjects of every kind.
+1. A property test builds namespaces, prints them in each form, parses them back to equal namespaces, and prints the same text again. A namespace printed in one form and parsed from the other is equal too. The generated trees include both depth limits and wide runs of one operator, and the generated relations include accepted subjects of every kind, with and without `written_by`.
 2. A property test generates expression strings from the grammar's tokens and checks that parse, print and parse again gives an equal tree.
 
 #### Hostile input
