@@ -223,6 +223,14 @@ Each hazard below is handled in the design above.
 11. **Lookups for every write.** A write that stores its items in its commit stamps its revision directly, so readers look nothing up for it ([What gets stamped](#what-gets-stamped)).
 12. **A writer tied up.** A writer handles one write at a time, and a write with many items takes long. Whether it blocks its writer is open ([The writer](#the-writer)).
 
+## Its own crate
+
+The protocol knows nothing about facts or namespaces. Write ids, status records, leases, claims, the commit, the sweep and request ids make writes of any size atomic on a store that offers only single-item operations. So the protocol is a crate of its own, generic over a small key-value trait: get, put, conditional put and a range read. Each store implements that trait. Sungma's table is its first user.
+
+Every store runs the same protocol, including stores that have transactions of any size, such as SQLite. One mechanism means one code path, one test suite run against every store, and the same behavior wherever Sungma runs.
+
+What a read does with a write id stays in Sungma's read path. The crate resolves a write id to committed at a revision, open or aborted. When a stamped span counts is the rule in [One timeline](../specs/one-timeline.md).
+
 ## What else changes if it's adopted
 
 It changes every write and every read, so it is all or nothing: reads must handle write ids wherever they appear, and every write must respect other writes' claims.

@@ -21,17 +21,18 @@ Done means built, tested to the coverage floor and merged. It doesn't mean produ
 17. Error kinds: every domain error carries a kind, such as validation, not found, gone, conflict or unavailable, and a stable code, such as `fact.undeclared_relation`. Each transport maps kinds to its own status codes in one table.
 18. Authentication and authorization of Sungma's own callers.
 19. Rate limiting: each caller gets a request budget per service, and a caller over its budget is refused until the budget refills.
-20. Distributed storage adapter.
-21. Multi-region deployment with snapshot reads from local replicas.
-22. Garbage collection of fact history past a retention window.
-23. Check result caching.
-24. Index for large and deeply nested groups.
-25. Snapshot dumps for offline processing.
-26. Metrics, tracing and latency objectives.
-27. Client SDKs.
-28. Model simulation and review: load a set of namespaces and facts locally, without writing them to a deployment, run Check and Expand against them, and report who can reach what, including paths by which a role reaches more than it was granted.
-29. Namespace diagrams: Author draws the model as a graph, with each namespace as a node and each relation's accepted subjects as edges.
-30. Opaque zookies.
+20. SQLite storage adapter: run Sungma in one container on a SQLite file, with the same write-id protocol as DynamoDB, as a free, self-hosted edition.
+21. Distributed storage adapter.
+22. Multi-region deployment with snapshot reads from local replicas.
+23. Garbage collection of fact history past a retention window.
+24. Check result caching.
+25. Index for large and deeply nested groups.
+26. Snapshot dumps for offline processing.
+27. Metrics, tracing and latency objectives.
+28. Client SDKs.
+29. Model simulation and review: load a set of namespaces and facts locally, without writing them to a deployment, run Check and Expand against them, and report who can reach what, including paths by which a role reaches more than it was granted.
+30. Namespace diagrams: Author draws the model as a graph, with each namespace as a node and each relation's accepted subjects as edges.
+31. Opaque zookies.
 
 ## Deferred
 
