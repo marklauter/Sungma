@@ -23,7 +23,7 @@ A theory document is notation. Sungma parses it into namespaces and checks and s
 
 Sungma's own model, in Sungma schema language:
 
-```text
+```c
 theory: sungma
 
 // The deployment, one resource: sungma.root:sungma
@@ -87,6 +87,7 @@ subjects = ["identity"]
 
 The theory name is a prefix. The parser adds it, and a dot, to each unqualified namespace name in the document: the name in each namespace's header, and the namespace part of each accepted subject. In the sample, `root` means `sungma.root`, and `group#member` means `sungma.group#member`.
 
+- A name that already starts with the theory name and a dot is a full name, and gets no prefix. Under `theory: t`, both `a` and `t.a` name `t.a`.
 - `identity` is never prefixed. It names an [[identity]], not a namespace.
 - Rewrites name only [[relation]]s, never namespaces, so the prefix never touches a [[rewrite]].
 - A document without a theory name holds full names.
@@ -117,7 +118,7 @@ Each relation reads like a signature: its name, a colon and the [[subject]]s its
 The rules on top of the grammar:
 
 - Whitespace, line breaks included, only separates tokens. Indentation is for readers. A rewrite can start on its signature's line or on the next one, `=` included, and can wrap onto as many lines as it needs.
-- A subject list or a rewrite ends where its grammar can't take the next token. Subjects are separated by commas, and two terms never sit side by side without an operator, so the next relation's name ends the one before it. A relation needs no terminator.
+- A rewrite runs until the next relation's signature, a name followed by `:` or `=`, or until the next `namespace:` or the end. A subject list ends where no comma follows. A relation needs no terminator.
 - `namespace:` opens a namespace, and its relations run until the next `namespace:` or the end of the document.
 - `theory` and `namespace` are reserved relation names, in every form, as `this` is. Otherwise `namespace: root` could be a relation named `namespace` that accepts `root`. Reserving them in every form keeps every namespace printable in this one. They stay usable as namespace names, so `sungma.namespace` and `parent: namespace` are fine.
 - `//` starts a comment that runs to the end of the line. `#` can't start one, because subjectsets use it. Comments aren't kept.
@@ -149,7 +150,12 @@ A refused document declares nothing.
 
 ## Limits
 
-The [Limits](namespace-documents.md#limits) of a namespace document apply to each namespace a theory document holds. The document's own limits are [open](#open).
+The [Limits](namespace-documents.md#limits) of a namespace document apply to each namespace a theory document holds:
+
+- Each relation's rewrite is at most 4 KiB as written, from its first token to its last, comments between them included, as a namespace document's expression string is. It's measured before it's parsed.
+- A full namespace name, the theory name and a dot included, is at most 256 bytes.
+
+A theory document is at most 4 MiB. That also bounds how many namespaces it holds, so there's no separate count.
 
 ## Errors
 
@@ -161,7 +167,8 @@ In Sungma schema language, an error carries a line and a column in the document 
 
 The printer writes a set of namespaces as a theory document that the parser reads back as equal namespaces.
 
-- Given a theory name, the printer takes it off every namespace name that starts with it and a dot, and writes it once at the top. Every namespace it's given has to start with it.
+- Given a theory name, the printer takes it off every namespace name that starts with it and a dot, and writes it once at the top. Every namespace it's given has to start with it. A name that would still start with the theory name once it's taken off prints in full, so it reads back as the same name.
+- The printer refuses a rewrite that prints longer than 4 KiB, as a dense one spaced out can, and a document longer than 4 MiB, since the parser would refuse either.
 - Namespaces print sorted by full name, comparing bytes. Within a namespace, relations print sorted by name, comparing bytes, as in a namespace document. Alphabetical order is the easiest for readers to find a relation in. An author's own order and line breaks are lost when a document is printed again.
 - In Sungma schema language, each relation prints on one line, indented two spaces, with one space after each colon and comma and around `=` and each operator, and no padding to line up columns. A blank line comes before each namespace. Subjects print sorted, comparing bytes, and parentheses print only where the grammar needs them, as in a namespace document.
 - In TOML, the printer writes the `theory` key first, then each relation as a table of its own, as a namespace document's printer does.
@@ -170,12 +177,11 @@ Author, Sungma's UI, shows and edits namespaces in Sungma schema language. Sungm
 
 ## Open
 
-1. **Names from outside the theory.** With a theory name, an unqualified name means a namespace in the theory. How a document names a namespace outside it, especially one with no dots such as `file`, needs a rule: always the full name, or a mark for "outside this theory". Until then, a dotted name after a theory name is ambiguous: `drive.file` could be `sungma.drive.file` or `drive.file`.
+1. **Names from outside the theory.** With a theory name, every name that doesn't start with it gets it as a prefix, so a document can't name a namespace outside the theory, such as `file` or `drive.file`. That needs a rule: a mark for "outside this theory", or no outside names in a theory document.
 2. **Writing a theory document.** Whether it's one write per namespace, sent in turn, or one write that stores all of them atomically. One write per namespace needs nothing new. Atomic writes of any size would come with [write ids](../notes/writes-commit-through-a-write-id.md).
 3. **A JSON form.** Whether a theory document has a JSON form, and how the printer writes one.
-4. **Limits.** How many namespaces a theory document may hold, and how big it may be.
-5. **The theory name.** Whether it must be one segment, and whether only Sungma releases write documents in the reserved `sungma` theory.
-6. **A namespace named `theory` in TOML.** A top-level `theory` key and a namespace whose unqualified name is `theory` would collide, and TOML refuses a key written twice.
+4. **The theory name.** Whether it must be one segment, and whether only Sungma releases write documents in the reserved `sungma` theory.
+5. **A namespace named `theory` in TOML.** A top-level `theory` key and a namespace whose unqualified name is `theory` would collide, and TOML refuses a key written twice.
 
 ## Required tests
 
@@ -196,5 +202,8 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 13. An error in Sungma schema language carries the document's line and column, after multibyte characters and after a rewrite that wraps, and names its namespace.
 14. Print then parse gives equal namespaces, and printing again gives the same text, in each form, with and without a theory name.
 15. The printer refuses a theory name that a namespace it's given doesn't start with.
-16. Fuzzing and a property test run the Sungma schema language parser on arbitrary input without a panic, a stack overflow or an abort.
-17. Mutation testing leaves no surviving mutant in the Sungma schema language parser or printer.
+16. Under a theory name, a name that already starts with it is its full name, and prints in full when it would still start with it once the theory name is taken off.
+17. A rewrite of 4 KiB as written, from its first token to its last, is accepted, and one byte more is refused, comments inside it counting. The printer refuses a rewrite that prints past 4 KiB, and writes a document of exactly 4 MiB.
+18. A rewrite left open, or a missing namespace name, doesn't take the next relation's signature or the next `namespace:`.
+19. Fuzzing and a property test run the Sungma schema language parser on arbitrary input without a panic, a stack overflow or an abort.
+20. Mutation testing leaves no surviving mutant in the Sungma schema language parser or printer.
