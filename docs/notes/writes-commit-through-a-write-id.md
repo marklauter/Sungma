@@ -275,7 +275,7 @@ It changes every write and every read, so it is all or nothing: reads must handl
 1. **Key layout.** Whether keys keep a revision, with the write id as an attribute and a placeholder key until commit, or reads stop relying on key order.
 2. **Leases.** How long a lease is, how often an open write renews it, and the exact rule for judging expiry under clock uncertainty.
 3. **Status records.** Whether they are kept forever or dropped after a grace period longer than any read.
-4. **The write-id range.** How large it is.
+4. **Stamp size.** A write id holds the caller's `sub`, an idempotency key and an attempt, which is long to stamp on every item. Whether items carry it whole, or carry a short id that the status record maps to it.
 5. **The writer.** Whether a write with many items blocks its writer, or runs alongside short writes.
 6. **The choice.** Whether this or a head lease is chosen.
 7. **How fact writes are ordered.** Whether a fact write names the version of each fact it was based on, as a namespace write does.
