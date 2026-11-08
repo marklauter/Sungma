@@ -210,7 +210,9 @@ impl<'a> Reader<'_, 'a> {
         };
         let mut namespaces = Vec::new();
         let mut seen = HashSet::new();
-        loop {
+        // Each pass reads at least one lexeme, so the lexemes bound the passes
+        // however the conditions inside read.
+        for _ in 0..self.lexemes.len() {
             if self.at_keyword("namespace") {
                 let place = self.next().place;
                 self.next();
@@ -316,7 +318,11 @@ impl<'a> Reader<'_, 'a> {
         }
         let mut relations = Vec::new();
         let mut places = Vec::new();
-        while !(self.peek().token == Token::End || self.at_keyword("namespace")) {
+        // Bounded as the document's passes are.
+        for _ in 0..self.lexemes.len() {
+            if self.peek().token == Token::End || self.at_keyword("namespace") {
+                break;
+            }
             if !self.at_relation() {
                 let failure = syntax(self.next(), RELATION);
                 self.push(Some(namespace), None, failure);
