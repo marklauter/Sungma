@@ -149,4 +149,4 @@ Each test has a table of its own, so tests don't share state. Without DynamoDB L
 
 ## Open
 
-1. **Writes larger than one unit of work.** A unit of work holds 100 items and 4 MB, so a big write, such as a namespace with many relations or a large batch of facts, can't commit in one. The answer decides how every write commits, not only big ones. [Writes could commit through a write id](../notes/writes-commit-through-a-write-id.md) sets out a proposal, its worked example, and the other answers, including a head lease. Choosing it changes this spec and [One timeline](one-timeline.md).
+1. **Writes larger than one unit of work.** A unit of work holds 100 items and 4 MB, so a big write, such as a namespace with many relations or a large batch of facts, can't commit in one. The answer decides how every write commits, not only big ones. Writes commit through a write id, as [Writes commit through a write id](../notes/writes-commit-through-a-write-id.md) decides, with a worked example and the answers it rejected, such as a head lease. Building it changes this spec and [One timeline](one-timeline.md).

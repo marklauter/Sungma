@@ -1,5 +1,5 @@
 ---
-title: Writes could commit through a write id
+title: Writes commit through a write id
 type: note
 summary: "A write that needs more items than one DynamoDB transaction holds can still be atomic if its items carry a write id, not a revision, and one small transaction commits the write by recording the revision that id stands for. Its items need only small transactions, one per fact. Adopting it changes how every write and every read works."
 status: evolving
@@ -12,9 +12,9 @@ cites:
   - "[[epoch]]"
 ---
 
-# Writes could commit through a write id
+# Writes commit through a write id
 
-It's a proposal. [Table](../specs/table.md) describes how writes work today, and links here from its open question.
+This is the decided design for how every write commits. [Table](../specs/table.md) still describes how writes work today, and changes when this is built.
 
 ## The problem
 
@@ -260,9 +260,9 @@ It changes every write and every read, so it is all or nothing: reads must handl
 
 ## Other answers
 
-- **A head lease.** A write reserves the head, stores every item at the next revision R in as many pieces as it needs, and moves the head to R last. Reads stop at the head, so nothing at R shows early. Other writes wait the whole time, and the head must never move past R while R's items remain: a dead writer's items have to be undone, or R marked aborted, first. Simpler for readers, but every such write stops every other write.
-- **A cap on items per write.** Large changes are split into several versions by the caller. Simple, but an odd limit for an author to run into.
-- **Writing the extra items after the commit.** The namespace commits first, and its `parent` facts follow in later transactions. Readers then see the namespace for a while without some of its facts. That is safe only where a missing fact can only deny access, never grant it, which is what "fails closed" means. Under an exclusion, a missing fact on the excluded side widens access. So this works only for facts that never sit on the excluded side of an exclusion.
+- **A head lease. Rejected, because writes never wait.** A write reserves the head, stores every item at the next revision R in as many pieces as it needs, and moves the head to R last. Reads stop at the head, so nothing at R shows early. Other writes wait the whole time, and the head must never move past R while R's items remain: a dead writer's items have to be undone, or R marked aborted, first. Simpler for readers, but every such write stops every other write.
+- **A cap on items per write. Rejected.** Large changes are split into several versions by the caller. Simple, but an odd limit for an author to run into.
+- **Writing the extra items after the commit. Rejected.** The namespace commits first, and its `parent` facts follow in later transactions. Readers then see the namespace for a while without some of its facts. That is safe only where a missing fact can only deny access, never grant it, which is what "fails closed" means. Under an exclusion, a missing fact on the excluded side widens access. So this works only for facts that never sit on the excluded side of an exclusion.
 
 ## Prior art
 
@@ -277,5 +277,4 @@ It changes every write and every read, so it is all or nothing: reads must handl
 3. **Status records.** Whether they are kept forever or dropped after a grace period longer than any read.
 4. **Stamp size.** A write id holds the caller's `sub`, an idempotency key and an attempt, which is long to stamp on every item. Whether items carry it whole, or carry a short id that the status record maps to it.
 5. **The writer.** Whether a write with many items blocks its writer, or runs alongside short writes.
-6. **The choice.** Whether this or a head lease is chosen.
-7. **How fact writes are ordered.** Whether a fact write names the version of each fact it was based on, as a namespace write does.
+6. **How fact writes are ordered.** Whether a fact write names the version of each fact it was based on, as a namespace write does.
