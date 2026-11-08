@@ -447,4 +447,14 @@ Some rules need the request's context, which the model doesn't hold. Privileged 
 9. How privileged writes need a recent sign-in until conditions exist. Once they do, a privileged relation's condition requires a recent `auth_time`, as [Conditions](#conditions) says.
 10. Whether Expand runs the reader guard on each subjectset it reaches, as well as the one it expands. An expansion shows the members of subjectsets under other relations, such as a group's members, that the caller may not be able to read on their own.
 11. Which guard Watch runs. The changelog stream carries facts under many relations, and namespace versions across the catalog, so no guard on one resource covers it. Filtering each change by its relation's reader guard at its revision stays in the model, but it isn't one fixed guard, and it leaves open whether a caller learns that a change it can't read happened. A deployment relation, such as a `watcher` on `sungma.root`, would be one fixed guard, but its holders would read every fact.
+    - A proposed answer: a caller watches one thing at a time, and each has its own guard.
+
+      | Watching | What it streams | Guard |
+      |---|---|---|
+      | the whole deployment | every change | `.Check("watcher", "sungma.root:sungma")`, with a new `watcher = this | auditor` on `sungma.root` |
+      | namespace `N` | `N`'s facts and versions | `.Check("fact_reader", "sungma.namespace:{N}")` |
+      | group `G` | members and owners joining and leaving `G` | `.Check("access_reader", "sungma.group:{G}")` |
+      | user `U` | every fact whose subject is `U`, so their access changing | the caller's own `sub` is `U`, or `.Check("access_reader", "sungma.root:sungma")` to watch someone else |
+
+      Watching a user follows the index of identity facts by subject that deprovisioning uses. A user isn't a resource, so watching yourself needs no relation: the guard compares the caller's `sub` with `U`.
 12. How Author learns which actions the caller may take. The Check endpoint can't ask about Sungma's own relations, so Author can't check whether the caller owns a group or a namespace before it offers to change one.
