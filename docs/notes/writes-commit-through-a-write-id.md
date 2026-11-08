@@ -63,7 +63,9 @@ Nothing an aborted or open write stored is ever visible, so the sweep can run sl
 
 ### Write ids
 
-A write takes a fresh write id before it stores anything. Write ids come from a new pool with its own counter, the way interned names get their ids ([Table](../specs/table.md#names)), so they are unique and cheap to hand out. The pool's range is large enough never to run out. Write ids are handed out in the order writes start, not the order they commit.
+A write's id comes from the request that asks for it. Every write request carries an `Idempotency-Key` header, the IETF draft standard for this: a unique id the caller generates once for each logical write, and sends again unchanged on every retry of that write. A server-generated request id, such as ASP.NET Core's `TraceIdentifier`, can't serve, because a retry is a new HTTP request and gets a new one. Only the caller knows that a second request is the first one again.
+
+A write id is the caller's `sub`, the request's idempotency key, and an attempt number: Mallory's request `q1`, attempt 1, and attempt 2 if attempt 1 is aborted. Scoping it to the caller means one caller can't collide with another's keys, by guessing or by accident. Write ids are made in the order writes start, not the order they commit.
 
 ### The status record
 
@@ -72,7 +74,7 @@ Each write has one status record, keyed by its write id. It holds:
 - **Its state:** open, committed, or aborted. Committed and aborted are final.
 - **A lease expiry** while open: a time after which another writer may abort it.
 - **The revision it committed at,** once committed. This is the map from write id to revision. It never changes after the commit.
-- **The request id** of the request that started it, for retries (see [Retries](#retries)).
+- **Nothing more for retries:** its write id already holds the caller, the idempotency key and the attempt (see [Retries](#retries)).
 - **The partitions it touched.** The write appends each partition to this list before it stores anything there, so the sweep can find the write's items without scanning the table. Partitions, not single items, keep the record within DynamoDB's item size.
 
 ### Leases
@@ -114,7 +116,7 @@ A claim is cleared or replaced only once its write is committed or aborted. The 
 
 ### Storing the items
 
-A write opens with one small transaction of two items: its status record, set to open, and its request id's item (see [Retries](#retries)). It then stores its items in groups. Nothing it stores is visible until its status changes to committed, so the groups don't need to land together.
+A write opens with one conditional write: its status record, set to open, stored only if no record with that write id exists. It then stores its items in groups. Nothing it stores is visible until its status changes to committed, so the groups don't need to land together.
 
 Items that only make sense together are one group, stored in one small transaction. A fact's group is its pointer claim, conditional on the pointer still holding what the writer read, the span it closes, the span it opens, and its index item by subject. Either the whole group is stored or none of it is. So if a writer dies partway, every fact it touched is fully stored or not touched, the sweep never finds a claimed pointer without its spans or a span without its index item, and a write never holds a claim on a fact it didn't finish storing. A namespace's latest item and the entry it copies are a group in the same way.
 
@@ -169,14 +171,14 @@ Because a pointer keeps its committed state apart from its claim, clearing the c
 
 ### Retries
 
-A request can time out after its write committed, with only the reply lost. A retry under a new write id would apply the same change twice. So every request carries a request id.
-
-Each request id has an item keyed by it, which holds the write id of the write running the request. It is written in the same transaction that opens the write, a small one of two items, so a retry finds it with a consistent read by key, not through an index. A retry reads it first and looks up that write:
+A request can time out after its write committed, with only the reply lost. The retry carries the same idempotency key, so it finds the earlier attempts: status records for one caller and key share a partition, keyed by attempt number, and one consistent read returns them all. The retry looks at the latest attempt:
 
 - **Committed:** the retry returns that write's revision without writing again.
-- **Aborted:** the retry runs again under a new write id, and points the request id's item at it, on condition the item still holds the aborted write's id.
+- **Aborted:** the retry opens the next attempt.
 - **Open, lease live:** the retry doesn't wait. It reports that the request is still in progress, and the caller checks again later.
-- **Open, lease expired:** the retry aborts the write and runs again, as for aborted.
+- **Open, lease expired:** the retry aborts that attempt, on condition it's still open, and opens the next one.
+
+No separate item maps a key to its write, so nothing has to be kept in step with the status records.
 
 ### Order
 
@@ -189,13 +191,13 @@ Each request id has an item keyed by it, which holds the write id of the write r
 
 ## A worked example
 
-Alice adds facts x and y in one request, with request id `q1`. Write 1 stores its items before its commit.
+Alice adds facts x and y in one request, with idempotency key `q1`. Her first attempt is write `alice/q1/1`, written below as write 1, and stores its items before its commit.
 
-1. The writer takes write id 1. In one transaction it stores status 1 as open, with a lease and request `q1`, and the item for `q1` pointing to write 1. It appends x's partition to status 1, then stores x's new span stamped with write id 1 and sets a claim by write 1 on x's pointer.
+1. The writer stores status 1 as open, with a lease, on condition no status 1 exists. It appends x's partition to status 1, then stores x's new span stamped with write id 1 and sets a claim by write 1 on x's pointer.
 2. The writer's process dies before it stores y. Write 1 is open, with half its items stored, and nothing renews its lease. A reader that meets x's span looks up write 1, finds it open, and treats x as absent. Nothing is visible.
-3. Alice's request times out, and she retries under `q1`. The retry reads the item for `q1`, finds write 1 open with its lease still live, and reports that the request is still in progress.
+3. Alice's request times out, and she retries under `q1`. The retry reads the attempts for Alice's `q1`, finds write 1 open with its lease still live, and reports that the request is still in progress.
 4. Meanwhile other writes commit and move the head on.
-5. Alice retries again. Now write 1's lease has expired, by the retry's clock with its uncertainty allowed for. The retry sets status 1 to aborted, on condition it is still open. It takes write id 5, and in one transaction stores status 5 as open and points the item for `q1` at write 5, on condition it still points at write 1.
+5. Alice retries again. Now write 1's lease has expired, by the retry's clock with its uncertainty allowed for. The retry sets status 1 to aborted, on condition it is still open. It opens the next attempt, `alice/q1/2`, written below as write 5, storing status 5 as open on condition no status 5 exists.
 6. Write 5 reads x's pointer and finds write 1's claim. Write 1 is aborted, so the pointer's committed state stands, and write 5 replaces the claim with its own. It appends x's and y's partitions to status 5, and stores x's span and y's span and pointer claim, all stamped with write id 5.
 7. It commits: it reads the head, takes the next revision R from the clock, and in one transaction moves the head to R, sets status 5 to committed at R, and checks the namespace latest item it judged x and y against. It waits out commit-wait and acknowledges.
 8. Readers at R or later see both facts, from R on. Readers before R see neither. No reader ever saw write 1's half.
@@ -223,7 +225,7 @@ Each hazard below is handled in the design above.
 5. **A slow write renewing after abort.** An aborted write could renew its lease and then commit. Renewal and commit both require the status to be still open ([Leases](#leases)).
 6. **Finding an aborted write's items.** Without a list, the sweep would have to scan the table. The status record lists the partitions the write touched ([The status record](#the-status-record)).
 7. **Half a write within one read.** A read paging through a partition could see a write open on one page and committed on the next. A read looks each write id up once and uses that answer throughout ([Reads](#reads)).
-8. **Duplicate retries.** A retry that looked only for committed writes would start a second write beside one still open. A retry looks up its request id's item, consistently by key, and acts on the write it finds in any state ([Retries](#retries)).
+8. **Duplicate retries.** A retry that looked only for committed writes would start a second write beside one still open. A retry reads every attempt for its caller and idempotency key, consistently, and acts on the latest in any state ([Retries](#retries)).
 9. **Stale reads before claiming.** A claim a write gave up on may since have committed. A retry rereads every fact before it claims ([Claims](#claims)).
 10. **Write ids in keys.** Write ids come in start order, not commit order, and reads rely on revision order in keys. Keys keep a revision, or reads stop relying on key order, and rewriting a key isn't atomic with a range read ([Keys](#keys)).
 11. **Lookups for every write.** A write that stores its items in its commit stamps its revision directly, so readers look nothing up for it ([What gets stamped](#what-gets-stamped)).
@@ -231,7 +233,7 @@ Each hazard below is handled in the design above.
 
 ## Its own crate
 
-The protocol knows nothing about facts or namespaces. Write ids, status records, leases, claims, the commit, the sweep and request ids make writes of any size atomic on a store that offers only single-item operations. So the protocol is a crate of its own, generic over a small key-value trait: get, put, conditional put and a range read. Each store implements that trait. Sungma's table is its first user.
+The protocol knows nothing about facts or namespaces. Write ids, status records, leases, claims, the commit, the sweep and idempotency keys make writes of any size atomic on a store that offers only single-item operations. So the protocol is a crate of its own, generic over a small key-value trait: get, put, conditional put and a range read. Each store implements that trait. Sungma's table is its first user.
 
 Every store runs the same protocol, including stores that have transactions of any size, such as SQLite. One mechanism means one code path, one test suite run against every store, and the same behavior wherever Sungma runs.
 
@@ -241,16 +243,15 @@ What a read does with a write id stays in Sungma's read path. The crate resolves
 
 It changes every write and every read, so it is all or nothing: reads must handle write ids wherever they appear, and every write must respect other writes' claims.
 
-- [Table](../specs/table.md): the status record and the request id's item as new item kinds, write ids in place of revisions, claims on pointers and latest items, the key question above, and the unit of work for each kind of write.
+- [Table](../specs/table.md): the status record as a new item kind, keyed by caller, idempotency key and attempt, write ids in place of revisions, claims on pointers and latest items, the key question above, and the unit of work for each kind of write.
 - [One timeline](../specs/one-timeline.md): how a read decides what counts, as in [Reads](#reads).
 - [Namespace writes](../specs/namespace-writes.md): a namespace write may store more than one unit of work holds, and may store facts.
-- The API: every write request carries a request id.
+- The API: every write request carries an `Idempotency-Key` header.
 
 ## What it costs
 
 - A small transaction for each fact's group of items, at DynamoDB's transactional price, which is twice a plain write's. Items that stand alone are plain writes at half today's price. A group is a handful of items, far under the 100-item limit, so a write of any size still commits.
 - A status record per write, kept for good, or until no read can still need it.
-- An item per request id, written with the write.
 - The list of touched partitions on each status record.
 - A lookup for reads that meet uncommitted or recently committed write ids, mostly cached.
 - A sweep to run.
