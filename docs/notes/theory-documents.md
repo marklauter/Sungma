@@ -48,46 +48,46 @@ theory: sungma
 
 // The deployment, one resource: sungma.root:sungma
 namespace: root
-  owner             [identity]
-  admin             [identity]               = this | owner
-  namespace_creator [identity, group#member] = this | admin
-  group_creator     [identity, group#member] = this | admin
-  operator          [identity, group#member] = this | admin
-  auditor           [identity, group#member] = this | admin
-  reader            [identity, group#member] = this | auditor
-  writer            [identity, group#member] = this | admin
-  fact_writer       [identity, group#member] = this | admin
-  fact_reader       [identity, group#member] = this | fact_writer | auditor
-  directory_reader  [identity, group#member] = this | auditor
-  access_reader                              = auditor
+  owner:             identity
+  admin:             identity               = this | owner
+  namespace_creator: identity, group#member = this | admin
+  group_creator:     identity, group#member = this | admin
+  operator:          identity, group#member = this | admin
+  auditor:           identity, group#member = this | admin
+  reader:            identity, group#member = this | auditor
+  writer:            identity, group#member = this | admin
+  fact_writer:       identity, group#member = this | admin
+  fact_reader:       identity, group#member = this | fact_writer | auditor
+  directory_reader:  identity, group#member = this | auditor
+  access_reader                             = auditor
 
 namespace: namespace
-  parent        [root]
-  protected     [root]
-  owner         [identity, group#member] = this | (parent, owner) ! (protected, owner)
-  admin         [identity, group#member] = this | owner | (parent, admin) ! (protected, admin)
-  writer        [identity, group#member] = this | admin | (parent, writer)
-  reader        [identity, group#member] = this | writer | fact_reader | auditor | (parent, reader)
-  fact_writer   [identity, group#member] = this | admin | (parent, fact_writer)
-  fact_reader   [identity, group#member] = this | fact_writer | auditor | (parent, fact_reader)
-  auditor       [identity, group#member] = this | (parent, auditor)
-  access_reader                          = admin | auditor
+  parent:        root
+  protected:     root
+  owner:         identity, group#member = this | (parent, owner) ! (protected, owner)
+  admin:         identity, group#member = this | owner | (parent, admin) ! (protected, admin)
+  writer:        identity, group#member = this | admin | (parent, writer)
+  reader:        identity, group#member = this | writer | fact_reader | auditor | (parent, reader)
+  fact_writer:   identity, group#member = this | admin | (parent, fact_writer)
+  fact_reader:   identity, group#member = this | fact_writer | auditor | (parent, fact_reader)
+  auditor:       identity, group#member = this | (parent, auditor)
+  access_reader                         = admin | auditor
 
 namespace: relation
-  parent [namespace]
-  writer [identity, group#member] = this | (parent, fact_writer)
-  reader [identity, group#member] = this | writer | (parent, fact_reader)
+  parent: namespace
+  writer: identity, group#member = this | (parent, fact_writer)
+  reader: identity, group#member = this | writer | (parent, fact_reader)
 
 namespace: group
-  parent        [root]
-  owner         [identity, group#member] = this | (parent, admin)
-  member        [identity, group#member]
-  access_reader                          = owner | (parent, auditor)
+  parent:        root
+  owner:         identity, group#member = this | (parent, admin)
+  member:        identity, group#member
+  access_reader                         = owner | (parent, auditor)
 ```
 
-Each relation is one line: its name, the subjects its facts may bind in brackets, and its rewrite after `=`.
+Each relation reads like a signature: its name, a colon and the subjects its facts may bind, then its rewrite after `=`.
 
-- A relation with subjects and no `=` reads `this`, as `owner [identity]` does.
+- A relation with subjects and no `=` reads `this`, as `owner: identity` does.
 - A relation with `=` and no subjects accepts no facts, as `access_reader = auditor` does.
 - A relation with both follows the rules in [Accepted subjects](../specs/namespace-documents.md#accepted-subjects): its rewrite has to read `this`.
 - Subjects are the accepted subjects of the namespace document spec, separated by commas, at least one, none twice.
@@ -96,23 +96,24 @@ Each relation is one line: its name, the subjects its facts may bind in brackets
 ```ebnf
 ⟨document⟩  ::= [ 'theory' ':' ⟨namespace name⟩ ] ⟨namespace⟩ { ⟨namespace⟩ }
 ⟨namespace⟩ ::= 'namespace' ':' ⟨namespace name⟩ { ⟨relation⟩ }
-⟨relation⟩  ::= ⟨relation name⟩ ⟨subjects⟩ [ '=' ⟨rewrite⟩ ]
+⟨relation⟩  ::= ⟨relation name⟩ ':' ⟨subjects⟩ [ '=' ⟨rewrite⟩ ]
               | ⟨relation name⟩ '=' ⟨rewrite⟩
-⟨subjects⟩  ::= '[' ⟨accepted subject⟩ { ',' ⟨accepted subject⟩ } ']'
+⟨subjects⟩  ::= ⟨accepted subject⟩ { ',' ⟨accepted subject⟩ }
 ```
 
 The rules on top of the grammar:
 
 - Whitespace, line breaks included, only separates tokens. Indentation and alignment are for readers, and a long rewrite can wrap onto as many lines as it needs.
-- A rewrite ends where its grammar can't take the next token. Two terms never sit side by side without an operator, so the next relation's name ends the rewrite before it, and a relation needs no terminator.
-- `namespace:` opens a namespace, and its relations run until the next `namespace:` or the end of the document. A relation can still be called `namespace` or `theory`, because a relation's name is followed by `[` or `=`, never `:`.
+- A subject list or a rewrite ends where its grammar can't take the next token. Subjects are separated by commas, and two terms never sit side by side without an operator, so the next relation's name ends the one before it, and a relation needs no terminator.
+- `namespace:` opens a namespace, and its relations run until the next `namespace:` or the end of the document.
+- `theory` and `namespace` are reserved relation names, in every form, as `this` is. Otherwise `namespace: root` could be a relation named `namespace` that accepts `root`. Reserving them in every form keeps every namespace printable in this one. They stay usable as namespace names, so `sungma.namespace` and `parent: namespace` are fine.
 - `//` starts a comment that runs to the end of the line. `#` can't start a comment, because subjectsets use it. Comments aren't kept, because Sungma stores the JSON form.
 - There are no quotes, escapes, numbers or booleans. Every token is a name, a keyword or punctuation, so the parser never has to guess a value's type, and `no` or `on` is only ever a name.
 - With `theory:`, unqualified namespace names in the document get the theory's prefix, as [It's shorthand](#its-shorthand) says. Without it, the document holds full names, and a document with one namespace and no `theory:` is a namespace document in this form.
 - Errors carry a line and column in the document itself. Unlike in the JSON and TOML forms, a rewrite isn't inside a string, so its columns are the document's columns.
 - The limits in [Limits](../specs/namespace-documents.md#limits) apply to each namespace the document holds.
 
-The printer writes one relation per line, sorted by name and comparing bytes, as the other forms do. Alphabetical order is the easiest for readers to find a relation in. An author's own order is lost when a document is printed again. The printer indents relations by two spaces, and pads names and subject lists so the brackets and the `=` line up within a namespace. Author shows and edits this form, and Sungma goes on storing JSON.
+The printer writes one relation per line, sorted by name and comparing bytes, as the other forms do. Alphabetical order is the easiest for readers to find a relation in. An author's own order is lost when a document is printed again. The printer indents relations by two spaces, and pads names and subject lists so the subjects and the `=` line up within a namespace. Author shows and edits this form, and Sungma goes on storing JSON.
 
 ## Open
 
