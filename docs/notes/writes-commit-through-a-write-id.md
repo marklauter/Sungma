@@ -114,7 +114,13 @@ A claim is cleared or replaced only once its write is committed or aborted. The 
 
 ### Storing the items
 
-A write opens with one small transaction of two items: its status record, set to open, and its request id's item (see [Retries](#retries)). It then stores its items with plain writes, not transactions. Nothing it stores is visible until its status changes to committed, so the items don't need to land together. Setting a claim is a single conditional write on the fact's pointer, or on the namespace's latest item. Everything else is an ordinary write.
+A write opens with one small transaction of two items: its status record, set to open, and its request id's item (see [Retries](#retries)). It then stores its items in groups. Nothing it stores is visible until its status changes to committed, so the groups don't need to land together.
+
+Items that only make sense together are one group, stored in one small transaction. A fact's group is its pointer claim, conditional on the pointer still holding what the writer read, the span it closes, the span it opens, and its index item by subject. Either the whole group is stored or none of it is. So if a writer dies partway, every fact it touched is fully stored or not touched, the sweep never finds a claimed pointer without its spans or a span without its index item, and a write never holds a claim on a fact it didn't finish storing. A namespace's latest item and the entry it copies are a group in the same way.
+
+An item that stands alone is an ordinary plain write.
+
+The write id makes a write atomic for readers. The small transactions keep each fact's own items consistent in storage.
 
 ### The commit
 
@@ -242,7 +248,7 @@ It changes every write and every read, so it is all or nothing: reads must handl
 
 ## What it costs
 
-- A saving: a write stores its items with plain writes, and DynamoDB charges twice as much for a transactional write as for a plain one. So almost every item is written at half what it costs today.
+- A small transaction for each fact's group of items, at DynamoDB's transactional price, which is twice a plain write's. Items that stand alone are plain writes at half today's price. A group is a handful of items, far under the 100-item limit, so a write of any size still commits.
 - A status record per write, kept for good, or until no read can still need it.
 - An item per request id, written with the write.
 - The list of touched partitions on each status record.
