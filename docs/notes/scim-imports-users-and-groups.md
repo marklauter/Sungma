@@ -25,7 +25,7 @@ A fact that names an imported group's members, such as `sungma.namespace:billing
 
 When the identity provider deletes a person or client, Sungma retires every identity fact whose subject is their `sub`: in customers' namespaces, in Sungma's own namespaces, and their group memberships. A `sub` the identity provider issues again then inherits nothing.
 
-- Identity facts are stored under their subjectset, across every namespace, so finding all the facts about one `sub` needs an index by subject. Until there is one, deprovisioning runs as a background job that reads the whole table.
+- Identity facts are stored under their subjectset, across every namespace. So each identity fact also gets an index item keyed by its subject, pointing to the fact, written and retired in the same write as the fact. Deprovisioning then reads one subject's index items and retires the facts they point to. The index items are ordinary items, so they work the same on every store and under the write-id protocol, unlike a DynamoDB secondary index.
 - The deployment's owners are the exception. Their facts are written only by deployment setup, and a deployment keeps at least two. Deleting an owner in the identity provider doesn't retire their `owner` fact. It records that setup needs to run.
 
 ## Open
