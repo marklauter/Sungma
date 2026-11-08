@@ -4,6 +4,7 @@ type: specification
 summary: "Sungma decides who may change and read its own namespaces and facts with four namespaces of its own: `sungma` for the deployment, `sungma.namespace` for each namespace's document, `sungma.relation` for the facts under each relation, and `sungma.group` for groups of subjects. Each endpoint runs one fixed check, and each relation's `written_by` and `read_by` name who may write and read its facts, so the model alone decides who passes."
 status: evolving
 cites:
+  - "[[reusing-a-resource-id]]"
   - "[[scim-imports-users-and-groups]]"
   - "[[privileged-roles-need-a-recent-sign-in]]"
   - "[[namespace]]"
@@ -182,8 +183,8 @@ Every check runs for the caller, the caller token's `sub`.
 | Write | Create group `G` | `sungma:deployment#group_creator` |
 | Write | Change a deployment setting | `sungma:deployment#admin` |
 | Check | Check whether a subject is in `N:r#R` | `R`'s read policy on `N:r` |
-| Expand | [[expand]] `N:r#R` | `R`'s read policy on `N:r`; see [open question 11](#open) |
-| Watch | Watch the changelog stream | open; see [open question 12](#open) |
+| Expand | [[expand]] `N:r#R` | `R`'s read policy on `N:r`; see [open question 10](#open) |
+| Watch | Watch the changelog stream | open; see [open question 11](#open) |
 | Namespaces | Read namespace `N`'s document at a revision | `sungma.namespace:N#reader` |
 | Namespaces | List namespace `N`'s versions | `sungma.namespace:N#reader` |
 | Namespaces | List the [[catalog]] | `sungma.namespace:N#reader` for each namespace `N`; the list holds only the namespaces whose policy the caller passes |
@@ -234,6 +235,18 @@ A write is authorized at the [head](table.md#the-head) it's based on, in its own
 
 A read is authorized at the snapshot it reads, so a role revoked before that snapshot can't read data written after it.
 
+## Names and creations
+
+Namespaces, relations and groups each have a name and a creation. The name is what people write, such as `billing`, and it never changes: Sungma has no rename. Each time an entity with that name is created, the creation gets an id of its own, the [[revision]] it was created at.
+
+Facts in Sungma's own namespaces are about a creation, not a name. Bob's ownership of `billing` is stored on `billing` as created at revision 40, written here `sungma.namespace:billing@40`. The endpoints accept names, and resolve each name to its current creation before they write or check. A retired name has no current creation, so a write to it is refused. A name created again resolves to its new creation, which no earlier fact mentions. So Carol, who creates `billing` after Bob's `billing` was retired, starts with only her own `owner` fact, and Bob's facts stay with the `billing` he owned.
+
+The same holds one level down. A relation dropped and declared again is a new creation of `sungma.relation:billing/approver`, so grants on the old creation don't apply to it.
+
+Examples elsewhere in this spec write names, as people do. Sungma stores the creation.
+
+Customers' resources are named however customers choose, and Sungma doesn't know when one is deleted or reused. [[reusing-a-resource-id]] is the guidance for them.
+
 ## Creating a namespace
 
 Creating a namespace stores it, the fact tying it to the deployment, an `owner` fact for its creator, and a `parent` fact for each of its relations, in one unit of work. Either all of them are stored or none is, so a namespace never exists without an owner.
@@ -246,7 +259,7 @@ Creating a group stores its `parent` fact and an `owner` fact for its creator in
 
 ## New relations
 
-A namespace version that declares a relation the namespace's earlier versions didn't stores the relation's `parent` fact in the same unit of work. A relation a later version drops keeps its `parent` fact and the grants on it. Nothing reads them while the relation is gone. A version that declares the relation again writes its `parent` fact afresh, opening a new span, so the relation keeps its link whatever rule [open question 6](#open) settles for grants.
+A namespace version that declares a relation the namespace's earlier versions didn't stores the relation's `parent` fact in the same unit of work. A relation a later version drops keeps its `parent` fact and the grants on it. Nothing reads them while the relation is gone. A version that declares the relation again writes its `parent` fact afresh, opening a new span, so the relation keeps its link. The grants on the old creation stay with it, as [Names and creations](#names-and-creations) says.
 
 ## Checks on the data
 
@@ -323,14 +336,10 @@ Some rules need the request's context, which the model doesn't hold. Privileged 
 3. Whether a namespace's owner should be able to transfer ownership, or revoke the last owner while admins still own it through the deployment.
 4. How groups imported through SCIM are named, created and edited. See [[scim-imports-users-and-groups]].
 5. How a namespace version that adds more relations than one unit of work holds gets its `parent` facts, and how namespace writes and the table make room for fact items in a namespace write. [Table](table.md#open) holds the general question of writes larger than one unit of work.
-6. Whether grants start fresh when a relation comes back, or a retired namespace is created again. A relation brought back gets a new epoch, so its facts from before don't count. The grants on it, such as `sungma.relation:billing/approver#writer@alice`, sit under `sungma.relation`'s `writer`, which is never dropped, so they count again. A grant could count only if it was written after its relation's current epoch, the same rule its facts follow.
-7. Who may create a retired namespace again. As written, anyone with `namespace_creator` can recreate a retired name and become its owner. Facts under the old namespace stay dead, since every relation gets a new epoch. But facts in other namespaces that point into it, such as `file:secret#viewer@billing:acct-42#member`, live under their own namespace and still count, and the new owner now decides who is in `billing:acct-42#member`. Reusing a retired name stays possible, since that's what namespace versions are for. The options are about who may do it:
-   - Recreating a retired name needs `owner` on it. The old owners' grants survive retirement, because they live in `sungma.namespace`, and admins reach it through `parent`.
-   - Only admins may recreate a retired name, and they grant ownership afresh. This pairs with old grants ending at the new epoch, as question 6 proposes.
-   - A proposed answer: a fact whose subject is in another namespace records that subject's epoch when it's written. That's the epoch of the subject's relation, such as `billing`'s `member`, or for a resource member such as `folder:root#...`, the epoch the subject's namespace was last created at. The fact counts only while both its own relation's epoch and its recorded subject epoch still hold. Recreating `billing` gives `member` a new epoch, so `file:secret#viewer@billing:acct-42#member` stops counting without being touched, and a recreated namespace inherits nothing that pointed into it. A namespace recreated under its old name is the same namespace, started fresh. Reads at earlier revisions still show its old versions, relations and facts. A fact pointing into it that is wanted again is written again, and records the new epoch. This changes [One timeline](one-timeline.md), which says when a fact counts, and [Table](table.md), which says what a span stores.
-8. How a relation's options declare the nesting limits, no cycles and bounded depth and width, so they're declared on `member` in the model and apply to any relation that declares them.
-9. Whether the other checks on the data, a grant only on a declared relation and a grant only to a created group, become relation options too, so no check on the data names one of Sungma's namespaces.
-10. How privileged writes need a recent sign-in until conditions exist. Once they do, a privileged relation's condition requires a recent `auth_time`, as [Conditions](#conditions) says.
-11. Whether Expand checks the read policy of each subjectset it reaches, as well as the one it expands. An expansion shows the members of subjectsets under other relations, such as a group's members, that the caller may not be able to read on their own.
-12. Which policy Watch runs. The changelog stream carries facts under many relations, and namespace versions across the catalog, so no check on one resource covers it. Filtering each change by its relation's read policy at its revision stays in the model, but it isn't one fixed check, and it leaves open whether a caller learns that a change it can't read happened. A deployment relation, such as a `watcher` on `sungma`, would be one fixed check, but its holders would read every fact.
-13. Whether a customer's relation that declares `read_by` should reach the deployment's auditors. As written, its own model decides, and an auditor reads its facts only if it reaches them.
+6. What happens to facts in other namespaces that point into a namespace when it's created again. Facts under the old namespace stay dead, since every relation gets a new [[epoch]]. Its managers start fresh too, since they're facts about a creation. But a fact such as `file:secret#viewer@billing:acct-42#member` lives under `file` and still counts, so whoever manages the new `billing` decides who is in `billing:acct-42#member`. A proposed answer: a fact whose subject is in another namespace records that subject's epoch when it's written, the epoch of the subject's relation or, for a resource member, the epoch its namespace was last created at. It counts only while both its own relation's epoch and its recorded subject epoch hold. A fact pointing into the new namespace that is wanted again is written again, and records the new epoch. This changes [One timeline](one-timeline.md), which says when a fact counts, and [Table](table.md), which says what a span stores.
+7. How a relation's options declare the nesting limits, no cycles and bounded depth and width, so they're declared on `member` in the model and apply to any relation that declares them.
+8. Whether the other checks on the data, a grant only on a declared relation and a grant only to a created group, become relation options too, so no check on the data names one of Sungma's namespaces.
+9. How privileged writes need a recent sign-in until conditions exist. Once they do, a privileged relation's condition requires a recent `auth_time`, as [Conditions](#conditions) says.
+10. Whether Expand checks the read policy of each subjectset it reaches, as well as the one it expands. An expansion shows the members of subjectsets under other relations, such as a group's members, that the caller may not be able to read on their own.
+11. Which policy Watch runs. The changelog stream carries facts under many relations, and namespace versions across the catalog, so no check on one resource covers it. Filtering each change by its relation's read policy at its revision stays in the model, but it isn't one fixed check, and it leaves open whether a caller learns that a change it can't read happened. A deployment relation, such as a `watcher` on `sungma`, would be one fixed check, but its holders would read every fact.
+12. Whether a customer's relation that declares `read_by` should reach the deployment's auditors. As written, its own model decides, and an auditor reads its facts only if it reaches them.
