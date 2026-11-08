@@ -923,3 +923,18 @@ fn a_malformed_namespace_name_is_one_name_error() {
         );
     }
 }
+
+#[test]
+fn a_document_declares_at_most_max_namespaces() {
+    let namespaces =
+        |count: usize| -> String { (0..count).map(|i| format!("namespace: n{i}\n")).collect() };
+    assert_eq!(
+        parsed(&namespaces(schema::MAX_NAMESPACES)).len(),
+        schema::MAX_NAMESPACES
+    );
+    let error = only(&namespaces(schema::MAX_NAMESPACES + 1));
+    assert!(
+        matches!(error.kind, ErrorKind::TooManyNamespaces(count) if count == schema::MAX_NAMESPACES + 1),
+        "{error}"
+    );
+}

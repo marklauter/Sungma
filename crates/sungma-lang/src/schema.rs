@@ -67,6 +67,9 @@ impl SchemaError {
     }
 }
 
+/// How many namespaces a schema document declares at most.
+pub const MAX_NAMESPACES: usize = 1000;
+
 const NAMESPACE_OR_END: &str = "'namespace:' or the end";
 const RELATION: &str = "a relation, 'namespace:' or the end";
 
@@ -208,6 +211,15 @@ impl<'a> Reader<'_, 'a> {
         } else {
             None
         };
+        // Counted before any is read, as relations are.
+        let declared = (self.at..self.lexemes.len())
+            .filter(|&at| self.keyword_at(at, "namespace"))
+            .count();
+        if declared > MAX_NAMESPACES {
+            let place = Some(self.peek().place);
+            self.push(None, None, (place, ErrorKind::TooManyNamespaces(declared)));
+            return Vec::new();
+        }
         let mut namespaces = Vec::new();
         let mut seen = HashSet::new();
         loop {

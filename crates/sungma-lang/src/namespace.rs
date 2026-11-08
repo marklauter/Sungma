@@ -43,6 +43,8 @@ use thiserror::Error;
 use toml_edit::{Item, Table, Value};
 
 pub use sungma::name::{MAX_NAMESPACE_BYTES, MAX_QUOTE_BYTES, MAX_RELATION_BYTES};
+
+use crate::schema::MAX_NAMESPACES;
 use sungma::{
     name::{NameError, NamespaceName, RelationName, quote},
     namespace::{MAX_REWRITE_DEPTH, Namespace, NamespaceError, Problem},
@@ -134,6 +136,8 @@ pub enum ErrorKind {
     TooManyErrors,
     #[error("namespace '{0}' is declared twice")]
     DuplicateNamespace(String),
+    #[error("a document declares at most {MAX_NAMESPACES} namespaces, not {0}")]
+    TooManyNamespaces(usize),
 }
 
 /// Parses and checks a namespace document, as the [module](self) describes.
