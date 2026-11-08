@@ -25,10 +25,11 @@ fuzz_target!(|data: &[u8]| {
     let Ok(parsed) = schema::parse(text) else {
         return;
     };
-    // Spaced out, a document near the size limit can print past it.
+    // Spaced out, a dense rule or a document near its limit can print past
+    // it.
     let printed = match print(&parsed) {
         Ok(printed) => printed,
-        Err(PrintError::TooLarge) => return,
+        Err(PrintError::TooLarge | PrintError::ExpressionTooLong) => return,
         Err(error) => panic!("parsed namespaces print: {error}"),
     };
     let again = schema::parse(&printed).expect("printed namespaces parse");

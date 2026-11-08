@@ -269,9 +269,10 @@ impl<'a> Reader<'_, 'a> {
             return Err(NamespaceName::new_unchecked(""));
         }
         let mut end = first.start;
+        // Everything written without a space is the name, so a malformed
+        // name is refused whole, as one name.
         for lexeme in &self.lexemes[self.at..] {
-            let segment = matches!(lexeme.token, Token::Name | Token::This | Token::Dot);
-            if !(segment && lexeme.start == end) {
+            if lexeme.token == Token::End || lexeme.start != end {
                 break;
             }
             end = lexeme.end;
@@ -399,8 +400,9 @@ impl<'a> Reader<'_, 'a> {
 /// name starts with it and a dot, and is written without them. Namespaces
 /// and their relations are sorted by name, relations are indented by two
 /// spaces, a blank line comes before each namespace, and lines end in `\n`.
-/// A document longer than [`MAX_DOCUMENT_BYTES`] is refused, since [`parse`]
-/// would refuse it.
+/// A rule that prints longer than [`MAX_EXPRESSION_BYTES`], as a dense rule
+/// spaced out can, and a document longer than [`MAX_DOCUMENT_BYTES`], are
+/// refused, since [`parse`] would refuse them.
 pub fn print(
     theory: Option<&NamespaceName>,
     namespaces: &[(&NamespaceName, &Namespace<RelationName>)],
@@ -438,6 +440,9 @@ pub fn print(
         }
         let _ = writeln!(text, "namespace: {written}");
         for (relation, expression) in relations {
+            if expression.len() > MAX_EXPRESSION_BYTES {
+                return Err(PrintError::ExpressionTooLong);
+            }
             let _ = writeln!(text, "  {relation} = {expression}");
         }
         // Checked as it grows, so a caller's oversized input is refused

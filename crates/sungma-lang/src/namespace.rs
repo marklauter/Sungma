@@ -885,6 +885,8 @@ pub enum PrintError {
     DuplicateNamespace(String),
     #[error("the printed document would be more than {MAX_DOCUMENT_BYTES} bytes")]
     TooLarge,
+    #[error("a printed rule would be more than {MAX_EXPRESSION_BYTES} bytes")]
+    ExpressionTooLong,
 }
 
 /// Writes a namespace as a document that [`parse`] reads back as an equal

@@ -355,12 +355,7 @@ fn a_namespace_name_is_written_without_spaces() {
         ("namespace: a. b", 1, 12, "is not a valid name"),
         ("namespace: .a", 1, 12, "is not a valid name"),
         ("namespace: a..b", 1, 12, "is not a valid name"),
-        (
-            "namespace: 1a",
-            1,
-            12,
-            "expected a namespace name, found '1'",
-        ),
+        ("namespace: 1a", 1, 12, "'1a' is not a valid name"),
         (
             "namespace:",
             1,
@@ -896,6 +891,35 @@ fn a_missing_name_doesnt_take_the_next_lines_keyword() {
             error.kind.to_string(),
             format!("expected a namespace name, found {found}"),
             "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn the_printer_refuses_a_rule_that_prints_past_the_limit() {
+    let dense = vec!["b"; 2048].join("|");
+    let documents = parsed(&format!("namespace: t\n  b = this\n  r = {dense}"));
+    assert_eq!(print(None, &documents), Err(PrintError::ExpressionTooLong));
+}
+
+#[test]
+fn a_malformed_namespace_name_is_one_name_error() {
+    for (text, written) in [
+        ("namespace: 1abc\n  owner = this\n", "1abc"),
+        ("namespace: my-ns\n  r = this\n", "my-ns"),
+    ] {
+        let error = only(text);
+        assert_eq!(
+            error.place,
+            Some(Place {
+                line: 1,
+                column: 12
+            }),
+            "{text:?}"
+        );
+        assert!(
+            matches!(&error.kind, ErrorKind::Name(_) if error.to_string().contains(written)),
+            "{text:?}: {error}"
         );
     }
 }
