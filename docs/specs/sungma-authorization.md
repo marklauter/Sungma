@@ -341,13 +341,13 @@ Sungma's own namespaces stay protected only while no namespace other than Sungma
 
 A role is trust placed in the people who hold it. The deployment's owners are the people the organization trusts most: they decide who the admins are. Every owner is an admin too.
 
-No endpoint writes `owner`, so only deployment setup writes `owner` facts, run out of band by whoever controls the deployment's configuration. Setup also writes Sungma's own `parent` and `protected` facts. Setup names each owner by identity, the `sub` the identity provider issues to them, and each run is recorded for auditors. The first owners can act as soon as they first sign in to Author, and nobody becomes an owner by signing in first. Owners are admins, and nothing in the API removes them, so the deployment always has an admin.
+No endpoint writes `owner`, so only deployment setup writes `owner` facts, run out of band by whoever controls the deployment's configuration. Setup also writes Sungma's own `parent` and `protected` facts. Setup names each owner by identity, the `sub` the identity provider issues to them, and each run is recorded for auditors. The first owners can act as soon as they first sign in to Author, and nobody becomes an owner by signing in first. Owners are admins, and nothing in the API retires their facts, so the deployment always has an admin.
 
 A deployment has at least two owners. Setup refuses to leave fewer, so losing one owner's identity never leaves the deployment without one. Setup is also the break-glass path, how the organization recovers from a lost or untrustworthy owner: it runs setup again with the owners it trusts. That doesn't guard against owners who abuse their trust. Nothing in the model can. Choosing them well is the organization's part.
 
 ## Authorizing a write
 
-A write is authorized at the [head](table.md#the-head) it's based on, in its own [unit of work](table.md#the-table-and-the-contexts). Every write commits only while the head is unchanged, so a write that retries is authorized again at the new head. A role removed by a write that committed first can't authorize a write that commits after it.
+A write is authorized at the [head](table.md#the-head) it's based on, in its own [unit of work](table.md#the-table-and-the-contexts). Every write commits only while the head is unchanged, so a write that retries is authorized again at the new head. A role retired by a write that committed first can't authorize a write that commits after it.
 
 A read is authorized at the snapshot it reads, so a role retired before that snapshot can't read data written after it.
 
@@ -398,7 +398,7 @@ A Sungma release's versions of Sungma's own namespaces store no `parent` fact fo
 
 Some rules aren't about who may write, but about the shape of the data. Write checks them separately from the guards, for every caller:
 
-- Adding a fact under `sungma.relation:<namespace>/<relation>` is refused unless the namespace's latest version declares that relation. Otherwise a role on a relation that doesn't exist yet would lie hidden, then take effect the day a version declares it. Removing one is always allowed, so a role on a dropped relation can still be removed before the relation returns.
+- Adding a fact under `sungma.relation:<namespace>/<relation>` is refused unless the namespace's latest version declares that relation. Otherwise a role on a relation that doesn't exist yet would lie hidden, then take effect the day a version declares it. Retiring one is always allowed, so a role on a dropped relation can still be removed before the relation returns.
 - Adding a fact whose subject is `sungma.group:<name>#member` is refused unless that group has been created. Otherwise a role given to a group that doesn't exist yet would take effect the day someone creates it.
 - Creating a namespace whose first segment is `sungma` is refused, as [Protected namespaces](#protected-namespaces) says.
 - Nesting is bounded, so a check that reaches a group never has to walk an unbounded graph.
