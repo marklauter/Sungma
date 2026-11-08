@@ -48,7 +48,7 @@ Neither implies the other. A namespace's writer can't write its facts unless the
 ## The model
 
 ```toml
-# The root, one resource, sungma.root:sungma: owners, admins, operators, auditors, and who may create namespaces and groups
+# The root, one resource, sungma.root:sungma: roles across the whole deployment, which reach every namespace through parent
 ["sungma.root"]
 
 ["sungma.root".owner]
@@ -78,6 +78,22 @@ subjects = ["identity", "sungma.group#member"]
 rewrite = "this | auditor"
 subjects = ["identity", "sungma.group#member"]
 
+["sungma.root".writer]
+rewrite = "this | admin"
+subjects = ["identity", "sungma.group#member"]
+
+["sungma.root".fact_writer]
+rewrite = "this | admin"
+subjects = ["identity", "sungma.group#member"]
+
+["sungma.root".fact_reader]
+rewrite = "this | fact_writer | auditor"
+subjects = ["identity", "sungma.group#member"]
+
+["sungma.root".directory_reader]
+rewrite = "this | auditor"
+subjects = ["identity", "sungma.group#member"]
+
 ["sungma.root".access_reader]
 rewrite = "auditor"
 
@@ -95,7 +111,7 @@ rewrite = "this | (parent, admin) ! (protected, admin)"
 subjects = ["identity", "sungma.group#member"]
 
 ["sungma.namespace".writer]
-rewrite = "this | owner"
+rewrite = "this | owner | (parent, writer)"
 subjects = ["identity", "sungma.group#member"]
 
 ["sungma.namespace".reader]
@@ -103,11 +119,11 @@ rewrite = "this | writer | fact_reader | auditor | (parent, reader)"
 subjects = ["identity", "sungma.group#member"]
 
 ["sungma.namespace".fact_writer]
-rewrite = "this | owner"
+rewrite = "this | owner | (parent, fact_writer)"
 subjects = ["identity", "sungma.group#member"]
 
 ["sungma.namespace".fact_reader]
-rewrite = "this | fact_writer | auditor"
+rewrite = "this | fact_writer | auditor | (parent, fact_reader)"
 subjects = ["identity", "sungma.group#member"]
 
 ["sungma.namespace".auditor]
@@ -154,7 +170,7 @@ Drawn as a graph, each namespace is a node, and each relation's accepted subject
 flowchart LR
   relation["<b>sungma.relation</b><br/>parent<br/>writer<br/>reader"]
   namespace["<b>sungma.namespace</b><br/>parent<br/>protected<br/>owner<br/>writer<br/>reader<br/>fact_writer<br/>fact_reader<br/>auditor<br/>access_reader"]
-  root["<b>sungma.root</b><br/>owner<br/>admin<br/>namespace_creator<br/>group_creator<br/>operator<br/>auditor<br/>reader<br/>access_reader"]
+  root["<b>sungma.root</b><br/>owner<br/>admin<br/>namespace_creator<br/>group_creator<br/>operator<br/>auditor<br/>reader<br/>writer<br/>fact_reader<br/>fact_writer<br/>directory_reader<br/>access_reader"]
   group["<b>sungma.group</b><br/>parent<br/>owner<br/>member<br/>access_reader"]
   identity(["identity"])
   relation -- parent --> namespace
@@ -281,6 +297,7 @@ Sungma's own facts are managed through dedicated endpoints, each with its own ha
 | Change a deployment setting | `.Check("admin", "sungma.root:sungma")` | Changes the setting. |
 | Read logs and metrics | `.Check("operator", "sungma.root:sungma")` | Reads them. |
 | Read and replay the audit records of decisions | `.Check("auditor", "sungma.root:sungma")` | Reads and replays them. |
+| Search users, or list groups, by name | `.Check("directory_reader", "sungma.root:sungma")` | Reads the user and group store, the projection SCIM fills, so a caller can find who to name in a fact. |
 | Read and replay the audit records of decisions that involve namespace `N` | `.Check("auditor", "sungma.namespace:{N}")` | Reads and replays them for `N` only. Root auditors pass for every namespace, through `parent`. |
 
 Roles on a relation are guarded on the relation's namespace, so `sungma.relation` needs no `owner` of its own. The owners of `billing` add and remove roles on `billing` and on its relations, and on no other namespace.
@@ -433,6 +450,7 @@ Some rules need the request's context, which the model doesn't hold. Privileged 
 45. A Sungma release's version of one of Sungma's own namespaces stores no `parent` fact for its relations.
 46. Expanding a relation on one of Sungma's own resources is allowed to a caller in its `access_reader`, and shows holders reached through groups and `parent`, such as an admin owning a namespace. A caller outside `access_reader` is refused.
 47. A namespace's auditor reads its document, its facts and its audit records, and sees who has access to it, but nothing in other namespaces. A root auditor does all of that for every namespace, and a root reader reads every namespace's document.
+48. A root `writer`, `fact_writer` or `fact_reader` acts on every namespace through `parent`, without owning any, and a namespace's own holders act on that namespace only.
 
 ## Open
 
@@ -458,3 +476,4 @@ Some rules need the request's context, which the model doesn't hold. Privileged 
 
       Watching a user follows the index of identity facts by subject that deprovisioning uses. A user isn't a resource, so watching yourself needs no relation: the guard compares the caller's `sub` with `U`.
 12. How Author learns which actions the caller may take. The Check endpoint can't ask about Sungma's own relations, so Author can't check whether the caller owns a group or a namespace before it offers to change one.
+13. Whether a caller who can write facts can also look people and groups up, through `directory_reader`, since they can't pick who to name otherwise, or whether `directory_reader` is given separately.
