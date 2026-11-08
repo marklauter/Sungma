@@ -25,6 +25,12 @@ People and clients are both subjects, and Sungma doesn't tell them apart. A clie
 
 The issuer is configured so every token it issues carries a `sub` that is stable and unique for each principal. A UPN or an email doesn't qualify: either can change, or pass to someone else, and the facts about the old value would follow. With Rauthy, client-credentials tokens carry `sub` only with `client_credentials_map_sub` turned on.
 
+## One issuer of record
+
+Sungma trusts one identity provider, its issuer of record. A service may trust any identity provider it likes, but to call Sungma it exchanges its token for one from Sungma's issuer, through OAuth 2.0 Token Exchange (RFC 8693). The calling service exchanges the token itself, or a reverse proxy in front of Sungma exchanges it for every caller. Trust between identity providers is configured in the identity providers, so swapping one token for another stays their job, and Sungma never maps another provider's claims.
+
+Two other designs were weighed. Trusting many issuers, each prefixed onto its subjects, needs no exchange, but one person becomes a different subject at each provider, and Sungma would map every issuer's claims. Adding a Sungma person that each provider's accounts link to fixes the first cost, but makes Sungma keep a store of people and link accounts safely, which is an identity provider's job.
+
 ## On behalf of
 
 One hop needs nothing more. When service A calls Check with Alice's token, the two tokens already say "Alice, via A".
@@ -40,6 +46,5 @@ Forwarding can come first and exchange later without changing the check request,
 
 ## Open
 
-- How a caller holding another provider's token reaches Sungma. The leading option is token exchange (RFC 8693) at Sungma's issuer, since trusting other providers is something an identity provider already does. Another is federating the other provider into the issuer.
 - How Sungma models which clients may check which namespaces, and which may act for users.
 - Whether a check against an unknown namespace or relation answers `Unknown`, which shows a prober the names that exist, or `Denied`.
