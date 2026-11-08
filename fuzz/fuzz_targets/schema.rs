@@ -5,14 +5,17 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use sungma_lang::{namespace::NamespaceDocument, schema};
+use sungma_lang::{
+    namespace::{NamespaceDocument, PrintError},
+    schema,
+};
 
-fn print(documents: &[NamespaceDocument]) -> String {
+fn print(documents: &[NamespaceDocument]) -> Result<String, PrintError> {
     let namespaces: Vec<_> = documents
         .iter()
         .map(|document| (&document.namespace, &document.relations))
         .collect();
-    schema::print(None, &namespaces).expect("parsed namespaces print")
+    schema::print(None, &namespaces)
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -22,7 +25,12 @@ fuzz_target!(|data: &[u8]| {
     let Ok(parsed) = schema::parse(text) else {
         return;
     };
-    let printed = print(&parsed);
+    // Spaced out, a document near the size limit can print past it.
+    let printed = match print(&parsed) {
+        Ok(printed) => printed,
+        Err(PrintError::TooLarge) => return,
+        Err(error) => panic!("parsed namespaces print: {error}"),
+    };
     let again = schema::parse(&printed).expect("printed namespaces parse");
-    assert_eq!(print(&again), printed);
+    assert_eq!(print(&again), Ok(printed));
 });

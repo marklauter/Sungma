@@ -16,7 +16,8 @@
 //! `owner: identity`, come with accepted subjects in the namespace model.
 //!
 //! The rewrite grammar, the namespace checks, the limits and the error kinds
-//! are those of [namespace documents](crate::namespace).
+//! are those of [namespace documents](crate::namespace). The expression limit
+//! counts a rewrite's tokens, not the whitespace or comments between them.
 
 use std::collections::HashSet;
 use std::fmt::Write;
@@ -30,9 +31,8 @@ use sungma::{
 };
 
 use crate::namespace::{
-    ErrorKind, Failure, Lexeme, MAX_DOCUMENT_BYTES, MAX_ERRORS, MAX_EXPRESSION_BYTES,
-    MAX_RELATIONS, Mode, NamespaceDocument, Parser, Place, PrintError, Token, lex, printed, quoted,
-    relation, syntax,
+    ErrorKind, Failure, Lexeme, MAX_DOCUMENT_BYTES, MAX_ERRORS, MAX_RELATIONS, Mode,
+    NamespaceDocument, Parser, Place, PrintError, Token, lex, printed, quoted, relation, syntax,
 };
 
 /// A problem in a schema document, with the namespace and relation it was
@@ -114,9 +114,9 @@ impl<'a> Reader<'_, 'a> {
         self.lexemes[self.at]
     }
 
-    fn token(&self, ahead: usize) -> Token {
+    fn token(&self, at: usize) -> Token {
         self.lexemes
-            .get(self.at + ahead)
+            .get(at)
             .map_or(Token::End, |lexeme| lexeme.token)
     }
 
@@ -130,20 +130,39 @@ impl<'a> Reader<'_, 'a> {
 
     /// Whether `keyword:` comes next.
     fn at_keyword(&self, keyword: &str) -> bool {
-        let lexeme = self.peek();
-        lexeme.token == Token::Name && lexeme.text == keyword && self.token(1) == Token::Colon
+        self.keyword_at(self.at, keyword)
+    }
+
+    /// Whether `keyword:` starts at lexeme `at`.
+    fn keyword_at(&self, at: usize, keyword: &str) -> bool {
+        let lexeme = self.lexemes[at];
+        lexeme.token == Token::Name && lexeme.text == keyword && self.token(at + 1) == Token::Colon
     }
 
     /// Whether a relation starts next: a name, then `=` or `:`.
     fn at_relation(&self) -> bool {
-        matches!(self.token(0), Token::Name | Token::This)
-            && matches!(self.token(1), Token::Equals | Token::Colon)
+        self.relation_at(self.at)
+    }
+
+    /// Whether a relation starts at lexeme `at`.
+    fn relation_at(&self, at: usize) -> bool {
+        matches!(self.lexemes[at].token, Token::Name | Token::This)
+            && matches!(self.token(at + 1), Token::Equals | Token::Colon)
+    }
+
+    /// How many relations the namespace whose relations start next
+    /// declares, counted without reading them.
+    fn declarations(&self) -> usize {
+        (self.at..self.lexemes.len())
+            .take_while(|&at| self.token(at) != Token::End && !self.keyword_at(at, "namespace"))
+            .filter(|&at| self.relation_at(at))
+            .count()
     }
 
     /// Whether what comes next ends a relation: another relation, a
     /// namespace, or the end.
     fn at_boundary(&self) -> bool {
-        self.token(0) == Token::End || self.at_relation()
+        self.token(self.at) == Token::End || self.at_relation()
     }
 
     fn push(
@@ -179,10 +198,13 @@ impl<'a> Reader<'_, 'a> {
     }
 
     fn document(&mut self) -> Vec<NamespaceDocument> {
+        // A theory name that fails prefixes nothing, so it's reported once.
         let theory = if self.at_keyword("theory") {
             self.next();
             self.next();
-            Some(self.namespace_name(None))
+            let errors = self.errors.len();
+            let theory = self.namespace_name(None);
+            (self.errors.len() == errors).then_some(theory)
         } else {
             None
         };
@@ -203,6 +225,12 @@ impl<'a> Reader<'_, 'a> {
                         relations,
                     });
                 }
+                // Every error from here on comes later in the document than
+                // those already found, so once they pass the cap, reading on
+                // would find none that are reported.
+                if self.errors.len() > MAX_ERRORS {
+                    break;
+                }
             } else if self.peek().token == Token::End {
                 break;
             } else {
@@ -211,7 +239,7 @@ impl<'a> Reader<'_, 'a> {
                 self.skip_until(|reader| reader.at_keyword("namespace"));
             }
         }
-        if namespaces.is_empty() && seen.is_empty() && self.errors.is_empty() {
+        if namespaces.is_empty() && self.errors.is_empty() {
             let place = Some(self.peek().place);
             self.push(None, None, (place, ErrorKind::NoNamespace));
         }
@@ -257,6 +285,16 @@ impl<'a> Reader<'_, 'a> {
         namespace: &NamespaceName,
         header: Place,
     ) -> Option<Namespace<RelationName>> {
+        // Every declaration counts, a relation declared twice included, and
+        // nothing past the limit is read, so a hostile namespace costs no
+        // more than one pass over it.
+        let declared = self.declarations();
+        if declared > MAX_RELATIONS {
+            let kind = ErrorKind::TooManyRelations(declared);
+            self.push(Some(namespace), None, (Some(header), kind));
+            self.skip_until(|reader| reader.at_keyword("namespace"));
+            return None;
+        }
         let mut relations = Vec::new();
         let mut places = Vec::new();
         while !(self.peek().token == Token::End || self.at_keyword("namespace")) {
@@ -274,16 +312,6 @@ impl<'a> Reader<'_, 'a> {
             let rewrite = self.rewrite(namespace, &name);
             places.push(lexeme.place);
             relations.push((name, rewrite));
-        }
-        let declared = relations
-            .iter()
-            .map(|(name, _)| name)
-            .collect::<HashSet<_>>()
-            .len();
-        if declared > MAX_RELATIONS {
-            let kind = ErrorKind::TooManyRelations(declared);
-            self.push(Some(namespace), None, (Some(header), kind));
-            return None;
         }
         let names: Vec<_> = relations.iter().map(|(name, _)| name.clone()).collect();
         match Namespace::new(relations) {
@@ -310,20 +338,26 @@ impl<'a> Reader<'_, 'a> {
             self.recover();
             return Rewrite::This;
         }
+        // The parser stops at its byte limit, so a hostile rewrite builds no
+        // deeper tree than one of the JSON form's limited expressions.
         let first = self.peek();
-        let mut parser = Parser::at(self.lexemes, self.at);
+        let mut parser = Parser::schema(self.lexemes, self.at);
         let parsed = parser.rewrite();
+        let stopped = parser.stopped_by_limit();
         self.at = parser.at;
-        let parsed = parsed.and_then(|rewrite| {
-            let last = self.lexemes[self.at.saturating_sub(1)];
-            if last.end.saturating_sub(first.start) > MAX_EXPRESSION_BYTES {
-                Err((Some(first.place), ErrorKind::ExpressionTooLong))
-            } else if self.at_boundary() {
-                Ok(rewrite)
-            } else {
-                Err(syntax(self.peek(), AFTER_REWRITE))
+        let too_long = (Some(first.place), ErrorKind::ExpressionTooLong);
+        let parsed = match parsed {
+            Ok(rewrite) if self.at_boundary() => Ok(rewrite),
+            Ok(_) if stopped => Err(too_long),
+            Ok(_) => Err(syntax(self.peek(), AFTER_REWRITE)),
+            // The limit read as the end.
+            Err((place, ErrorKind::Syntax { .. }))
+                if stopped && place == Some(self.peek().place) =>
+            {
+                Err(too_long)
             }
-        });
+            Err(failure) => Err(failure),
+        };
         parsed.unwrap_or_else(|failure| {
             self.push(Some(namespace), Some(name.as_str()), failure);
             self.recover();
@@ -356,6 +390,8 @@ impl<'a> Reader<'_, 'a> {
 /// name starts with it and a dot, and is written without them. Namespaces
 /// and their relations are sorted by name, relations are indented by two
 /// spaces, a blank line comes before each namespace, and lines end in `\n`.
+/// A document longer than [`MAX_DOCUMENT_BYTES`] is refused, since [`parse`]
+/// would refuse it.
 pub fn print(
     theory: Option<&NamespaceName>,
     namespaces: &[(&NamespaceName, &Namespace<RelationName>)],
@@ -392,6 +428,9 @@ pub fn print(
         for (relation, expression) in relations {
             let _ = writeln!(text, "  {relation} = {expression}");
         }
+    }
+    if text.len() > MAX_DOCUMENT_BYTES {
+        return Err(PrintError::TooLarge);
     }
     Ok(text)
 }

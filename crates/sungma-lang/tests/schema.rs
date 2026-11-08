@@ -125,7 +125,17 @@ fn every_valid_form_parses_to_its_tree_and_prints_canonically() {
 #[test]
 fn every_invalid_form_is_refused_where_it_goes_wrong() {
     for (expression, column, found, expected) in grammar::invalid() {
-        let error = only(&grammar_case(expression));
+        // A name then `:` is the next relation's signature here, so the
+        // rewrite is missing before it.
+        let (column, found, expected) = match expression {
+            "a:b" => (1, "'a'", grammar::TERM),
+            _ => (column, found, expected),
+        };
+        // `a:b` is two mistakes here, the missing rewrite reported first.
+        let error = match expression {
+            "a:b" => refused(&grammar_case(expression)).remove(0),
+            _ => only(&grammar_case(expression)),
+        };
         assert_eq!(error.namespace.as_deref(), Some("t"), "{expression}");
         assert_eq!(error.relation.as_deref(), Some("r"), "{expression}");
         let place = Place {
@@ -564,18 +574,18 @@ fn each_limit_holds_at_its_value_and_breaks_one_past_it() {
     );
     assert_eq!(error.place, Some(Place { line: 1, column: 1 }));
 
-    // `this` and runs of ` | this`, in as many parentheses as make up the
+    // `this` and runs of `|this`, in as many parentheses as make up the
     // rest of `bytes`.
     let expression = |bytes: usize| {
-        let mut runs = (bytes - 4) / 7;
-        while !(bytes - 4 - 7 * runs).is_multiple_of(2) {
+        let mut runs = (bytes - 4) / 5;
+        while !(bytes - 4 - 5 * runs).is_multiple_of(2) {
             runs -= 1;
         }
-        let parentheses = (bytes - 4 - 7 * runs) / 2;
+        let parentheses = (bytes - 4 - 5 * runs) / 2;
         let text = format!(
             "{}this{}{}",
             "(".repeat(parentheses),
-            " | this".repeat(runs),
+            "|this".repeat(runs),
             ")".repeat(parentheses)
         );
         assert_eq!(text.len(), bytes);
@@ -584,6 +594,10 @@ fn each_limit_holds_at_its_value_and_breaks_one_past_it() {
     for bytes in [MAX_EXPRESSION_BYTES - 1, MAX_EXPRESSION_BYTES] {
         one(&format!("namespace: t\n  r = {}", expression(bytes)));
     }
+    // The limit counts tokens: spaces, line breaks and comments between them
+    // don't count.
+    let spaced = expression(MAX_EXPRESSION_BYTES).replace('|', " // a comment\n    | ");
+    one(&format!("namespace: t\n  r = {spaced}"));
     let text = expression(MAX_EXPRESSION_BYTES + 1);
     let error = only(&format!("namespace: t\n  r = {text}"));
     assert!(
@@ -781,4 +795,76 @@ proptest! {
             prop_assert_eq!(print(None, &again), Ok(printed));
         }
     }
+}
+
+// Review findings, each pinned before its fix.
+
+#[test]
+fn a_long_chain_of_exclusions_is_refused_without_a_crash() {
+    let chain = vec!["b"; 300_000].join("!");
+    let error = only(&format!("namespace: t\n  b = this\n  a = {chain}"));
+    assert!(
+        matches!(error.kind, ErrorKind::ExpressionTooLong),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_dense_rewrite_prints_as_a_document_that_parses_back() {
+    let dense = vec!["b"; 1030].join("|");
+    let documents = parsed(&format!("namespace: t\n  b = this\n  a = {dense}"));
+    let printed = print(None, &documents).expect("a printable namespace");
+    let again = parsed(&printed);
+    assert_eq!(sorted(&again[0].relations), sorted(&documents[0].relations));
+}
+
+#[test]
+fn the_printer_refuses_a_document_past_the_size_limit() {
+    let dense = vec!["b"; 1900].join("|");
+    let relations: String = (0..499).map(|i| format!("r{i}={dense}\n")).collect();
+    let text = format!("namespace: s\nb=this\n{relations}namespace: t\nb=this\n{relations}");
+    assert!(text.len() < MAX_DOCUMENT_BYTES);
+    let documents = parsed(&text);
+    assert_eq!(print(None, &documents), Err(PrintError::TooLarge));
+}
+
+#[test]
+fn a_namespace_writes_at_most_max_relations_declarations() {
+    let text = format!("namespace: t\n{}", "  a = !\n".repeat(MAX_RELATIONS + 1));
+    let error = only(&text);
+    assert!(
+        matches!(error.kind, ErrorKind::TooManyRelations(count) if count == MAX_RELATIONS + 1),
+        "{error}"
+    );
+}
+
+#[test]
+fn the_end_after_a_trailing_comment_is_at_the_end_of_its_line() {
+    let error = only("namespace: t\n  r = // note");
+    assert_eq!(
+        error.place,
+        Some(Place {
+            line: 2,
+            column: 14
+        })
+    );
+}
+
+#[test]
+fn a_rewrite_left_open_doesnt_swallow_what_comes_next() {
+    for text in [
+        "namespace: a\n  r = this |\nnamespace: b\n  r = this",
+        "namespace: a\n  r = this |\n  b = this\n  c = b",
+        "namespace: a\n  r = this !\n  s = this",
+    ] {
+        let error = only(text);
+        assert_eq!(error.place.map(|place| place.line), Some(3), "{text:?}");
+        assert_eq!(error.relation.as_deref(), Some("r"), "{text:?}");
+    }
+}
+
+#[test]
+fn a_bad_theory_name_is_reported_once() {
+    let error = only("theory: a..b\nnamespace: c\nnamespace: d\n");
+    assert_eq!(error.place, Some(Place { line: 1, column: 9 }));
 }

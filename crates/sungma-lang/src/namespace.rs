@@ -627,7 +627,9 @@ pub(crate) fn lex(text: &str, mode: Mode) -> Vec<Lexeme<'_>> {
             }
             ' ' | '\t' | '\n' | '\r' => continue,
             '/' if mode == Mode::Schema && matches!(chars.peek(), Some((_, '/'))) => {
-                while chars.next_if(|&(_, c)| c != '\n').is_some() {}
+                while chars.next_if(|&(_, c)| c != '\n').is_some() {
+                    column += 1;
+                }
                 continue;
             }
             '(' => Token::Open,
@@ -685,6 +687,9 @@ pub(crate) fn lex(text: &str, mode: Mode) -> Vec<Lexeme<'_>> {
     lexemes
 }
 
+/// What a term starts with.
+const TERM: &str = "'this', a relation name or '('";
+
 /// A syntax error's place and kind.
 pub(crate) type Failure = (Option<Place>, ErrorKind);
 
@@ -695,19 +700,40 @@ pub(crate) struct Parser<'l, 'a> {
     lexemes: &'l [Lexeme<'a>],
     pub(crate) at: usize,
     groups: usize,
+    /// The bytes of the lexemes read so far, and how many may be read: the
+    /// parser reads a lexeme past the limit as the end.
+    bytes: usize,
+    limit: usize,
+    /// Whether a name followed by `:` or `=` ends the rewrite, as the next
+    /// relation's signature in Sungma schema language.
+    signatures: bool,
 }
 
 impl<'l, 'a> Parser<'l, 'a> {
-    /// A parser at the first of `lexemes`, which end in [`Token::End`].
+    /// A parser for one whole expression, `lexemes`, which end in
+    /// [`Token::End`].
     pub(crate) fn new(lexemes: &'l [Lexeme<'a>]) -> Self {
-        Self::at(lexemes, 0)
+        Self {
+            lexemes,
+            at: 0,
+            groups: 0,
+            bytes: 0,
+            limit: usize::MAX,
+            signatures: false,
+        }
     }
 
-    pub(crate) fn at(lexemes: &'l [Lexeme<'a>], at: usize) -> Self {
+    /// A parser for the rewrite at `at` in a schema document's `lexemes`,
+    /// which reads at most [`MAX_EXPRESSION_BYTES`] of lexemes, whitespace
+    /// and comments not counted, and stops before a relation's signature.
+    pub(crate) fn schema(lexemes: &'l [Lexeme<'a>], at: usize) -> Self {
         Self {
             lexemes,
             at,
             groups: 0,
+            bytes: 0,
+            limit: MAX_EXPRESSION_BYTES,
+            signatures: true,
         }
     }
 
@@ -726,16 +752,45 @@ impl<'l, 'a> Parser<'l, 'a> {
         self.union()
     }
 
+    /// Whether the parser stopped at a lexeme past its byte limit.
+    pub(crate) fn stopped_by_limit(&self) -> bool {
+        self.past_limit(self.lexemes[self.at])
+    }
+
+    fn past_limit(&self, lexeme: Lexeme<'_>) -> bool {
+        lexeme.token != Token::End && self.bytes + lexeme.text.len() > self.limit
+    }
+
     fn peek(&self) -> Lexeme<'a> {
-        self.lexemes[self.at]
+        let lexeme = self.lexemes[self.at];
+        if self.past_limit(lexeme) {
+            Lexeme {
+                token: Token::End,
+                ..lexeme
+            }
+        } else {
+            lexeme
+        }
     }
 
     fn next(&mut self) -> Lexeme<'a> {
         let lexeme = self.peek();
         if lexeme.token != Token::End {
             self.at += 1;
+            self.bytes += lexeme.text.len();
         }
         lexeme
+    }
+
+    /// Whether a relation's signature, a name then `:` or `=`, comes next.
+    fn at_signature(&self) -> bool {
+        let token = |ahead: usize| {
+            self.lexemes
+                .get(self.at + ahead)
+                .map_or(Token::End, |lexeme| lexeme.token)
+        };
+        matches!(token(0), Token::Name | Token::This)
+            && matches!(token(1), Token::Colon | Token::Equals)
     }
 
     fn union(&mut self) -> Result<Node, Failure> {
@@ -776,6 +831,9 @@ impl<'l, 'a> Parser<'l, 'a> {
     }
 
     fn term(&mut self) -> Result<Node, Failure> {
+        if self.signatures && self.at_signature() {
+            return Err(syntax(self.peek(), TERM));
+        }
         let lexeme = self.next();
         match lexeme.token {
             Token::This => Ok(Rewrite::This),
@@ -791,7 +849,7 @@ impl<'l, 'a> Parser<'l, 'a> {
                 self.groups -= 1;
                 Ok(node)
             }
-            _ => Err(syntax(lexeme, "'this', a relation name or '('")),
+            _ => Err(syntax(lexeme, TERM)),
         }
     }
 
@@ -867,6 +925,8 @@ pub enum PrintError {
     OutsideTheory(String),
     #[error("namespace '{0}' is given twice")]
     DuplicateNamespace(String),
+    #[error("the printed document would be more than {MAX_DOCUMENT_BYTES} bytes")]
+    TooLarge,
 }
 
 /// Writes a namespace as a document that [`parse`] reads back as an equal
