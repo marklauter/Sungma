@@ -66,9 +66,7 @@ jobs:
   test:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    # Linux only: Sungma runs on Linux, and the pre-commit hook runs the
-    # tests on Windows, where they're written. clock-platforms.yml covers
-    # the clock's Windows code each week.
+    # Linux only, where Sungma runs.
     runs-on: ubuntu-latest
     strategy:
       matrix:
