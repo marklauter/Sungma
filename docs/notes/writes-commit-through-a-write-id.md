@@ -136,7 +136,7 @@ The checks keep today's guard. Without them, a fact could land under a relation 
 
 The write's items were stored before, so the commit stays this small however many facts the write carries.
 
-R comes from the revision-clock at commit time, and the writer waits out commit-wait before acknowledging. The revision is chosen at commit, not at the start. So if the head moves while a write is storing its items, nothing is lost: only the commit retries, with a new R. The items stay where they are. Before each try, the write is authorized again at the new head, as [Sungma's own authorization](../specs/sungma-authorization.md#authorizing-a-write) requires, and its namespace checks are made again. A role retired by a write that committed in between can't carry it through.
+R comes from the revision-clock at commit time, and the writer waits out commit-wait before acknowledging. The revision is chosen at commit, not at the start. So if the head moves while a write is storing its items, nothing is lost: only the commit retries, with a new R. The items stay where they are. Before each try, the write is authorized again at the new head, as [Sungma's own authorization](../specs/sungma-authorization.md#authorizing-a-write) requires, and its namespace checks are made again. A fact retired by a write that committed in between can't carry it through.
 
 The item limit now applies only to the commit: the head, the status record, and about 98 namespaces judged. It no longer limits how many facts a write carries.
 
@@ -262,7 +262,7 @@ It changes every write and every read, so it is all or nothing: reads must handl
 
 - **A head lease. Rejected, because writes never wait.** A write reserves the head, stores every item at the next revision R in as many pieces as it needs, and moves the head to R last. Reads stop at the head, so nothing at R shows early. Other writes wait the whole time, and the head must never move past R while R's items remain: a dead writer's items have to be undone, or R marked aborted, first. Simpler for readers, but every such write stops every other write.
 - **A cap on items per write. Rejected.** Large changes are split into several versions by the caller. Simple, but an odd limit for an author to run into.
-- **Writing the extra items after the commit. Rejected.** The namespace commits first, and its `parent` facts follow in later transactions. Readers then see the namespace for a while without some of its facts. That is safe only where a missing fact can only deny access, never grant it, which is what "fails closed" means. Under an exclusion, a missing fact on the excluded side widens access. So this works only for facts that never sit on the excluded side of an exclusion.
+- **Writing the extra items after the commit. Rejected.** The namespace commits first, and its `parent` facts follow in later transactions. Readers then see the namespace for a while without some of its facts. That is safe only where a missing fact can only make a check deny, never allow, which is what "fails closed" means. Under an exclusion, a missing fact on the excluded side widens closures. So this works only for facts that never sit on the excluded side of an exclusion.
 
 ## Prior art
 

@@ -22,7 +22,7 @@ The code is the same either way. What differs is who runs it.
 
 ## Why
 
-Sungma holds a map of who can reach what across a whole organization. A security-minded organization won't keep that map in a table shared with other organizations, separated only by a key and the vendor's care. A separate instance gives it isolation it can see.
+Sungma holds a map of who may do what across a whole organization. A security-minded organization won't keep that map in a table shared with other organizations, separated only by a key and the vendor's care. A separate instance gives it isolation it can see.
 
 Single tenancy also keeps the design as it is. A multi-tenant Sungma would put a tenant into every key, keep name pools and namespaces per tenant, and need a head and a revision timeline per tenant, so one tenant's writes don't contend with another's.
 

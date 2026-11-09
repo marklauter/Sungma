@@ -48,7 +48,7 @@ The epoch exists for one purpose: when a later namespace version re-declares a d
 
 - Re-adding a dropped relation in a later version moves its epoch, so older facts under it stay dead and old facts don't resurrect.
 - A replay or expand at an earlier revision reads the earlier version and its epoch, so the facts are valid there.
-- The namespace write is cheap: no fact is rewritten, no cross-namespace scan runs, and facts carry no namespace version. Late binding means the catalog can't see which other namespaces reach a dropped relation, and scanning the fact graph on every namespace write is impractical. Dropping a relation therefore empties it everywhere, including on the excluded side of another namespace's exclusion, which can widen access there. That widening is accepted.
+- The namespace write is cheap: no fact is rewritten, no cross-namespace scan runs, and facts carry no namespace version. Late binding means the catalog can't see which other namespaces reach a dropped relation, and scanning the fact graph on every namespace write is impractical. Dropping a relation therefore empties it everywhere, including on the excluded side of another namespace's exclusion, which can widen closures there. That widening is accepted.
 - Re-applying a fact whose span started before the epoch opens a new span (`crates/sungma-write/src/fact.rs`, `opens_span`), so a re-asserted fact counts again.
 - Every reader of the graph applies the same epoch filter: Check, Expand, Read, Watch and dumps. A reader that skips it shows orphans as live.
 - The eager alternative closes the orphans' spans in the namespace write. It gives the same visible facts at every revision and needs no reader filter, but the write costs as much as there are orphans.

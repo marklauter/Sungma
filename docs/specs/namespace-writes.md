@@ -51,7 +51,7 @@ The store meets this with a conditional write on the namespace, the same primiti
 
 A namespace write never reads or rewrites facts. It doesn't report the facts it orphans, and it doesn't refuse past some number of them. Either would need a scan, and with billions of facts a scan would make every namespace write as slow as the graph is large. Which facts count after a write follows from spans and epochs, as [One timeline](one-timeline.md) specifies. Readers apply that rule when they read. The write only moves epochs.
 
-Dropping a relation empties it everywhere, including in other namespaces that reach it through a fact-to-subjectset. On the excluded side of an exclusion, that widens access. [One timeline](one-timeline.md#what-is-accepted) accepts it.
+Dropping a relation empties it everywhere, including in other namespaces that reach it through a fact-to-subjectset. On the excluded side of an exclusion, that widens closures. [One timeline](one-timeline.md#what-is-accepted) accepts it.
 
 ## Storage
 

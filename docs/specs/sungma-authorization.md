@@ -8,7 +8,7 @@ cites:
   - "[[theory]]"
   - "[[reusing-a-resource-id]]"
   - "[[scim-imports-users-and-groups]]"
-  - "[[privileged-roles-need-a-recent-sign-in]]"
+  - "[[privileged-relations-need-a-recent-sign-in]]"
   - "[[namespace]]"
   - "[[relation]]"
   - "[[rewrite]]"
@@ -16,6 +16,7 @@ cites:
   - "[[subject]]"
   - "[[identity]]"
   - "[[subjectset]]"
+  - "[[closure]]"
   - "[[resource]]"
   - "[[check-takes-a-caller-token-and-a-subject-token]]"
   - "[[catalog]]"
@@ -32,20 +33,20 @@ Sungma authorizes the callers of its own services with its own model. Who may cr
 
 Each endpoint decides for itself whether a request goes through. It's a policy enforcement point (PEP): the place in code that asks the question and acts on the answer. Its guard is hard-coded in the endpoint: a relation, and a [[resource]] built from the route's values. The subject is the caller. In code a guard reads `.Check("owner", "sungma.group:{G}")`, so the endpoint asks `check(sungma.group:{G}#owner, sub)`.
 
-Sungma's Check decides. The model is the policy: namespaces with their relations and [[rewrite]]s, plus facts. A namespace never says who may write or read a relation. Endpoints say that, each with its guard, and the model decides who passes. So adding a role is a model change, never a code change, and no code holds a list of protected facts or roles.
+Sungma's Check decides. The model is the policy: namespaces with their relations and [[rewrite]]s, plus facts. A namespace never says who may write or read a relation. Endpoints say that, each with its guard, and the model decides who passes. So adding a relation is a model change, never a code change, and no code holds a list of protected facts or relations.
 
 ## Subjects
 
-A role is held by a [[subject]]: a person's or client's [[identity]], or a group's members. The caller of a request is its token's `sub` claim, an identity, as [[check-takes-a-caller-token-and-a-subject-token]] decides. For Check, that is the caller token's `sub`, not the subject the check is about. Sungma doesn't tell people and clients apart.
+A [[subject]] holds a relation on a resource when it's in that subjectset's [[closure]]. A subject here is a person's or client's [[identity]], or a group's members. The caller of a request is its token's `sub` claim, an identity, as [[check-takes-a-caller-token-and-a-subject-token]] decides. For Check, that is the caller token's `sub`, not the subject the check is about. Sungma doesn't tell people and clients apart.
 
 ## Two tiers
 
 The model separates two kinds of work:
 
-- **Writing namespaces** is specialist work. A namespace's rewrites decide who can reach what, so whoever edits one needs to understand the security it encodes.
+- **Writing namespaces** is specialist work. A namespace's rewrites decide which subjects each closure holds, so whoever edits one needs to understand the security it encodes.
 - **Writing facts** is everyday work, such as sharing an invoice. Most people only ever write facts, and usually under a few relations.
 
-Neither implies the other. A namespace's writer can't write its facts unless they also hold a fact role, and a fact writer can't write the namespace.
+Neither implies the other. A namespace's writer can't write its facts unless they also hold a relation that writes facts, and a fact writer can't write the namespace.
 
 ## The model
 
@@ -54,7 +55,7 @@ The model is written as a [theory document](theory-documents.md) in Sungma schem
 ```c
 theory: sungma
 
-// The root, one resource, sungma.root:sungma: roles across the whole deployment
+// The root, one resource, sungma.root:sungma: relations across the whole deployment
 namespace: root
   owner: identity
   admin: identity = this | owner
@@ -87,13 +88,13 @@ namespace: namespace
   auditor: identity, group#member = this | (parent, auditor)
   access_reader = admin | auditor
 
-// Each relation: who writes and reads the facts under it
+// Each relation: the closures that write and read its facts
 namespace: relation
   parent: namespace
   writer: identity, group#member = this | (parent, fact_writer)
   reader: identity, group#member = this | writer | (parent, fact_reader)
 
-// Each group: who owns it and who is in it
+// Each group: the closures of its owners and members
 namespace: group
   parent: root
   owner: identity, group#member = this | (parent, admin)
@@ -101,7 +102,7 @@ namespace: group
   access_reader = owner | (parent, auditor)
 ```
 
-Drawn as a graph, each namespace is a node, and each relation's accepted subjects are its edges. Solid edges are the `parent` and `protected` links that rewrites follow. Dashed edges go to identities, the keys of the people and clients who hold roles, and to groups, which hold roles for their members.
+Drawn as a graph, each namespace is a node, and each relation's accepted subjects are its edges. Solid edges are the `parent` and `protected` links that rewrites follow. Dashed edges go to identities, the keys of people and clients named in facts, and to groups, whose members are named through `group#member`.
 
 ```mermaid
 flowchart LR
@@ -124,13 +125,13 @@ flowchart LR
   group -. "owner, member" .-> group
 ```
 
-Each `access_reader` accepts no facts. It names who reads the roles on a resource, and the endpoints that list roles guard with it:
+`access_reader` relations are computed subjectsets. On a resource, the closure is the set of subjects that may read the resource's facts, and the endpoints that list those facts guard with it:
 
-- On `sungma.root`, the auditors. Every admin is an auditor, so admins and owners read the deployment's roles too.
-- On `sungma.namespace`, the namespace's admins, owners included, its auditors, and the deployment's auditors. It covers the roles on the namespace's relations too.
+- On `sungma.root`, the auditors. Every admin is an auditor, so admins and owners read the facts on `sungma.root:sungma` too.
+- On `sungma.namespace`, the namespace's admins, owners included, its auditors, and the deployment's auditors. It covers the facts on each `sungma.relation:{N}/{R}` too.
 - On `sungma.group`, the group's owners and the deployment's auditors.
 
-On a namespace, managing and retiring are separate. A namespace's `owner` is `this | (parent, owner)`: its own owners, such as its creator, and the root's owners. Owners may retire it, drop its relations, and decide its owners. Its `admin` is `this | owner | (parent, admin)`: its own admins, its owners, and the root's admins. Admins write its document and facts and decide every role but `owner`. So a root admin manages every customer namespace and can't retire one they don't own. In both rewrites, `!` binds tighter than `|`, so `! (protected, …)` subtracts only what arrives from the root, and only on a namespace that `protected` ties to the root. [Protected namespaces](#protected-namespaces) says why.
+On a namespace, managing and retiring are separate. A namespace's `owner` is `this | (parent, owner)`: its own owners, such as its creator, and the root's owners. Owners may retire it, drop its relations, and decide its owners. Its `admin` is `this | owner | (parent, admin)`: its own admins, its owners, and the root's admins. Admins write its document and facts, and write and retire the facts under every relation on it but `owner`. So a root admin manages every customer namespace and can't retire one they don't own. In both rewrites, `!` binds tighter than `|`, so `! (protected, …)` subtracts only what arrives from the root, and only on a namespace that `protected` ties to the root. [Protected namespaces](#protected-namespaces) says why.
 
 Facts name four kinds of resource:
 
@@ -141,7 +142,7 @@ Facts name four kinds of resource:
 
 ## Base facts
 
-The namespaces above and the facts below are the whole policy. A guard's check is answered from them and from the role facts callers add through the endpoints.
+The namespaces above, the facts below, and the facts callers write through the endpoints are everything a guard's check reads.
 
 Setup writes these facts at install, before the first caller arrives. Here `alice` and `bob` stand for the `sub`s of the first two owners:
 
@@ -158,7 +159,7 @@ sungma.namespace:sungma.relation#protected@sungma.root:sungma#...
 sungma.namespace:sungma.group#protected@sungma.root:sungma#...
 ```
 
-The `owner` facts make the owners admins, and so auditors and every other deployment role. The `parent` facts let auditors read the documents of Sungma's own namespaces. The `protected` facts take the root's owners and admins back out of those namespaces' owners and admins, as [Protected namespaces](#protected-namespaces) says. Setup writes no `parent` fact on any `sungma.relation` resource, so Sungma's own relations have none.
+The `owner` facts make the owners admins, so they hold `auditor` and every other relation on the root. The `parent` facts let auditors read the documents of Sungma's own namespaces. The `protected` facts take the root's owners and admins back out of those namespaces' owners and admins, as [Protected namespaces](#protected-namespaces) says. Setup writes no `parent` fact on any `sungma.relation` resource, so Sungma's own relations have none.
 
 The endpoints that create things write facts of their own, always these and nothing a caller chooses. Here Carol creates `billing`, which declares `approver` and `viewer`:
 
@@ -169,7 +170,7 @@ sungma.relation:billing/approver#parent@sungma.namespace:billing#...
 sungma.relation:billing/viewer#parent@sungma.namespace:billing#...
 ```
 
-The first makes every root owner an owner of `billing`, every root admin an admin of it, and every root auditor and reader a reader of it. The second makes Carol an owner, and so an admin, of `billing`. The last two let `billing`'s fact writers and fact readers reach the facts under its relations.
+The first makes every root owner an owner of `billing`, every root admin an admin of it, and every root auditor and reader a reader of it. The second makes Carol an owner, and so an admin, of `billing`. The last two let `billing`'s fact writers and fact readers write and read the facts under its relations.
 
 A later version of `billing` that adds `payer` writes that relation's `parent`:
 
@@ -206,7 +207,7 @@ A batch is refused whole if any fact in it fails its guard.
 
 A fact's subject may name a resource or subjectset in another namespace. Writing the fact runs only its own relation's guard, nothing on the namespace it points into.
 
-The fact endpoint can't write or read Sungma's own facts. That follows from the facts, not from a check in code. The `sungma.relation` resources for Sungma's own relations, such as `sungma.relation:sungma.root/owner` or `sungma.relation:sungma.namespace/parent`, have no `parent` fact, and no `writer` or `reader` fact. Nothing reaches `writer` or `reader` on them, so every caller fails both guards.
+The fact endpoint can't write or read Sungma's own facts. That follows from the facts, not from a check in code. The `sungma.relation` resources for Sungma's own relations, such as `sungma.relation:sungma.root/owner` or `sungma.relation:sungma.namespace/parent`, have no `parent` fact, and no `writer` or `reader` fact. No one holds `writer` or `reader` on them, so every caller fails both guards.
 
 ### Dedicated endpoints
 
@@ -214,14 +215,14 @@ Sungma's own facts are managed through dedicated endpoints, each with its own ha
 
 | Endpoint | Guard | What it does |
 |---|---|---|
-| Add or retire a member of group `G` | `.Check("owner", "sungma.group:{G}")` | Writes or retires a `sungma.group:{G}#member` fact. |
-| Add or retire an owner of group `G` | `.Check("owner", "sungma.group:{G}")` | Writes or retires a `sungma.group:{G}#owner` fact. |
+| Write or retire a `member` fact on group `G` | `.Check("owner", "sungma.group:{G}")` | Writes or retires a `sungma.group:{G}#member` fact. |
+| Write or retire an `owner` fact on group `G` | `.Check("owner", "sungma.group:{G}")` | Writes or retires a `sungma.group:{G}#owner` fact. |
 | Create a group | `.Check("group_creator", "sungma.root:sungma")` | Creates the group, as [Groups](#groups) says. |
-| Add or retire an owner of namespace `N` | `.Check("owner", "sungma.namespace:{N}")` | Writes or retires a `sungma.namespace:{N}#owner` fact. |
-| Add or retire any other role on namespace `N`: `admin`, `writer`, `reader`, `fact_writer`, `fact_reader` or `auditor` | `.Check("admin", "sungma.namespace:{N}")` | Writes or retires the role's fact on `sungma.namespace:{N}`. Only owners decide owners, so an admin can't make themselves an owner and then retire the namespace. |
-| Add or retire a role on relation `N/R`: `writer` or `reader` | `.Check("admin", "sungma.namespace:{N}")` | Writes or retires the role's fact on `sungma.relation:{N}/{R}`. |
-| Add or retire an admin | `.Check("owner", "sungma.root:sungma")` | Writes or retires a `sungma.root:sungma#admin` fact. |
-| Add or retire any other role on `sungma.root:sungma`: `namespace_creator`, `group_creator`, `operator`, `auditor`, `reader`, `writer`, `fact_writer`, `fact_reader` or `directory_reader` | `.Check("admin", "sungma.root:sungma")` | Writes or retires the role's fact on `sungma.root:sungma`. |
+| Write or retire an `owner` fact on namespace `N` | `.Check("owner", "sungma.namespace:{N}")` | Writes or retires a `sungma.namespace:{N}#owner` fact. |
+| Write or retire a fact under one of `sungma.namespace:{N}`'s other relations: `admin`, `writer`, `reader`, `fact_writer`, `fact_reader` or `auditor` | `.Check("admin", "sungma.namespace:{N}")` | Writes or retires that fact on `sungma.namespace:{N}`. Only owners decide owners, so an admin can't make themselves an owner and then retire the namespace. |
+| Write or retire a fact under one of `sungma.relation:{N}/{R}`'s relations: `writer` or `reader` | `.Check("admin", "sungma.namespace:{N}")` | Writes or retires that fact on `sungma.relation:{N}/{R}`. |
+| Write or retire an `admin` fact on the root | `.Check("owner", "sungma.root:sungma")` | Writes or retires a `sungma.root:sungma#admin` fact. |
+| Write or retire a fact under one of `sungma.root:sungma`'s other relations: `namespace_creator`, `group_creator`, `operator`, `auditor`, `reader`, `writer`, `fact_writer`, `fact_reader` or `directory_reader` | `.Check("admin", "sungma.root:sungma")` | Writes or retires that fact on `sungma.root:sungma`. |
 | Create namespace `N` | `.Check("namespace_creator", "sungma.root:sungma")` | Creates the namespace, as [Creating a namespace](#creating-a-namespace) says. |
 | Write a new version of `N` that keeps every relation the latest version declares | `.Check("writer", "sungma.namespace:{N}")` | Stores the version, and a `parent` fact for each relation it adds. |
 | Write a new version of `N` that drops a relation the latest version declares | `.Check("owner", "sungma.namespace:{N}")` | Stores the version, and a `parent` fact for each relation it adds. |
@@ -229,9 +230,9 @@ Sungma's own facts are managed through dedicated endpoints, each with its own ha
 | Restore namespace `N`, or a relation a version dropped | `.Check("owner", "sungma.namespace:{N}")` | Resumes the old creation with its epochs, so its facts count again. |
 | Read `N`'s document at a [[revision]], or list its versions | `.Check("reader", "sungma.namespace:{N}")` | Reads the document or its versions. |
 | List the [[catalog]] | `.Check("reader", "sungma.namespace:{N}")` for each namespace `N` | Lists only the namespaces whose guard the caller passes. |
-| Read the roles on namespace `N` and its relations | `.Check("access_reader", "sungma.namespace:{N}")` | Lists the role facts on `sungma.namespace:{N}` and on each `sungma.relation:{N}/{R}`. |
+| Read the facts on namespace `N` and its relations | `.Check("access_reader", "sungma.namespace:{N}")` | Lists the facts on `sungma.namespace:{N}` and on each `sungma.relation:{N}/{R}`. |
 | Read a group's members and owners | `.Check("access_reader", "sungma.group:{G}")` | Lists the `member` and `owner` facts on `sungma.group:{G}`. |
-| Read the deployment's roles | `.Check("access_reader", "sungma.root:sungma")` | Lists the role facts on `sungma.root:sungma`. |
+| Read the facts on `sungma.root:sungma` | `.Check("access_reader", "sungma.root:sungma")` | Lists the facts on `sungma.root:sungma`. |
 | Expand a relation on one of Sungma's own resources, such as `sungma.namespace:{N}#owner` or `sungma.group:{G}#member` | `.Check("access_reader", "<that resource>")`, on the resource of the subjectset being expanded, or, for `sungma.relation:{N}/{R}`, on `sungma.namespace:{N}` | Shows everyone who holds the relation, including through groups, `parent` and rewrites, so people can see whether the model is set up the way they meant. |
 | Change a deployment setting | `.Check("admin", "sungma.root:sungma")` | Changes the setting. |
 | Read logs and metrics | `.Check("operator", "sungma.root:sungma")` | Reads them. |
@@ -239,13 +240,13 @@ Sungma's own facts are managed through dedicated endpoints, each with its own ha
 | Search users, or list groups, by name | `.Check("directory_reader", "sungma.root:sungma")` | Reads the user and group store, the projection SCIM fills, so a caller can find who to name in a fact. |
 | Read and replay the audit records of decisions that involve namespace `N` | `.Check("auditor", "sungma.namespace:{N}")` | Reads and replays them for `N` only. Root auditors pass for every namespace, through `parent`. |
 
-Roles on a relation are guarded on the relation's namespace, so `sungma.relation` needs no `owner` of its own. The admins of `billing`, owners included, add and retire every role but `owner` on `billing` and on its relations, and on no other namespace.
+Facts on a `sungma.relation` resource are guarded on the relation's namespace, so `sungma.relation` needs no `owner` of its own. The admins of `billing`, owners included, write and retire the facts under every relation but `owner` on `billing` and on its relations, and on no other namespace.
 
 Each protection rests on a guard, or on an endpoint that doesn't exist:
 
-- No endpoint writes `sungma.root:sungma#owner`, so no caller adds or retires an owner, an owner included. No one takes the deployment over through the API, and no one locks its owners out. [The deployment's owners](#the-deployments-owners) says how owners are set.
-- Adding or retiring an admin needs `owner` on the deployment. Admins run everything else but can't add or retire an admin, so no admin can retire another's admin fact.
-- No endpoint writes Sungma's own `parent` and `protected` facts. Setup writes them, and the endpoints that create a namespace or a group, or write a version, store only the facts [Base facts](#base-facts) gives. A caller who could add a `parent` fact could tie a namespace to a resource they control. A caller who could retire one could cut a namespace, relation or group off from the admins and auditors who reach it through `parent`. A caller who could retire a `protected` fact could make the admins owners of one of Sungma's own namespaces.
+- No endpoint writes `sungma.root:sungma#owner`, so no caller writes or retires an `owner` fact on it, an owner included. No one takes the deployment over through the API, and no one locks its owners out. [The deployment's owners](#the-deployments-owners) says how owners are set.
+- Writing or retiring an `admin` fact on the root needs `owner` on the deployment. Admins run everything else but can't write or retire an `admin` fact, so no admin can retire another's.
+- No endpoint writes Sungma's own `parent` and `protected` facts. Setup writes them, and the endpoints that create a namespace or a group, or write a version, store only the facts [Base facts](#base-facts) gives. A caller who could write a `parent` fact could tie a namespace to a resource they control. A caller who could retire one could cut a namespace, relation or group off from the admins and auditors who reach it through `parent`. A caller who could retire a `protected` fact could make the admins owners of one of Sungma's own namespaces.
 - Changing a group's members needs the group's `owner`, so a member can't leave a group on their own.
 
 A version that drops a relation needs `owner`, like retiring, because it has the same effect on that relation's facts: a later version that brings the relation back gives it a new [[epoch]], so every fact under it from before the drop stays dead. The endpoint looks only at whether the version drops a relation the latest version declares, never at which one. Adding relations, and changing the rewrites of the ones a version keeps, stay with `writer`.
@@ -255,11 +256,11 @@ A version that drops a relation needs `owner`, like retiring, because it has the
 This summary follows from the model and the guards. It isn't a separate rule.
 
 - The deployment's owners decide the admins. Every owner is an admin.
-- Admins add and retire every other role on the root, `namespace_creator`, `group_creator`, `operator`, `auditor`, `reader`, `writer`, `fact_writer`, `fact_reader` and `directory_reader`. They administer every customer namespace and own every group through `parent`.
-- A namespace's owners decide its owners, drop relations and retire it. Its admins, owners included, add and retire every role but `owner` on the namespace and its relations, read those roles, and write new versions. Its admins do everything owners do except deciding owners, dropping relations and retiring it. Its writers write versions that keep every relation.
-- A namespace-wide role flows down: `fact_writer` on `billing` makes its holder a `writer` on every relation in `billing`, including relations added later.
+- Admins write and retire the facts under every other relation on the root, `namespace_creator`, `group_creator`, `operator`, `auditor`, `reader`, `writer`, `fact_writer`, `fact_reader` and `directory_reader`. They administer every customer namespace and own every group through `parent`.
+- A namespace's owners decide its owners, drop relations and retire it. Its admins, owners included, write and retire the facts under every relation but `owner` on the namespace and its relations, read those facts, and write new versions. Its admins do everything owners do except deciding owners, dropping relations and retiring it. Its writers write versions that keep every relation.
+- A namespace-wide relation flows down: whoever holds `fact_writer` on `billing` holds `writer` on every relation in `billing`, including relations added later.
 - A group's owners change its members and its owners, and read them.
-- An auditor reads every namespace's document, Sungma's own included, every role in Sungma's own namespaces, and the facts under every relation in a customer's namespace, and changes nothing.
+- An auditor reads every namespace's document, Sungma's own included, every fact in Sungma's own namespaces, and the facts under every relation in a customer's namespace, and changes nothing.
 
 ## Protected namespaces
 
@@ -267,7 +268,7 @@ No caller changes the `sungma.root`, `sungma.namespace`, `sungma.relation` and `
 
 Setup writes a `parent` fact for each of their `sungma.namespace` resources, such as `sungma.namespace:sungma.group#parent@sungma.root:sungma#...`, so their documents are read under the same guard as any namespace document. Auditors read them through `reader`'s `auditor`, which reaches the root's auditors through `parent`, and so do admins, who are auditors.
 
-That `parent` link alone would make the root's owners owners, and the root's admins admins, of Sungma's own namespaces, able to write a version or retire one. Setup therefore also writes a `protected` fact for each of them, such as `sungma.namespace:sungma.group#protected@sungma.root:sungma#...`. `owner`'s and `admin`'s rewrites take the root's owners and admins reached through `protected` back out of those reached through `parent`, so Sungma's own namespaces have no owner and no admin. No caller can add an `owner` or `admin` fact there, because the endpoints that add them are guarded by `owner` and `admin` on that namespace, which nobody holds. `protected` also takes the root's writers and fact writers out, so nobody holds `writer` or `fact_writer` there either. Writing a version of `sungma.group` checks `sungma.namespace:sungma.group#writer` or `#owner`, and retiring it checks `#owner`, so each is refused for every caller. No caller can add or retire a `protected` fact, because no endpoint writes one.
+That `parent` link alone would make the root's owners owners, and the root's admins admins, of Sungma's own namespaces, able to write a version or retire one. Setup therefore also writes a `protected` fact for each of them, such as `sungma.namespace:sungma.group#protected@sungma.root:sungma#...`. `owner`'s and `admin`'s rewrites take the root's owners and admins reached through `protected` back out of those reached through `parent`, so Sungma's own namespaces have no owner and no admin. No caller can write an `owner` or `admin` fact there, because the endpoints that write them are guarded by `owner` and `admin` on that namespace, which nobody holds. `protected` also takes the root's writers and fact writers out, so nobody holds `writer` or `fact_writer` there either. Writing a version of `sungma.group` checks `sungma.namespace:sungma.group#writer` or `#owner`, and retiring it checks `#owner`, so each is refused for every caller. No caller can write or retire a `protected` fact, because no endpoint writes one.
 
 The protection lives in the model rather than in a check on the reserved name. That way the version and retire endpoints run the same guard for every namespace. `protected` only takes the root's owners and admins out of a namespace's `owner` and `admin`, so a caller would gain nothing by protecting a namespace of their own, and can't anyway.
 
@@ -275,7 +276,7 @@ Sungma's own namespaces stay protected only while no namespace other than Sungma
 
 ## The deployment's owners
 
-A role is trust placed in the people who hold it. The deployment's owners are the people the organization trusts most: they decide who the admins are. Every owner is an admin too.
+Holding `owner` or `admin` is trust placed in a person. The deployment's owners are the people the organization trusts most: they decide who the admins are. Every owner is an admin too.
 
 No endpoint writes `owner`, so only deployment setup writes `owner` facts, run out of band by whoever controls the deployment's configuration. Setup also writes Sungma's own `parent` and `protected` facts. Setup names each owner by identity, the `sub` the identity provider issues to them, and each run is recorded for auditors. The first owners can act as soon as they first sign in to Author, and nobody becomes an owner by signing in first. Owners are admins, and nothing in the API retires their facts, so the deployment always has an admin.
 
@@ -283,9 +284,9 @@ A deployment has at least two owners. Setup refuses to leave fewer, so losing on
 
 ## Authorizing a write
 
-A write is authorized at the [head](table.md#the-head) it's based on, in its own [unit of work](table.md#the-table-and-the-contexts). Every write commits only while the head is unchanged, so a write that retries is authorized again at the new head. A role retired by a write that committed first can't authorize a write that commits after it.
+A write is authorized at the [head](table.md#the-head) it's based on, in its own [unit of work](table.md#the-table-and-the-contexts). Every write commits only while the head is unchanged, so a write that retries is authorized again at the new head. A fact retired by a write that committed first can't authorize a write that commits after it.
 
-A read is authorized at the snapshot it reads, so a role retired before that snapshot can't read data written after it.
+A read is authorized at the snapshot it reads, so a fact retired before that snapshot can't read data written after it.
 
 ## Ownership
 
@@ -304,7 +305,7 @@ Namespaces, relations and groups each have a name and a creation. The name is wh
 
 Facts in Sungma's own namespaces are about a creation, not a name. Bob's ownership of `billing` is stored on `billing` as created at revision 40, written here `sungma.namespace:billing@40`. The endpoints accept names, and resolve each name to its current creation before they write or check. A retired name has no current creation, so a write to it is refused. A name created again resolves to its new creation, which no earlier fact mentions. So Carol, who creates `billing` after Bob's `billing` was retired, starts with only her own `owner` fact, and Bob's facts stay with the `billing` he owned.
 
-The same holds one level down. A relation dropped and declared again is a new creation of `sungma.relation:billing/approver`, so roles on the old creation don't apply to it.
+The same holds one level down. A relation dropped and declared again is a new creation of `sungma.relation:billing/approver`, so facts on the old creation don't apply to it.
 
 Restoring a retired name resumes its old creation, so its facts apply again, as [A retired namespace can be restored](../notes/a-retired-namespace-can-be-restored.md) says.
 
@@ -318,17 +319,17 @@ Creating a namespace stores it, the `parent` fact tying it to the deployment, an
 
 ## Groups
 
-A group holds a role for its members. One fact, such as `sungma.namespace:billing#reader@sungma.group:billing-ops#member`, makes every member of `billing-ops` a reader of `billing`. A group's members can include other groups, so membership nests, within the limits [Checks on the data](#checks-on-the-data) sets.
+A group's members are named in a fact as `group#member`. One fact, such as `sungma.namespace:billing#reader@sungma.group:billing-ops#member`, makes every member of `billing-ops` hold `reader` on `billing`. A group's members can include other groups, so membership nests, within the limits [Checks on the data](#checks-on-the-data) sets.
 
 Adding group H to group G is a fact on G, so it needs `owner` on G only. It changes nothing about H, the same way a fact that points into another namespace needs nothing there.
 
-A user, unlike a group, isn't a resource in Sungma. Users are identities, created and deleted upstream, and appear in facts only as subjects.
+A person or client, unlike a group, isn't a resource in Sungma. Each is an identity, created and deleted upstream, and appears in facts only as a subject.
 
 Creating a group stores its `parent` fact and an `owner` fact for its creator in one unit of work, as creating a namespace does. Admins own every group through `parent`.
 
 ## New relations
 
-A namespace version that declares a relation the namespace's earlier versions didn't stores the relation's `parent` fact in the same unit of work. A relation a later version drops keeps its `parent` fact and the roles on it. Nothing reads them while the relation is gone. A version that declares the relation again writes its `parent` fact afresh, opening a new span, so the relation keeps its link. The roles on the old creation stay with it, as [Names and creations](#names-and-creations) says.
+A namespace version that declares a relation the namespace's earlier versions didn't stores the relation's `parent` fact in the same unit of work. A relation a later version drops keeps its `parent` fact and the facts on it. Nothing reads them while the relation is gone. A version that declares the relation again writes its `parent` fact afresh, opening a new span, so the relation keeps its link. The facts on the old creation stay with it, as [Names and creations](#names-and-creations) says.
 
 A Sungma release's versions of Sungma's own namespaces store no `parent` fact for their relations, so the fact endpoint can't reach their facts, as [The fact endpoint](#the-fact-endpoint) says.
 
@@ -336,8 +337,8 @@ A Sungma release's versions of Sungma's own namespaces store no `parent` fact fo
 
 Some rules aren't about who may write, but about the shape of the data. Write checks them separately from the guards, for every caller:
 
-- Adding a fact under `sungma.relation:<namespace>/<relation>` is refused unless the namespace's latest version declares that relation. Otherwise a role on a relation that doesn't exist yet would lie hidden, then take effect the day a version declares it. Retiring one is always allowed, so a role on a dropped relation can still be retired before the relation returns.
-- Adding a fact whose subject is `sungma.group:<name>#member` is refused unless that group has been created. Otherwise a role given to a group that doesn't exist yet would take effect the day someone creates it.
+- Writing a fact on `sungma.relation:<namespace>/<relation>` is refused unless the namespace's latest version declares that relation. Otherwise a fact on a relation that doesn't exist yet would lie hidden, then take effect the day a version declares it. Retiring one is always allowed, so a fact on a dropped relation can still be retired before the relation returns.
+- Writing a fact whose subject is `sungma.group:<name>#member` is refused unless that group has been created. Otherwise a fact naming a group that doesn't exist yet would take effect the day someone creates it.
 - Creating a namespace whose first segment is `sungma` is refused, as [Protected namespaces](#protected-namespaces) says.
 - A group whose name starts with `scim/` is created and changed only by the SCIM client. Every other caller's write to it is refused, and so is creating any other group whose name starts with `scim/`.
 - Nesting is bounded, so a check that reaches a group never has to walk an unbounded graph.
@@ -352,7 +353,7 @@ The two limits are deployment settings. They default to 10 levels deep and 32 gr
 
 ## Conditions
 
-Some rules need the request's context, which the model doesn't hold. Privileged writes need a recent sign-in, as [[privileged-roles-need-a-recent-sign-in]] says, and that needs the caller token's `auth_time`. Conditions on the roadmap enforce it: a privileged relation's condition requires a recent `auth_time`. Until conditions exist, how Sungma enforces it is [open](#open).
+Some rules need the request's context, which the model doesn't hold. Privileged writes need a recent sign-in, as [[privileged-relations-need-a-recent-sign-in]] says, and that needs the caller token's `auth_time`. Conditions on the roadmap enforce it: a privileged relation's condition requires a recent `auth_time`. Until conditions exist, how Sungma enforces it is [open](#open).
 
 ## Required tests
 
@@ -360,41 +361,41 @@ Some rules need the request's context, which the model doesn't hold. Privileged 
 2. `fact_writer` on a namespace allows writing facts under every relation in it, including one a later version adds.
 3. A namespace writer who isn't a fact writer can't write facts, and a fact writer who isn't a namespace writer can't write a namespace version.
 4. Root owners own every customer namespace, and root admins administer every one, without a fact of their own on it.
-5. A person and a client with the same roles get the same answers.
+5. A person and a client named in the same facts get the same answers.
 6. A version of `sungma.root`, `sungma.namespace`, `sungma.relation` or `sungma.group`, and retiring one, are refused for every caller, an admin and a deployment owner included, because `protected` takes the admins out of their owners.
-7. An admin who isn't an owner can't add or retire an admin, because that endpoint's guard is `owner` on the deployment.
-8. No endpoint adds or retires a `sungma.root:sungma#owner` fact, for any caller, an admin and an owner included.
+7. An admin who isn't an owner can't write or retire an `admin` fact on the root, because that endpoint's guard is `owner` on the deployment.
+8. No endpoint writes or retires a `sungma.root:sungma#owner` fact, for any caller, an admin and an owner included.
 9. A failed namespace creation stores none of its items.
 10. A new relation gets its `parent` fact in the same unit of work as the version that declares it.
-11. An auditor reads every namespace's document, the facts under every relation in a customer's namespace and the roles in Sungma's own namespaces, and every write by an auditor who holds no other role is refused.
-12. A role given to a group reaches its members, including members of groups nested inside it, and a group's owner can change its members without holding any other role.
+11. An auditor reads every namespace's document, the facts under every relation in a customer's namespace and the facts in Sungma's own namespaces, and every write by an auditor who holds no other relation is refused.
+12. A fact whose subject is a group's `member` subjectset puts the group's members in its own subjectset's closure, including members of groups nested inside it, and a group's owner can change its members without holding any other relation.
 13. A write that retries is authorized again at the new head.
 14. A failed group creation stores neither fact, and an admin owns every group without an `owner` fact.
 15. A fact whose subject names another namespace runs only its own relation's guard.
 16. A group's members can't be made root admins through the group, because `sungma.root`'s `admin` accepts identities only.
-17. No endpoint adds or retires Sungma's own `parent` or `protected` facts, or a `parent` fact a caller chooses, for any caller, an admin included. Creating a namespace or a group, and writing a version, store only the facts [Base facts](#base-facts) gives.
-18. A role on `sungma.relation:<namespace>/<relation>` is refused while the namespace doesn't declare the relation.
+17. No endpoint writes or retires Sungma's own `parent` or `protected` facts, or a `parent` fact a caller chooses, for any caller, an admin included. Creating a namespace or a group, and writing a version, store only the facts [Base facts](#base-facts) gives.
+18. A fact on `sungma.relation:<namespace>/<relation>` is refused while the namespace doesn't declare the relation.
 19. Creating a namespace whose first segment is `sungma` is refused.
 20. Making a group a member of a group that it already contains, directly or through nesting, is refused, and so is a group made a member of itself.
 21. Nesting groups one level deeper than the depth limit, or giving a group one more nested group than the width limit, is refused, and the limits come from the deployment's settings.
 22. Two writes that would together form a cycle can't both commit.
-23. Retiring a role on a dropped relation is allowed, and a role on a relation the namespace doesn't declare can't be added.
+23. Retiring a fact on a dropped relation is allowed, and a fact on a relation the namespace doesn't declare can't be written.
 24. A relation declared again has a `parent` fact whose span opens at the new version.
-25. A role given to a group that hasn't been created is refused.
-26. An owner reads the roles on their namespace and its relations, and the members and owners of their group, and a caller without `access_reader` can't.
+25. A fact naming a group that hasn't been created is refused.
+26. An owner reads the facts on their namespace and its relations, and the members and owners of their group, and a caller without `access_reader` can't.
 27. A member retiring their own membership fact is refused unless they own the group, because the membership endpoint's guard is the group's `owner`.
 28. Changing a deployment setting needs `admin`.
-29. A read at a snapshot taken after a role was retired is refused for the caller who lost it.
+29. A read at a snapshot taken after a fact was retired is refused for a caller who held the guard's relation only through that fact.
 30. Setup refuses to leave the deployment with fewer than two owners, and writes exactly the facts [Base facts](#base-facts) lists.
-31. An owner of one namespace can add `reader` on it, and can't add `reader` on another namespace.
-32. Adding or retiring `writer` on `sungma.relation:billing/approver` checks `billing`'s admins: an admin of `billing` may, and an admin of another namespace can't.
+31. An owner of one namespace can write a `reader` fact on it, and can't write one on another namespace.
+32. Writing or retiring a `writer` fact on `sungma.relation:billing/approver` checks `billing`'s admins: an admin of `billing` may, and an admin of another namespace can't.
 33. A `group_creator` who isn't an admin can create a group and owns it.
 34. Writing a fact under `N:r#R` in a customer's namespace checks `sungma.relation:N/R#writer`.
 35. A batch of facts in which one fact fails its guard is refused whole.
-36. An auditor reads the roles on any namespace, any relation and any group through the role-reading endpoints.
-37. A namespace's owner reads the roles on it and its relations, and an owner of another namespace can't.
+36. An auditor reads the facts on any namespace, any relation and any group through the endpoints that list them.
+37. A namespace's owner reads the facts on it and its relations, and an owner of another namespace can't.
 38. An auditor reads the documents of `sungma.root`, `sungma.namespace`, `sungma.relation` and `sungma.group`, and no caller writes a version of them, an admin included.
-39. Admins and auditors read the roles on `sungma.root:sungma`, and a `namespace_creator` who is neither can't.
+39. Admins and auditors read the facts on `sungma.root:sungma`, and a `namespace_creator` who is neither can't.
 40. Reading facts under `N:r#R` in a customer's namespace, or checking `N:r#R`, checks `sungma.relation:N/R#reader`.
 41. The fact endpoint can't write, read, check or expand facts in Sungma's own namespaces, for any caller, an admin and a deployment owner included, because their `sungma.relation` resources have no `parent`, `writer` or `reader` facts.
 42. A read of a resource's facts holds only the relations whose guard the caller passes.
@@ -402,9 +403,9 @@ Some rules need the request's context, which the model doesn't hold. Privileged 
 44. A writer who isn't an owner can't write a version that drops a relation the latest version declares, and an owner can. A writer can write a version that adds a relation or changes a rewrite.
 45. A Sungma release's version of one of Sungma's own namespaces stores no `parent` fact for its relations.
 46. Expanding a relation on one of Sungma's own resources is allowed to a caller in its `access_reader`, and shows holders reached through groups and `parent`, such as an admin owning a namespace. A caller outside `access_reader` is refused.
-47. A namespace's auditor reads its document, its facts and its audit records, and sees who has access to it, but nothing in other namespaces. A root auditor does all of that for every namespace, and a root reader reads every namespace's document.
+47. A namespace's auditor reads its document, its facts and its audit records, and sees who holds its relations, but nothing in other namespaces. A root auditor does all of that for every namespace, and a root reader reads every namespace's document.
 48. A root `writer`, `fact_writer` or `fact_reader` acts on every namespace through `parent`, without owning any, and a namespace's own holders act on that namespace only.
-49. A root admin administers every customer namespace, writing its document and its facts and adding roles other than `owner`, but can't retire one or drop its relations unless they also own it, such as by creating it. A root owner can retire any customer namespace. An admin of a namespace can't add or retire its owners.
+49. A root admin administers every customer namespace, writing its document and its facts, including facts under every relation on it but `owner`, but can't retire one or drop its relations unless they also own it, such as by creating it. A root owner can retire any customer namespace. An admin of a namespace can't write or retire its `owner` facts.
 
 ## Open
 
@@ -414,10 +415,10 @@ Some rules need the request's context, which the model doesn't hold. Privileged 
 4. How a namespace version that adds more relations than one unit of work holds gets its `parent` facts, and how namespace writes and the table make room for fact items in a namespace write. [Table](table.md#open) holds the general question of writes larger than one unit of work.
 5. What happens to facts in other namespaces that point into a namespace when it's created again. Facts under the old namespace stay dead, since every relation gets a new [[epoch]]. Its managers start fresh too, since they're facts about a creation. But a fact such as `file:secret#viewer@billing:acct-42#member` lives under `file` and still counts, so whoever manages the new `billing` decides who is in `billing:acct-42#member`. A proposed answer: a fact whose subject is in another namespace records that subject's epoch when it's written, the epoch of the subject's relation or, for a resource member, the epoch its namespace was last created at. It counts only while both its own relation's epoch and its recorded subject epoch hold. A fact pointing into the new namespace that is wanted again is written again, and records the new epoch. This changes [One timeline](one-timeline.md), which says when a fact counts, and [Table](table.md), which says what a span stores.
 6. How a relation's options declare the nesting limits, no cycles and bounded depth and width, so they're declared on `member` in the model and apply to any relation that declares them.
-7. Whether the other checks on the data, a role only on a declared relation and a role only to a created group, become rules in the model or stay data checks.
+7. Whether the other checks on the data, a fact only under a declared relation and a fact naming only a created group, become rules in the model or stay data checks.
 8. How privileged writes need a recent sign-in until conditions exist. Once they do, a privileged relation's condition requires a recent `auth_time`, as [Conditions](#conditions) says.
 9. Whether Expand runs the reader guard on each subjectset it reaches, as well as the one it expands. An expansion shows the members of subjectsets under other relations, such as a group's members, that the caller may not be able to read on their own.
-    - **A known escalation, deferred.** A fact writer can read a list of people they aren't allowed to see. Say Mallory may write `file/parent` and expand `file/viewer`, and `viewer = "this | (parent, viewer)"`. She writes `file:mine#parent@folder:payroll#...`, pointing her own file at a folder she can't read, then expands `file:mine#viewer`. The expansion follows `parent` into `folder:payroll` and lists its viewers. She needs no modeling access, only an everyday fact-writing role.
+    - **A known escalation, deferred.** A fact writer can read a list of people they aren't allowed to see. Say Mallory may write `file/parent` and expand `file/viewer`, and `viewer = "this | (parent, viewer)"`. She writes `file:mine#parent@folder:payroll#...`, pointing her own file at a folder she can't read, then expands `file:mine#viewer`. The expansion follows `parent` into `folder:payroll` and lists its viewers. She needs no relation that writes namespaces, only an everyday one that writes facts.
     - It's an escalation only because Sungma guards reads per relation. Systems that give a caller the whole store, as OpenFGA and SpiceDB do, have no such boundary to cross, and leave keeping teams apart to separate stores or to applications.
     - The fix: Expand, and any later listing of subjects, runs the reader guard of each subjectset it enters, and shows a branch the caller can't read as hidden rather than listing its people. Pointing stays free, and fact writers keep Expand.
     - It must be decided before Expand ships. Adding it later changes what Expand returns.
@@ -429,8 +430,8 @@ Some rules need the request's context, which the model doesn't hold. Privileged 
       | the whole deployment | every change | `.Check("watcher", "sungma.root:sungma")`, with a new `watcher = this | auditor` on `sungma.root` |
       | namespace `N` | `N`'s facts and versions | `.Check("fact_reader", "sungma.namespace:{N}")` |
       | group `G` | members and owners joining and leaving `G` | `.Check("access_reader", "sungma.group:{G}")` |
-      | user `U` | every fact whose subject is `U`, so their access changing | the caller's own `sub` is `U`, or `.Check("access_reader", "sungma.root:sungma")` to watch someone else |
+      | identity `U` | every fact whose subject is `U`, so each change to what `U` holds | the caller's own `sub` is `U`, or `.Check("access_reader", "sungma.root:sungma")` to watch someone else |
 
-      Watching a user follows the index of identity facts by subject that deprovisioning uses. A user isn't a resource, so watching yourself needs no relation: the guard compares the caller's `sub` with `U`.
+      Watching an identity follows the index of identity facts by subject that deprovisioning uses. An identity isn't a resource, so watching yourself needs no relation: the guard compares the caller's `sub` with `U`.
 11. How Author learns which actions the caller may take. The Check endpoint can't ask about Sungma's own relations, so Author can't check whether the caller owns a group or a namespace before it offers to change one.
 12. Whether a caller who can write facts can also look people and groups up, through `directory_reader`, since they can't pick who to name otherwise, or whether `directory_reader` is given separately.

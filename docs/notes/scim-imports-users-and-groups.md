@@ -19,7 +19,7 @@ Sungma implements a SCIM v2 endpoint, and its identity provider pushes user and 
 - **A group** becomes a resource in `sungma.group`, the namespace [[sungma-authorization]] defines for groups. Each member becomes a fact under `member`, such as `sungma.group:<group>#member@<sub>`, where `<sub>` is the member's [[identity]].
 - **A user** refreshes the display projection: the name and email Author shows for a subject. Sungma keeps no user store beyond that, and the projection is never a source of truth.
 
-A fact that names an imported group's members, such as `sungma.namespace:billing#reader@sungma.group:<group>#member`, then reaches each member, as it does for any group.
+A fact that names an imported group's members, such as `sungma.namespace:billing#reader@sungma.group:<group>#member`, then puts each member in the closure of `sungma.namespace:billing#reader`, as it does for any group.
 
 ## Imported groups
 

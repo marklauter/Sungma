@@ -11,7 +11,7 @@ Done means built, tested to the coverage floor and merged. It doesn't mean produ
 7. Read service: facts by key, resource or subjectset at one snapshot.
 8. Write service: atomic batches with conditional writes.
 9. Expand service.
-10. Listing what a subject can reach: return the resource ids of one namespace that a subject reaches through a relation, a page at a time at one snapshot, by walking the model back from the subject. And check a set of candidate ids in one call, returning the ones the subject reaches. Applications use the ids to load their own objects.
+10. Listing a subject's resources: return the ids of the resources in one namespace whose subjectset under a relation holds the subject in its closure, a page at a time at one snapshot, by walking the model back from the subject. And check a set of candidate ids in one call, returning the ones whose subjectset holds the subject in its closure. Applications use the ids to load their own objects.
 11. Watch service: a changelog stream with heartbeat revision tokens.
 12. Namespace documents: the JSON and TOML forms of a namespace, with its rewrite grammar, parser and printer (done).
 13. Accepted subjects: each relation declares the subjects its facts may bind, and namespace writes and fact writes check against them.
@@ -32,9 +32,9 @@ Done means built, tested to the coverage floor and merged. It doesn't mean produ
 28. Snapshot dumps for offline processing.
 29. Metrics, tracing and latency objectives.
 30. Client SDKs.
-31. Model simulation and review: load a set of namespaces and facts locally, without writing them to a deployment, run Check and Expand against them, and report who can reach what, including paths by which a role reaches more than it was meant to.
+31. Model simulation and review: load a set of namespaces and facts locally, without writing them to a deployment, run Check and Expand against them, and report each subjectset's closure, including subjects a closure holds that it wasn't meant to.
 32. Namespace diagrams: Author draws the model as a graph, with each namespace as a node and each relation's accepted subjects as edges.
-33. Patterns wiki: a library of model patterns customers can start from, such as roles at a root that reach every namespace through `parent`, namespaces and their relations, nesting groups, auditors as a kind of reader, and owners deciding who holds what. Sungma's own authorization model is the first worked example. Another entry explains listing what a user can see: ask Sungma for the ids and load your objects by them, or filter your own candidates through a batch check when your own filter is narrower, and how to fill a page when few candidates pass.
+33. Patterns wiki: a library of model patterns customers can start from, such as relations on a root that flow down to every namespace through `parent`, namespaces and their relations, nesting groups, auditors as a kind of reader, and owners deciding who holds what. Sungma's own authorization model is the first worked example. Another entry explains listing what a user can see: ask Sungma for the ids and load your objects by them, or filter your own candidates through a batch check when your own filter is narrower, and how to fill a page when few candidates pass.
 34. Token-exchanging proxy: a reverse proxy in front of Sungma that exchanges a caller's token for one from Sungma's issuer of record, so callers that trust other identity providers need no exchange code of their own.
 35. Opaque revision tokens.
 

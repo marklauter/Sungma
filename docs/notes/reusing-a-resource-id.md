@@ -18,7 +18,7 @@ Say Bob owns a project named Apollo, stored as `project:apollo#owner@bob`. Apoll
 Only the code that creates and deletes the thing knows when an id is reused, so that code chooses one of two ways:
 
 1. **Back each resource with an id that never repeats,** such as a database key: `project:7f3a9c` instead of `project:apollo`. A thing created again gets a new id, and no earlier fact mentions it. Display the name, and store the id.
-2. **Use the name as the id, and accept that creating it again restores its facts.** That's the right choice where restoring is what people want, such as bringing back a project deleted by accident with all its access intact.
+2. **Use the name as the id, and accept that creating it again restores its facts.** That's the right choice where restoring is what people want, such as bringing back a project deleted by accident with all its facts intact.
 
 Code that takes the first way can still retire a deleted resource's facts, to keep them from building up.
 

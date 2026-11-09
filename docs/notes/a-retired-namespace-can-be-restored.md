@@ -10,7 +10,7 @@ cites:
   - "[[span]]"
   - "[[fact]]"
   - "[[sungma-authorization]]"
-  - "[[privileged-roles-need-a-recent-sign-in]]"
+  - "[[privileged-relations-need-a-recent-sign-in]]"
 ---
 
 # A retired namespace can be restored
@@ -42,7 +42,7 @@ Undo is the guard against mistakes, rather than asking people to confirm destruc
 
 ## Who may restore
 
-Restoring a namespace or a dropped relation needs `owner` on the namespace, the same as retiring it or dropping the relation, with a recent sign-in as [[privileged-roles-need-a-recent-sign-in]] describes. It brings back every old fact on purpose, so it sits with the people trusted to destroy.
+Restoring a namespace or a dropped relation needs `owner` on the namespace, the same as retiring it or dropping the relation, with a recent sign-in as [[privileged-relations-need-a-recent-sign-in]] describes. It brings back every old fact on purpose, so it sits with the people trusted to destroy.
 
 Restoring facts writes them again, so each one passes the same guard as any fact write: `writer` on its relation.
 

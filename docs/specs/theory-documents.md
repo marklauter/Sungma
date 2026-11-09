@@ -102,7 +102,7 @@ JSON and TOML suit the wire, but a person can't reason about a theory written in
 Each relation reads like a signature: its name, a colon and the [[subject]]s its facts may bind, then its rewrite after `=`.
 
 - A relation with subjects and no `=` reads `this`, as `owner: identity` does.
-- A relation with `=` and no subjects accepts no facts, as `access_reader = auditor` does.
+- A relation with `=` and no subjects is computed, as `access_reader = auditor` is.
 - A relation with both follows [Accepted subjects](namespace-documents.md#accepted-subjects): its rewrite has to read `this`.
 - Subjects are accepted subjects as the namespace document spec defines them, separated by commas, at least one, none twice.
 - The rewrite follows the [rewrite grammar](namespace-documents.md#rewrite-grammar), unchanged.
@@ -192,7 +192,7 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 3. The theory name prefixes namespace headers and the namespace part of accepted subjects, and never `identity` or anything in a rewrite.
 4. A document without a theory name holds full names, and one with a single namespace parses to the same namespace as its namespace document.
 5. A rewrite on its signature's line, on the next line, and wrapped over several lines parse to equal namespaces.
-6. A relation with subjects and no `=` reads `this`, and a relation with `=` and no subjects accepts no facts.
+6. A relation with subjects and no `=` reads `this`, and a relation with `=` and no subjects is computed.
 7. `theory` and `namespace` are refused as relation names, in every form, and allowed as namespace names and in accepted subjects.
 8. Comments are allowed at the end of any line and change nothing. A `#` outside an accepted subject is refused.
 9. A quote, an escape, a number, a byte-order mark, and any character outside the grammar are refused.
