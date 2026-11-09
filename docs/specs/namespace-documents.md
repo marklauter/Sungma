@@ -111,7 +111,7 @@ A relation name is one name. A namespace name is one or more segments joined by 
 
 ```ebnf
 ⟨namespace name⟩   ::= ⟨name⟩ { '.' ⟨name⟩ }
-⟨relation name⟩ ::= ⟨name⟩     excluding 'this' in any casing
+⟨relation name⟩ ::= ⟨name⟩     excluding 'this', 'namespace' and 'theory' in any casing
 ⟨name⟩          ::= ⟨name-start⟩ { ⟨name-char⟩ }
 ⟨name-start⟩    ::= ⟨letter⟩ | '_'
 ⟨name-char⟩     ::= ⟨letter⟩ | ⟨digit⟩ | '_'
@@ -123,12 +123,14 @@ Names are case-sensitive: `Owner` and `owner` are two different names. Nothing i
 
 Namespace and relation names are value types, `NamespaceName` and `RelationName`, not strings. Each has two constructors:
 
-- A checked constructor, `FromStr` and `TryFrom<&str>`, used for any name that arrives from an edge, such as a document, a request or a fact. It refuses a name that breaks the grammar or the length limit, and `RelationName` also refuses `this` in any casing.
+- A checked constructor, `FromStr` and `TryFrom<&str>`, used for any name that arrives from an edge, such as a document, a request or a fact. It refuses a name that breaks the grammar or the length limit, and `RelationName` also refuses `this`, `namespace` and `theory` in any casing.
 - An unchecked constructor, `new_unchecked`, used only for names from a trusted source, such as storage, which holds only names that were checked on the way in.
 
 Everything past the edge, including the rewrite tree, the namespace and the printer, holds these types, so a name the grammar doesn't allow can't reach them.
 
 The keyword is `this`, in lowercase only. No relation may be named `this` in any casing, so `This` and `THIS` are refused as names, and so is a reference to one: `this | owner` is a valid rewrite, and `This | owner` is refused as a reserved name. A name that differs from the keyword only in case would read as the keyword.
+
+`namespace` and `theory` are reserved relation names too, in any casing, as [Theory documents](theory-documents.md#sungma-schema-language) says, so every namespace can be written in Sungma schema language. They stay usable as namespace names and in constraints.
 
 ## Rewrite grammar
 
@@ -310,7 +312,7 @@ The cases each class covers, at minimum.
 
 1. Namespace and relation names follow the grammar, and names that break it are refused.
 2. A dotted namespace name is one namespace name made of segments, each a name. `.a`, `a.`, `a..b` and `a.1b` are refused.
-3. `this` in any casing is refused as a relation name, and in any casing other than `this` it's refused inside an expression.
+3. `this`, `namespace` and `theory` in any casing are refused as relation names, and `this` in any casing other than `this` is refused inside an expression. `namespace` and `theory` are allowed as namespace names and in constraints.
 4. `NamespaceName` and `RelationName`'s `FromStr` and `TryFrom<&str>` refuse every name the grammar or the length limit refuses, including names holding `"`, `:`, `#`, whitespace or control characters.
 
 #### Grammar
