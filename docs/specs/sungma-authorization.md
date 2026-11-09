@@ -102,7 +102,7 @@ namespace: group
   access_reader = owner | (parent, auditor)
 ```
 
-Drawn as a graph, each namespace is a node, and each relation's accepted subjects are its edges. Solid edges are the `parent` and `protected` links that rewrites follow. Dashed edges go to identities, the keys of people and clients named in facts, and to groups, whose members are named through `group#member`.
+Drawn as a graph, each namespace is a node, and each relation's constraints are its edges. Solid edges are the `parent` and `protected` links that rewrites follow. Dashed edges go to identities, the keys of people and clients named in facts, and to groups, whose members are named through `group#member`.
 
 ```mermaid
 flowchart LR

@@ -76,16 +76,16 @@ The start of the same document in TOML:
 theory = "sungma"
 
 [root.owner]
-subjects = ["identity"]
+constraints = ["identity"]
 
 [root.admin]
 rewrite = "this | owner"
-subjects = ["identity"]
+constraints = ["identity"]
 ```
 
 ## The theory name
 
-The theory name is a prefix. The parser adds it, and a dot, to each unqualified namespace name in the document: the name in each namespace's header, and the namespace part of each accepted subject. In the sample, `root` means `sungma.root`, and `group#member` means `sungma.group#member`.
+The theory name is a prefix. The parser adds it, and a dot, to each unqualified namespace name in the document: the name in each namespace's header, and the namespace part of each constraint. In the sample, `root` means `sungma.root`, and `group#member` means `sungma.group#member`.
 
 - A name that already starts with the theory name and a dot is a full name, and gets no prefix. Under `theory: t`, both `a` and `t.a` name `t.a`.
 - `identity` is never prefixed. It names an [[identity]], not a namespace.
@@ -97,30 +97,30 @@ Once parsed, nothing remembers the prefix. Each namespace is checked, stored and
 
 ## Sungma schema language
 
-JSON and TOML suit the wire, but a person can't reason about a theory written in them. Keys, quotes and table headers bury the rewrites, and a relation's subjects and rewrite land on separate lines. Sungma schema language is the form written for people. It parses to the same namespaces as the JSON and TOML forms.
+JSON and TOML suit the wire, but a person can't reason about a theory written in them. Keys, quotes and table headers bury the rewrites, and a relation's constraints and rewrite land on separate lines. Sungma schema language is the form written for people. It parses to the same namespaces as the JSON and TOML forms.
 
-Each relation reads like a signature: its name, a colon and the [[subject]]s its facts may bind, then its rewrite after `=`.
+Each relation reads like a signature: its name, a colon and its constraints, the kinds of [[subject]] its facts may bind, then its rewrite after `=`.
 
-- A relation with subjects and no `=` reads `this`, as `owner: identity` does.
-- A relation with `=` and no subjects is computed, as `access_reader = auditor` is.
-- A relation with both follows [Accepted subjects](namespace-documents.md#accepted-subjects): its rewrite has to read `this`.
-- Subjects are accepted subjects as the namespace document spec defines them, separated by commas, at least one, none twice.
+- A relation with constraints and no `=` reads `this`, as `owner: identity` does.
+- A relation with `=` and no constraints is computed, as `access_reader = auditor` is.
+- A relation with both follows [Constraints](namespace-documents.md#constraints): its rewrite has to read `this`.
+- Constraints are separated by commas, at least one, none twice, each as the namespace document spec defines it.
 - The rewrite follows the [rewrite grammar](namespace-documents.md#rewrite-grammar), unchanged.
 
 ```ebnf
 ⟨document⟩  ::= [ 'theory' ':' ⟨namespace name⟩ ] ⟨namespace⟩ { ⟨namespace⟩ }
 ⟨namespace⟩ ::= 'namespace' ':' ⟨namespace name⟩ { ⟨relation⟩ }
-⟨relation⟩  ::= ⟨relation name⟩ ':' ⟨subjects⟩ [ '=' ⟨rewrite⟩ ]
+⟨relation⟩  ::= ⟨relation name⟩ ':' ⟨constraints⟩ [ '=' ⟨rewrite⟩ ]
               | ⟨relation name⟩ '=' ⟨rewrite⟩
-⟨subjects⟩  ::= ⟨accepted subject⟩ { ',' ⟨accepted subject⟩ }
+⟨constraints⟩  ::= ⟨constraint⟩ { ',' ⟨constraint⟩ }
 ```
 
 The rules on top of the grammar:
 
 - Whitespace, line breaks included, only separates tokens. Indentation is for readers. A rewrite can start on its signature's line or on the next one, `=` included, and can wrap onto as many lines as it needs.
-- A rewrite runs until the next relation's signature, a name followed by `:` or `=`, or until the next `namespace:` or the end. A subject list ends where no comma follows. A relation needs no terminator.
+- A rewrite runs until the next relation's signature, a name followed by `:` or `=`, or until the next `namespace:` or the end. A constraint list ends where no comma follows. A relation needs no terminator.
 - `namespace:` opens a namespace, and its relations run until the next `namespace:` or the end of the document.
-- `theory` and `namespace` are reserved relation names, in every form, as `this` is. Otherwise `namespace: root` could be a relation named `namespace` that accepts `root`. Reserving them in every form keeps every namespace printable in this one. They stay usable as namespace names, so `sungma.namespace` and `parent: namespace` are fine.
+- `theory` and `namespace` are reserved relation names, in every form, as `this` is. Otherwise `namespace: root` could be a relation named `namespace` constrained to `root`. Reserving them in every form keeps every namespace printable in this one. They stay usable as namespace names, so `sungma.namespace` and `parent: namespace` are fine.
 - `//` starts a comment that runs to the end of the line. `#` can't start one, because subjectsets use it. Comments aren't kept.
 - There are no quotes, escapes, numbers or booleans. Every token is a name, a keyword or punctuation, so the parser never guesses a value's type, and `no` or `on` is only ever a name.
 - A document is UTF-8 without a byte-order mark. Outside comments, any character the grammar doesn't use is refused.
@@ -144,7 +144,7 @@ A theory document is refused if:
 - it declares one namespace twice, by its full name;
 - any namespace in it fails a check in [Namespace documents](namespace-documents.md#checks).
 
-A reference from one namespace to another in the same document, through an accepted subject or a fact-to-subjectset, is checked against the document. The two namespaces don't have to be written in a particular order. A reference to a namespace outside the document is checked as a namespace document's would be.
+A reference from one namespace to another in the same document, through a constraint or a fact-to-subjectset, is checked against the document. The two namespaces don't have to be written in a particular order. A reference to a namespace outside the document is checked as a namespace document's would be.
 
 A refused document declares nothing.
 
@@ -189,12 +189,12 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 
 1. The sample parses to the four namespaces of [Sungma's own authorization](sungma-authorization.md#the-model), under their full names.
 2. The sample in Sungma schema language and in TOML parse to equal namespaces.
-3. The theory name prefixes namespace headers and the namespace part of accepted subjects, and never `identity` or anything in a rewrite.
+3. The theory name prefixes namespace headers and the namespace part of constraints, and never `identity` or anything in a rewrite.
 4. A document without a theory name holds full names, and one with a single namespace parses to the same namespace as its namespace document.
 5. A rewrite on its signature's line, on the next line, and wrapped over several lines parse to equal namespaces.
-6. A relation with subjects and no `=` reads `this`, and a relation with `=` and no subjects is computed.
-7. `theory` and `namespace` are refused as relation names, in every form, and allowed as namespace names and in accepted subjects.
-8. Comments are allowed at the end of any line and change nothing. A `#` outside an accepted subject is refused.
+6. A relation with constraints and no `=` reads `this`, and a relation with `=` and no constraints is computed.
+7. `theory` and `namespace` are refused as relation names, in every form, and allowed as namespace names and in constraints.
+8. Comments are allowed at the end of any line and change nothing. A `#` outside a constraint is refused.
 9. A quote, an escape, a number, a byte-order mark, and any character outside the grammar are refused.
 10. A namespace declared twice, by an unqualified name and by its full name, is refused.
 11. A reference between two namespaces in one document is checked against the document, in either order.

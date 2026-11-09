@@ -14,7 +14,7 @@ Done means built, tested to the coverage floor and merged. It doesn't mean produ
 10. Listing a subject's resources: return the ids of the resources in one namespace whose subjectset under a relation holds the subject in its closure, a page at a time at one snapshot, by walking the model back from the subject. And check a set of candidate ids in one call, returning the ones whose subjectset holds the subject in its closure. Applications use the ids to load their own objects.
 11. Watch service: a changelog stream with heartbeat revision tokens.
 12. Namespace documents: the JSON and TOML forms of a namespace, with its rewrite grammar, parser and printer (done).
-13. Accepted subjects: each relation declares the subjects its facts may bind, and namespace writes and fact writes check against them.
+13. Constraints: each relation declares the kinds of subject its facts may bind, and namespace writes and fact writes check against them.
 14. Conditions: a relation may declare a condition, an expression over named parameters, and a fact may carry it with some parameters filled in. A check supplies the rest as context, and answers allowed, denied, or conditional when context is missing. Uses include time windows such as building access from 7am to 8pm, elevation by requiring a recent `auth_time` for privileged relations, and facts that expire at a set time.
 15. Versioned namespaces (done) and a namespace write service.
 16. Restoring namespaces, relations and facts: bring back a retired namespace, or a relation a version dropped, with its old epochs, so its facts count again without restoring the database. Bring back facts retired by mistake, such as a bulk retire, by writing again the facts that counted at an earlier revision. See [A retired namespace can be restored](notes/a-retired-namespace-can-be-restored.md).
@@ -33,7 +33,7 @@ Done means built, tested to the coverage floor and merged. It doesn't mean produ
 29. Metrics, tracing and latency objectives.
 30. Client SDKs.
 31. Model simulation and review: load a set of namespaces and facts locally, without writing them to a deployment, run Check and Expand against them, and report each subjectset's closure, including subjects a closure holds that it wasn't meant to.
-32. Namespace diagrams: Author draws the model as a graph, with each namespace as a node and each relation's accepted subjects as edges.
+32. Namespace diagrams: Author draws the model as a graph, with each namespace as a node and each relation's constraints as edges.
 33. Patterns wiki: a library of model patterns customers can start from, such as relations on a root that flow down to every namespace through `parent`, namespaces and their relations, nesting groups, auditors as a kind of reader, and owners deciding who holds what. Sungma's own authorization model is the first worked example. Another entry explains listing what a user can see: ask Sungma for the ids and load your objects by them, or filter your own candidates through a batch check when your own filter is narrower, and how to fill a page when few candidates pass.
 34. Token-exchanging proxy: a reverse proxy in front of Sungma that exchanges a caller's token for one from Sungma's issuer of record, so callers that trust other identity providers need no exchange code of their own.
 35. Opaque revision tokens.
