@@ -455,6 +455,26 @@ fn a_namespace_name_is_written_without_spaces() {
 }
 
 #[test]
+fn identity_is_reserved_as_a_namespace_name_as_in_json() {
+    let error = only("namespace: identity\n  owner: identity\n");
+    assert_eq!(
+        error.place,
+        Some(Place {
+            line: 1,
+            column: 12
+        })
+    );
+    let json = namespace::parse(r#"{ "identity": { "owner": { "constraints": ["identity"] } } }"#)
+        .expect_err("identity is reserved");
+    assert_eq!(json.len(), 1, "{json:?}");
+    assert_eq!(error.kind.to_string(), json[0].kind.to_string());
+    assert!(
+        matches!(error.kind, ErrorKind::Name(NameError::Reserved(_))),
+        "{error}"
+    );
+}
+
+#[test]
 fn a_namespace_declared_twice_is_refused() {
     let cases = [
         "namespace: a\nnamespace: b\nnamespace: a\n",

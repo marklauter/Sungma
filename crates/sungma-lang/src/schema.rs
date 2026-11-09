@@ -40,7 +40,7 @@ use std::fmt::Write;
 use thiserror::Error;
 
 use sungma::{
-    name::{NamespaceName, RelationName, quote},
+    name::{NameError, NamespaceName, RelationName, quote},
     namespace::{Constraint, Namespace, Problem},
     rewrite::Rewrite,
 };
@@ -48,7 +48,7 @@ use sungma::{
 use crate::namespace::{
     ErrorKind, Failure, IDENTITY, Lexeme, MAX_DOCUMENT_BYTES, MAX_ERRORS, MAX_EXPRESSION_BYTES,
     MAX_RELATIONS, Mode, Named, NamedConstraint, NamespaceDocument, Parser, Place, PrintError,
-    Token, constraint, lex, printed, quoted, relation, syntax,
+    Token, constraint, lex, namespace_name, printed, quoted, relation, syntax,
 };
 
 /// A problem in a schema document, with the namespace and relation it was
@@ -236,10 +236,12 @@ impl<'a> Reader<'_, 'a> {
 
     fn document(&mut self) -> Vec<NamespaceDocument> {
         // A theory name that fails prefixes nothing, so it's reported once.
+        // A theory only prefixes names, so it may be called `identity`; a
+        // namespace may not, as in a namespace document.
         let theory = if self.at_keyword("theory") {
             self.next();
             self.next();
-            self.namespace_name(None).ok()
+            self.namespace_name(None, str::parse).ok()
         } else {
             None
         };
@@ -253,7 +255,7 @@ impl<'a> Reader<'_, 'a> {
                 self.next();
                 // A name that fails is reported once, and isn't a duplicate
                 // of another that fails.
-                let name = match self.namespace_name(theory.as_ref()) {
+                let name = match self.namespace_name(theory.as_ref(), namespace_name) {
                     Ok(name) => {
                         if !seen.insert(name.clone()) {
                             let kind = ErrorKind::DuplicateNamespace(quote(name.as_str()));
@@ -322,11 +324,12 @@ impl<'a> Reader<'_, 'a> {
 
     /// A namespace name, its segments written without spaces between them,
     /// with the theory's name before it unless it's written in full. A name
-    /// that fails is reported, and kept, unchecked, as the error, for the
-    /// checks that follow; the document is refused, so it never leaves.
+    /// that fails `check` is reported, and kept, unchecked, as the error, for
+    /// the checks that follow; the document is refused, so it never leaves.
     fn namespace_name(
         &mut self,
         theory: Option<&NamespaceName>,
+        check: fn(&str) -> Result<NamespaceName, NameError>,
     ) -> Result<NamespaceName, NamespaceName> {
         const EXPECTED: &str = "a namespace name";
         let first = self.peek();
@@ -357,7 +360,7 @@ impl<'a> Reader<'_, 'a> {
             }
             _ => written.to_owned(),
         };
-        name.parse().map_err(|error| {
+        check(&name).map_err(|error| {
             self.push(None, None, (Some(first.place), ErrorKind::Name(error)));
             NamespaceName::new_unchecked(name)
         })
