@@ -5,7 +5,7 @@
 //! with a [`Make`] for its table.
 
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
 
@@ -53,6 +53,7 @@ macro_rules! row_writer_tests {
             a_writer_that_keeps_losing_races_catches_up_each_time,
             a_write_past_one_unit_of_work_is_refused,
             a_namespace_without_names_is_refused,
+            a_namespace_write_reads_and_guards_only_the_namespaces_it_judges,
             a_span_its_pointer_disagrees_with_is_reported,
         );
 
@@ -356,6 +357,118 @@ pub async fn a_namespace_without_names_is_refused<E: Table>(table: E) {
         refused.to_string(),
         "store failure: Relations id 0 has no name"
     );
+}
+
+/// A table that records the key of every item read and every step
+/// committed.
+#[derive(Clone)]
+struct Watched<E> {
+    table: E,
+    read: Arc<Mutex<Vec<Key>>>,
+    committed: Arc<Mutex<Vec<Key>>>,
+}
+
+impl<E: Table> ItemReader for Watched<E> {
+    async fn get(&self, key: &Key, consistency: Consistency) -> Result<Option<Item>, TableError> {
+        self.read.lock().unwrap().push(key.clone());
+        self.table.get(key, consistency).await
+    }
+
+    async fn query(
+        &self,
+        query: &Query,
+        consistency: Consistency,
+    ) -> Result<Vec<(Vec<u8>, Item)>, TableError> {
+        self.table.query(query, consistency).await
+    }
+}
+
+impl<E: Table> ItemWriter for Watched<E> {
+    fn max_steps(&self) -> usize {
+        self.table.max_steps()
+    }
+
+    async fn commit(&self, work: Work) -> Result<(), CommitError> {
+        let keys = work.0.iter().map(|step| step.key().clone());
+        self.committed.lock().unwrap().extend(keys);
+        self.table.commit(work).await
+    }
+}
+
+impl<E: Table> Sequence for Watched<E> {
+    async fn next(&self, key: &Key, count: u64) -> Result<std::ops::Range<u64>, TableError> {
+        self.table.next(key, count).await
+    }
+}
+
+/// A namespace write reads and guards the latest row of each namespace
+/// whose relations it judges: one a constraint `namespace#relation` names,
+/// or one a fact-to-subjectset's factset takes. A namespace named only by
+/// a plain resource constraint is neither read nor guarded.
+pub async fn a_namespace_write_reads_and_guards_only_the_namespaces_it_judges<E: Table>(table: E) {
+    declared(&table).await;
+    let (plain, followed, constrained) = (NamespaceId(5), NamespaceId(6), NamespaceId(7));
+    let viewer = RelationId(2);
+    let names = names(&table);
+    for (pool, name, id) in [
+        (Pool::Namespaces, "plain", plain.0),
+        (Pool::Namespaces, "followed", followed.0),
+        (Pool::Namespaces, "constrained", constrained.0),
+        (Pool::Relations, "viewer", viewer.0),
+    ] {
+        names.insert_if_absent(pool, name, id).await.unwrap();
+    }
+    let watched = Watched {
+        table,
+        read: Arc::default(),
+        committed: Arc::default(),
+    };
+    let writer = writer(&watched, DevClock::default());
+    let latest = |namespace| sungma_schema::namespaces::latest_key(namespace);
+    let seen =
+        |keys: &Arc<Mutex<Vec<Key>>>, namespace| keys.lock().unwrap().contains(&latest(namespace));
+    // `doc` is judged through the factset `other` takes it in.
+    let following = Namespace::new(vec![
+        (OWNER, This, vec![Constraint::Resource(plain)]),
+        (OTHER, This, vec![Constraint::Resource(DOC)]),
+        (
+            viewer,
+            sungma::rewrite::Rewrite::FactTo {
+                factset: OTHER,
+                computed: OWNER,
+            },
+            vec![],
+        ),
+    ])
+    .unwrap();
+    writer
+        .write_namespace(followed, NamespaceWrite::Create(following))
+        .await
+        .unwrap();
+    for keys in [&watched.read, &watched.committed] {
+        assert!(seen(keys, DOC));
+        assert!(!seen(keys, plain));
+    }
+    watched.read.lock().unwrap().clear();
+    watched.committed.lock().unwrap().clear();
+    // `doc` is judged through the constraint `doc#owner`.
+    let constraining = Namespace::new(vec![(
+        OWNER,
+        This,
+        vec![
+            Constraint::Resource(plain),
+            Constraint::Subjectset(DOC, OWNER),
+        ],
+    )])
+    .unwrap();
+    writer
+        .write_namespace(constrained, NamespaceWrite::Create(constraining))
+        .await
+        .unwrap();
+    for keys in [&watched.read, &watched.committed] {
+        assert!(seen(keys, DOC));
+        assert!(!seen(keys, plain));
+    }
 }
 
 /// A span whose row disagrees with its fact's pointer can't be closed by

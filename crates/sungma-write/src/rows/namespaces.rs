@@ -6,9 +6,11 @@
 //! printed document with names, beside its epochs and its constraints.
 //!
 //! A new version is checked against the latest versions of the namespaces
-//! its constraints name, as [`references`] says, and the unit of work also
-//! checks each of those latest rows, so a version is never stored beside a
-//! change to a namespace it was judged by.
+//! whose relations it names, as [`references`] says, and the unit of work
+//! also checks each of those latest rows, so a version is never stored
+//! beside a change to a namespace it was judged by. A namespace named only
+//! by a plain resource constraint is never judged, so it's neither read nor
+//! checked.
 
 use std::collections::HashMap;
 
@@ -68,19 +70,16 @@ where
         Ok((name, named))
     }
 
-    /// The latest entry of each other namespace `relations`' constraints
-    /// name, read strongly, `None` for one never written.
+    /// The latest entry of each of `others`, read strongly, `None` for one
+    /// never written.
     async fn referenced(
         &self,
-        namespace: NamespaceId,
-        relations: &Namespace,
+        others: &[NamespaceId],
     ) -> Result<Vec<(NamespaceId, Option<Entry>)>, StoreError> {
         let mut latest = Vec::new();
-        for &other in relations.namespaces() {
-            if other != namespace {
-                let entry = namespaces::latest(&self.reader, other, Consistency::Strong).await?;
-                latest.push((other, entry));
-            }
+        for &other in others {
+            let entry = namespaces::latest(&self.reader, other, Consistency::Strong).await?;
+            latest.push((other, entry));
         }
         Ok(latest)
     }
@@ -112,21 +111,30 @@ where
         if version != expected {
             return Err(NamespaceWriteError::Conflict { latest: version });
         }
+        // Only the namespaces whose relations the version is judged by are
+        // read and guarded, and their count is held to one unit of work
+        // before any is read.
+        let others: Vec<NamespaceId> = next
+            .map(|next| next.judged().into_iter().copied())
+            .into_iter()
+            .flatten()
+            .filter(|&other| other != namespace)
+            .collect();
+        let rows = 3 + others.len();
+        let most = self.items.max_steps();
+        if rows > most {
+            return Err(NamespaceWriteError::TooLarge { rows, most });
+        }
         let (document, referenced) = match next {
             Some(next) => {
                 let (name, named) = self.named(namespace, next).await?;
-                let referenced = self.referenced(namespace, next).await?;
+                let referenced = self.referenced(&others).await?;
                 references(&name, &named, next, &referenced)?;
                 let document = self.printer.print(&name, &named).map_err(StoreError)?;
                 (Some(document), referenced)
             }
             None => (None, Vec::new()),
         };
-        let rows = 3 + referenced.len();
-        let most = self.items.max_steps();
-        if rows > most {
-            return Err(NamespaceWriteError::TooLarge { rows, most });
-        }
         let Some(reading) = self.stamp(seen_head).await? else {
             return Ok(Tried::Lost);
         };
@@ -184,7 +192,7 @@ where
 /// declare, through a constraint `namespace#relation` or the relation a
 /// fact-to-subjectset follows, as `docs/specs/namespace-documents.md` says.
 /// `named` is the version with names, `ids` the same version with ids, and
-/// `referenced` the latest entry of each other namespace it names. A
+/// `referenced` the latest entry of each other namespace it's judged by. A
 /// namespace never written, or retired, declares nothing, so a reference
 /// to it is refused; two namespaces that reference each other can't both
 /// be written first. This is the one place a namespace write judges

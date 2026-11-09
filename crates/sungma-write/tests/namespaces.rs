@@ -176,8 +176,8 @@ async fn a_body_of_no_known_shape_is_malformed() {
 }
 
 /// A version naming a relation another namespace doesn't declare is
-/// refused as unprocessable, naming the problem, and so is one naming more
-/// namespaces than one write checks, as too large.
+/// refused as unprocessable, naming the problem, and so is one naming the
+/// relations of more namespaces than one write checks, as too large.
 #[tokio::test]
 async fn a_version_whose_references_fail_is_refused() {
     for (store, app) in stores().await {
@@ -190,16 +190,16 @@ async fn a_version_whose_references_fail_is_refused() {
         let error = reply["error"].as_str().unwrap();
         assert!(error.contains("'group#member'"), "{store}: {error}");
 
-        let constraints: Vec<_> = (0..32).map(|i| format!("n{i}")).collect();
+        let constraints: Vec<_> = (0..32).map(|i| format!("n{i}#member")).collect();
         let relations: serde_json::Map<String, Value> = (0..4)
             .map(|r| (format!("r{r}"), json!({ "constraints": constraints })))
             .collect();
         let mut relations = relations;
-        let more: Vec<_> = (32..64).map(|i| format!("n{i}")).collect();
+        let more: Vec<_> = (32..64).map(|i| format!("n{i}#member")).collect();
         relations.insert("s".to_owned(), json!({ "constraints": more }));
-        let more: Vec<_> = (64..96).map(|i| format!("n{i}")).collect();
+        let more: Vec<_> = (64..96).map(|i| format!("n{i}#member")).collect();
         relations.insert("t".to_owned(), json!({ "constraints": more }));
-        let more: Vec<_> = (96..128).map(|i| format!("n{i}")).collect();
+        let more: Vec<_> = (96..128).map(|i| format!("n{i}#member")).collect();
         relations.insert("u".to_owned(), json!({ "constraints": more }));
         let (status, reply) = write(&app, json!({ "create": { "wide": relations } })).await;
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{store}: {reply}");

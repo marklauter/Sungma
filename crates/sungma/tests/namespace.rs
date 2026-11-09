@@ -588,6 +588,44 @@ fn a_namespace_lists_the_namespaces_its_constraints_name_once() {
     assert_eq!(namespace.names(), [&"a", &"member", &"b", &"owner"]);
 }
 
+/// The namespaces references judge: a constraint's `namespace#relation`,
+/// and each a followed factset takes, but not one only a plain resource
+/// constraint names.
+#[test]
+fn a_namespace_lists_the_namespaces_its_references_judge_once() {
+    let namespace = Namespace::new(vec![
+        (
+            "parent",
+            This,
+            vec![Constraint::Resource("folder"), Constraint::Identity],
+        ),
+        ("owner", This, vec![Constraint::Resource("drive")]),
+        (
+            "member",
+            This,
+            vec![Constraint::Subjectset("group", "member")],
+        ),
+        (
+            "viewer",
+            Rewrite::Union(nonempty![
+                Rewrite::FactTo {
+                    factset: "parent",
+                    computed: "viewer",
+                },
+                Rewrite::FactTo {
+                    factset: "member",
+                    computed: "viewer",
+                },
+            ]),
+            vec![],
+        ),
+    ])
+    .unwrap();
+    assert_eq!(namespace.judged(), [&"group", &"folder"]);
+    let plain = Namespace::new(vec![("owner", This, vec![Constraint::Resource("drive")])]).unwrap();
+    assert!(plain.judged().is_empty());
+}
+
 #[test]
 fn a_constraint_admits_only_its_kind_of_subject() {
     use sungma::graph::{Resource, Subject, Subjectset};

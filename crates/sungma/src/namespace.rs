@@ -308,6 +308,37 @@ where
             .collect()
     }
 
+    /// Every namespace whose relations [`references`](Self::references)
+    /// asks about, each once, in the order first met: the namespace of each
+    /// constraint `namespace#relation`, and each namespace a
+    /// fact-to-subjectset's factset takes. A namespace named only by a
+    /// plain resource constraint, which nothing judges, isn't one.
+    pub fn judged(&self) -> Vec<&N> {
+        let mut seen = HashSet::new();
+        let mut judged = Vec::new();
+        let mut judge = |namespace| {
+            if seen.insert(namespace) {
+                judged.push(namespace);
+            }
+        };
+        for relation in &self.relations {
+            for constraint in &relation.constraints {
+                if let Constraint::Subjectset(namespace, _) = constraint {
+                    judge(namespace);
+                }
+            }
+            let mut followed = Vec::new();
+            fact_tos(&relation.rewrite, &mut followed);
+            for (factset, _) in followed {
+                let constraints = self.constraints(factset).iter();
+                constraints
+                    .filter_map(Constraint::namespace)
+                    .for_each(&mut judge);
+            }
+        }
+        judged
+    }
+
     /// The same namespace with every relation renamed by `relation` and
     /// every namespace by `namespace`, as when its names are interned.
     /// Renaming doesn't change any rewrite's shape, so a one-to-one rename

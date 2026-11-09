@@ -151,6 +151,7 @@ macro_rules! store_tests {
             a_path_through_a_fact_from_before_its_epoch_is_closed,
             a_version_naming_a_relation_another_namespace_lacks_is_refused,
             a_version_naming_more_namespaces_than_one_write_checks_is_refused,
+            a_version_naming_many_namespaces_it_doesnt_judge_is_written,
         );
 
         /// Writers on separate threads, all based on one version, race
@@ -603,26 +604,41 @@ pub async fn a_version_naming_a_relation_another_namespace_lacks_is_refused<S: S
     write_namespace(&stores, DOC, again).await.unwrap();
 }
 
-/// A version that names more namespaces than one write can check is
-/// refused before it takes a revision.
-pub async fn a_version_naming_more_namespaces_than_one_write_checks_is_refused<S: Stores>(
-    stores: S,
-) {
-    let many = (1..=200)
-        .map(|id| Constraint::Resource(NamespaceId(id)))
-        .collect::<Vec<_>>();
-    let relations = many
+/// Relations taking, between them, each of `constraints`.
+fn taking(constraints: &[Constraint]) -> Namespace {
+    let relations = constraints
         .chunks(32)
         .zip(10..)
         .map(|(constraints, relation)| (RelationId(relation), This, constraints.to_vec()))
         .collect();
-    let namespace = Namespace::new(relations).unwrap();
-    let result = write_namespace(&stores, DOC, Create(namespace)).await;
+    Namespace::new(relations).unwrap()
+}
+
+/// A version whose constraints name more namespaces' relations than one
+/// write can check is refused before it takes a revision, and before it
+/// judges them.
+pub async fn a_version_naming_more_namespaces_than_one_write_checks_is_refused<S: Stores>(
+    stores: S,
+) {
+    let many = (1..=200)
+        .map(|id| Constraint::Subjectset(NamespaceId(id), MEMBER))
+        .collect::<Vec<_>>();
+    let result = write_namespace(&stores, DOC, Create(taking(&many))).await;
     assert!(
         matches!(result, Err(NamespaceWriteError::TooLarge { rows: 203, .. })),
         "{result:?}"
     );
     assert_eq!(stores.reader().head().await.unwrap(), Revision(0));
+}
+
+/// A plain resource constraint is never judged, so a version may name more
+/// such namespaces than one write could check.
+pub async fn a_version_naming_many_namespaces_it_doesnt_judge_is_written<S: Stores>(stores: S) {
+    let many = (1..=200)
+        .map(|id| Constraint::Resource(NamespaceId(id)))
+        .collect::<Vec<_>>();
+    let written = write_namespace(&stores, DOC, Create(taking(&many))).await;
+    assert_eq!(written.unwrap(), Revision(1));
 }
 
 /// The latest version at the head.
