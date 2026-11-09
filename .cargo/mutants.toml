@@ -32,7 +32,7 @@ exclude_re = [
     "impl Proof for Vec<Fact>>::empty",
     # Only the wording of a serde error that a namespace document's visitors,
     # which accept every JSON value they are offered, never raise.
-    "impl Visitor<'de> for (Text|Json|Leaf)Visitor(<V>)?>::expecting",
+    "impl Visitor<'de> for (Text|Json|Leaf|Scalar|Strings)Visitor(<V>)?>::expecting",
     # The adjtimex call itself: what it returns depends on the host's sync.
     'linux\.rs:.*replace read ->',
     # Compiled only by cargo-fuzz, which builds with --cfg fuzzing.

@@ -39,7 +39,7 @@ use crate::{
     rows::RowWriter,
     store::{
         FactWrite::{Insert, Retire},
-        FactWriteError, FactWriter, NamespaceWrite, NamespaceWriter,
+        FactWriteError, FactWriter, NamespaceWrite, NamespaceWriteError, NamespaceWriter,
     },
 };
 
@@ -54,6 +54,7 @@ macro_rules! row_writer_tests {
             a_write_past_one_unit_of_work_is_refused,
             a_namespace_without_names_is_refused,
             a_namespace_write_reads_and_guards_only_the_namespaces_it_judges,
+            a_namespace_write_that_fills_one_unit_of_work_is_written,
             a_span_its_pointer_disagrees_with_is_reported,
         );
 
@@ -360,12 +361,24 @@ pub async fn a_namespace_without_names_is_refused<E: Table>(table: E) {
 }
 
 /// A table that records the key of every item read and every step
-/// committed.
+/// committed, and holds a unit of work to at most `most` steps.
 #[derive(Clone)]
 struct Watched<E> {
     table: E,
     read: Arc<Mutex<Vec<Key>>>,
     committed: Arc<Mutex<Vec<Key>>>,
+    most: usize,
+}
+
+impl<E: Table> Watched<E> {
+    fn new(table: E, most: usize) -> Self {
+        Self {
+            table,
+            read: Arc::default(),
+            committed: Arc::default(),
+            most,
+        }
+    }
 }
 
 impl<E: Table> ItemReader for Watched<E> {
@@ -385,7 +398,7 @@ impl<E: Table> ItemReader for Watched<E> {
 
 impl<E: Table> ItemWriter for Watched<E> {
     fn max_steps(&self) -> usize {
-        self.table.max_steps()
+        self.most.min(self.table.max_steps())
     }
 
     async fn commit(&self, work: Work) -> Result<(), CommitError> {
@@ -418,11 +431,7 @@ pub async fn a_namespace_write_reads_and_guards_only_the_namespaces_it_judges<E:
     ] {
         names.insert_if_absent(pool, name, id).await.unwrap();
     }
-    let watched = Watched {
-        table,
-        read: Arc::default(),
-        committed: Arc::default(),
-    };
+    let watched = Watched::new(table, usize::MAX);
     let writer = writer(&watched, DevClock::default());
     let latest = |namespace| sungma_schema::namespaces::latest_key(namespace);
     let seen =
@@ -469,6 +478,41 @@ pub async fn a_namespace_write_reads_and_guards_only_the_namespaces_it_judges<E:
         assert!(seen(keys, DOC));
         assert!(!seen(keys, plain));
     }
+}
+
+/// A namespace write takes the head, the namespace's entry and its latest
+/// row, and a check of each namespace it's judged by: a write that needs
+/// exactly a unit of work is written, and one a step past it is refused.
+pub async fn a_namespace_write_that_fills_one_unit_of_work_is_written<E: Table>(table: E) {
+    declared(&table).await;
+    let (one, two) = (NamespaceId(7), NamespaceId(8));
+    let names = names(&table);
+    for (name, id) in [("one", one.0), ("two", two.0)] {
+        names
+            .insert_if_absent(Pool::Namespaces, name, id)
+            .await
+            .unwrap();
+    }
+    let writer = writer(&Watched::new(table, 4), DevClock::default());
+    let judged_by = |namespaces: &[NamespaceId]| {
+        let constraints = namespaces
+            .iter()
+            .map(|&namespace| Constraint::Subjectset(namespace, OWNER))
+            .collect();
+        NamespaceWrite::Create(Namespace::new(vec![(OWNER, This, constraints)]).unwrap())
+    };
+    writer
+        .write_namespace(one, judged_by(&[DOC]))
+        .await
+        .unwrap();
+    let refused = writer
+        .write_namespace(two, judged_by(&[DOC, one]))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(refused, NamespaceWriteError::TooLarge { rows: 5, most: 4 }),
+        "{refused}"
+    );
 }
 
 /// A span whose row disagrees with its fact's pointer can't be closed by

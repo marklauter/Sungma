@@ -1360,6 +1360,38 @@ fn a_bad_constraint_before_a_subjectset_constraint_is_one_error() {
 }
 
 #[test]
+fn a_bad_constraint_before_a_constraint_with_its_rewrite_is_one_error() {
+    let errors = refused(
+        "namespace: t
+  editor: !, member = this
+",
+    );
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].relation.as_deref(), Some("editor"));
+}
+
+#[test]
+fn a_bad_constraint_list_ends_at_the_next_signature() {
+    for text in [
+        "namespace: t
+  editor: !
+  viewer: !
+",
+        "namespace: t
+  editor: !,
+  viewer: !
+",
+    ] {
+        let errors = refused(text);
+        let relations: Vec<_> = errors
+            .iter()
+            .map(|error| error.relation.as_deref())
+            .collect();
+        assert_eq!(relations, [Some("editor"), Some("viewer")], "{text:?}");
+    }
+}
+
+#[test]
 fn a_constraint_signature_doesnt_take_the_next_relation() {
     let errors = refused("namespace: t\n  owner:\n  viewer: identity\n");
     assert_eq!(errors.len(), 1, "{errors:?}");
