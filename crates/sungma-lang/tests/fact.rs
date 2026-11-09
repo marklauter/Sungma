@@ -706,11 +706,28 @@ fn who() -> impl Strategy<Value = Who> {
     ]
 }
 
+/// A fact, its subjectset subject's namespace never sorting before the
+/// fact's own. The namespaces a document's subjectsets name then never name
+/// each other in a cycle, so each can be written after those it names.
+fn ordered_fact() -> impl Strategy<Value = (String, String, String, Who)> {
+    (name(), opaque(), name(), who()).prop_map(|(namespace, resource, relation, subject)| {
+        match subject {
+            Who::Subjectset(other, id, set) if other < namespace => (
+                other,
+                resource,
+                relation,
+                Who::Subjectset(namespace, id, set),
+            ),
+            subject => (namespace, resource, relation, subject),
+        }
+    })
+}
+
 proptest! {
     /// Generated documents load, and each fact is found under its names.
     #[test]
     fn a_generated_document_loads_and_each_fact_is_found(
-        facts in proptest::collection::vec((name(), opaque(), name(), who()), 1..10),
+        facts in proptest::collection::vec(ordered_fact(), 1..10),
     ) {
         let documents: Vec<Value> = facts
             .iter()
