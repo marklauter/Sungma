@@ -221,6 +221,17 @@ impl<'a> Reader<'_, 'a> {
         self.skip_until(Self::at_boundary);
     }
 
+    /// Whether what comes next ends a constraint list that failed: the end,
+    /// or a relation outside the list. Within it, a name followed by `=` is
+    /// a constraint before its relation's rewrite, as `member` is in
+    /// `editor: !, group#member = this`; a name followed by `:` always
+    /// starts a relation.
+    fn at_constraints_boundary(&self) -> bool {
+        self.token(self.at) == Token::End
+            || (self.at_relation()
+                && (self.token(self.at + 1) == Token::Colon || !self.in_constraints(self.at)))
+    }
+
     /// Skips lexemes until `stop` holds or the end. The end bounds the loop
     /// whatever `stop` says.
     fn skip_until(&mut self, stop: fn(&Self) -> bool) {
@@ -480,7 +491,7 @@ impl<'a> Reader<'_, 'a> {
                     self.push(Some(namespace), Some(name.as_str()), failure);
                     failed = true;
                     if self.at == start {
-                        self.recover();
+                        self.skip_until(Self::at_constraints_boundary);
                         break;
                     }
                 }

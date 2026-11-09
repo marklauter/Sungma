@@ -1345,6 +1345,21 @@ fn a_malformed_constraint_list_is_refused_where_it_goes_wrong() {
 }
 
 #[test]
+fn a_bad_constraint_before_a_subjectset_constraint_is_one_error() {
+    let errors =
+        refused("namespace: group\n  member: identity\n  editor: !, group#member = this\n");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].relation.as_deref(), Some("editor"));
+    assert_eq!(
+        errors[0].place,
+        Some(Place {
+            line: 3,
+            column: 11
+        })
+    );
+}
+
+#[test]
 fn a_constraint_signature_doesnt_take_the_next_relation() {
     let errors = refused("namespace: t\n  owner:\n  viewer: identity\n");
     assert_eq!(errors.len(), 1, "{errors:?}");
