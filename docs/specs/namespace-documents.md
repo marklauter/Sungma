@@ -1,7 +1,7 @@
 ---
 title: Namespace documents
 type: specification
-summary: "A namespace document is the JSON or TOML form of one namespace: its name, each relation's rewrite written as an expression string, and each relation's constraints. Both forms parse to the same namespace."
+summary: "A namespace document is the JSON form of one namespace: its name, each relation's rewrite written as an expression string, and each relation's constraints."
 status: evolving
 cites:
   - "[[namespace]]"
@@ -18,7 +18,7 @@ cites:
 
 # Namespace documents
 
-A namespace document is the JSON or TOML form of one [[namespace]]. Both forms parse to the same namespace. A document maps the namespace's name to its [[relation]]s, and each relation's name to a [[rewrite]] written as an expression string. A relation whose [[fact]]s bind subjects also declares its constraints, the kinds of [[subject]] they may bind. A namespace is the unit a write declares, so a document holds exactly one. Sungma parses a document into a typed rewrite tree for each relation, checks the namespace whole, and prints a namespace back into a document, in either form, that parses as an equal namespace.
+A namespace document is the JSON form of one [[namespace]]. A document maps the namespace's name to its [[relation]]s, and each relation's name to a [[rewrite]] written as an expression string. A relation whose [[fact]]s bind subjects also declares its constraints, the kinds of [[subject]] they may bind. A namespace is the unit a write declares, so a document holds exactly one. Sungma parses a document into a typed rewrite tree for each relation, checks the namespace whole, and prints a namespace back into a document that parses as an equal namespace.
 
 ## The name
 
@@ -41,33 +41,6 @@ The `file` namespace: files sit in folders, and `(parent, viewer)` reads the vie
 }
 ```
 
-The same namespace in TOML:
-
-```toml
-[file]
-
-[file.auditor]
-rewrite = "this & viewer"
-constraints = ["identity"]
-
-[file.banned]
-constraints = ["identity"]
-
-[file.editor]
-rewrite = "this | owner"
-constraints = ["group#member", "identity"]
-
-[file.owner]
-constraints = ["identity"]
-
-[file.parent]
-constraints = ["folder"]
-
-[file.viewer]
-rewrite = "(this | editor | (parent, viewer)) ! banned"
-constraints = ["group#member", "identity"]
-```
-
 ## JSON form
 
 - A document is one JSON object with exactly one key, the namespace's name. Its value is an object mapping each of the namespace's relation names to that relation's value.
@@ -78,18 +51,6 @@ constraints = ["group#member", "identity"]
 - Key order carries no meaning.
 - Names and expressions hold no JSON escapes, such as `\n` or `\u006f`. Nothing a name or an expression needs requires one, and without them a column in an expression is also a column in the document. A string with an escape is refused.
 - A document carries no grammar version. The REST endpoint that takes it is versioned instead.
-
-## TOML form
-
-- A document is one TOML table, whose header is the namespace's name. Each relation is either a key in that table, holding the relation's value, or a table of its own under it, such as `[file.viewer]`, holding the relation's `rewrite` and `constraints`.
-- A dotted namespace name is quoted, as in `["drive.file"]` and `["drive.file".viewer]`. TOML reads an unquoted dot as a nested table.
-- A relation's value is its expression, a non-empty string, or a table that also declares its constraints, as [Constraints](#constraints) says. The table may be inline, `viewer = { rewrite = "…", constraints = ["…"] }`, or a table of its own. Both read as the same relation. Any other value, such as `true`, a number or an array, is refused, and so is a relation's table with a key other than `rewrite` or `constraints`, or a table nested deeper than a relation.
-- An expression may be any TOML string: basic `"…"`, literal `'…'`, or multi-line when it wraps. Strings hold no escapes, as in the JSON form, and a string with one is refused.
-- A namespace without relations is a header with no keys.
-- A document declares exactly one namespace. An empty document, or one with two or more namespaces' tables, is refused.
-- A relation named twice, or a table header written twice, is refused. TOML itself refuses both.
-- Comments are allowed. They aren't kept, because Sungma stores the namespace as the printer's JSON form.
-- A document is TOML, version 1.0 or later. Like the JSON form, it carries no grammar version.
 
 ## Limits
 
@@ -183,25 +144,15 @@ Each entry in `constraints` is one of:
 
 No constraint covers every subject. A relation that would take anything can't have its links checked, so each one names what it takes.
 
-A relation with constraints is written as an object in JSON and a table in TOML, with a `constraints` key and an optional `rewrite` key, and no other keys. `rewrite` is a non-empty expression string. Left out, it is `this`:
-
-```toml
-[folder.owner]
-constraints = ["identity"]
-
-[folder.parent]
-constraints = ["folder"]
-
-[folder.viewer]
-rewrite = "this | owner | (parent, viewer)"
-constraints = ["group#member", "identity"]
-```
+A relation with constraints is written as an object, with a `constraints` key and an optional `rewrite` key, and no other keys. `rewrite` is a non-empty expression string. Left out, it is `this`:
 
 ```json
-"parent": { "constraints": ["folder"] }
+"owner": { "constraints": ["identity"] },
+"parent": { "constraints": ["folder"] },
+"viewer": { "rewrite": "this | owner | (parent, viewer)", "constraints": ["group#member", "identity"] }
 ```
 
-A relation whose rewrite doesn't read `this` is computed. It's written as a plain string, or as an object or table with `rewrite` alone.
+A relation whose rewrite doesn't read `this` is computed. It's written as a plain string, or as an object with `rewrite` alone.
 
 Writing a namespace checks the declarations:
 
@@ -233,9 +184,9 @@ A namespace is checked whole when it is declared, and is refused if any of the f
 
 ## Errors
 
-A JSON or TOML library reads the document, and a document that isn't valid in its form is refused with the library's error and its line and column. Nothing further is checked.
+A JSON library reads the document, and a document that isn't valid JSON is refused with the library's error and its line and column. Nothing further is checked.
 
-Sungma's own parser reads each expression. It reports the problems it finds in document order, up to 50; past that, a final error says there were too many. Each error carries the relation it was found in and, for a problem inside an expression, the column where the problem starts. A column counts characters from 1, from the start of the expression. In a TOML multi-line string, it counts across the string's line breaks, so it doesn't match a column on the document's lines. A problem found only by checking a whole namespace, such as a cycle, is reported at the relation where it is found.
+Sungma's own parser reads each expression. It reports the problems it finds in document order, up to 50; past that, a final error says there were too many. Each error carries the relation it was found in and, for a problem inside an expression, the column where the problem starts. A column counts characters from 1, from the start of the expression. A problem found only by checking a whole namespace, such as a cycle, is reported at the relation where it is found.
 
 One mistake reports one error:
 
@@ -251,11 +202,11 @@ An error that quotes the document quotes at most 64 bytes of it, cut at a charac
 
 ## Printing
 
-The printer writes a document, in either form, that the parser reads back as an equal namespace. Sungma stores the JSON form, and Author, Sungma's UI, shows Sungma schema language.
+The printer writes a document that the parser reads back as an equal namespace. Sungma stores the JSON form, and Author, Sungma's UI, shows Sungma schema language.
 
-- A computed relation prints as its expression in JSON, `"name": "expression"`, and in TOML as a table of its own with `rewrite` alone, so every relation reads the same way.
-- A relation with constraints prints in the constraints form, `"name": { "rewrite": "expression", "constraints": [...] }` in JSON, and in TOML as a table of its own, `[namespace.name]` with `rewrite = "expression"` and `constraints = [...]` on their own lines. `rewrite` is left out when it is `this`, and constraints print sorted, comparing bytes. In TOML, every relation is its own table, and the namespace's header stands alone above them.
-- A namespace without relations prints as `"name": {}` in JSON and as its header alone in TOML. A dotted namespace name prints quoted in TOML.
+- A computed relation prints as its expression, `"name": "expression"`.
+- A relation with constraints prints in the constraints form, `"name": { "rewrite": "expression", "constraints": [...] }`. `rewrite` is left out when it is `this`, and constraints print sorted, comparing bytes.
+- A namespace without relations prints as `"name": {}`.
 - Operators print with a space on each side, and a fact-to-subjectset prints as `(factset, computed)`.
 - The printer adds parentheses only where the grammar needs them:
   - A union inside a union is parenthesized.
@@ -263,7 +214,7 @@ The printer writes a document, in either form, that the parser reads back as an 
   - A union or intersection on the left of `!` is parenthesized.
   - Any operator node on the right of `!` is parenthesized.
 - Relations print sorted by name, comparing bytes. Order carries no meaning, so a namespace holds its relations unordered, and the printer sorts them so one namespace always prints as the same text.
-- JSON objects indent by two spaces, one key per line. The TOML form prints one key per line, with a blank line before each table. Lines end in `\n` on every platform.
+- JSON objects indent by two spaces, one key per line. Lines end in `\n` on every platform.
 - Printing refuses, with a `PrintError`, a name made with `new_unchecked` that breaks the grammar, including `this`, or a union or intersection with one operand.
 
 ## Open
@@ -276,7 +227,7 @@ The printer writes a document, in either form, that the parser reads back as an 
 
 The parser takes untrusted input in a security system, so its tests cover hostile input as well as valid documents. Each class below is required.
 
-1. **Document shape.** Each rule in [JSON form](#json-form) and [TOML form](#toml-form) holds, for valid documents and for each way of breaking it.
+1. **Document shape.** Each rule in [JSON form](#json-form) holds, for valid documents and for each way of breaking it.
 2. **Names.** The name grammar, dotted namespace names, the reserved `this` in every casing, and the reserved first segment `sungma`.
 3. **Grammar.** Precedence, left-to-right reading, runs as one node, parentheses kept as structure, whitespace, and longest-match names.
 4. **Checks.** Each check in [Checks](#checks) refuses what it should and allows what it should, including cycles through a fact-to-subjectset and relations that share a target.
@@ -300,13 +251,9 @@ The cases each class covers, at minimum.
 3. A namespace without relations, `{}`, parses. A namespace whose value isn't an object is refused.
 4. A relation's value is a non-empty string, or the constraints form. `null`, `""`, numbers, arrays, and objects of any other shape are refused.
 5. A relation named twice is one error.
-6. Text that isn't valid JSON or TOML is refused with its library's error.
+6. Text that isn't valid JSON is refused with its library's error.
 7. JSON escapes are handled as the [JSON form](#json-form) section says.
-8. The TOML sample parses to the same namespace as the JSON sample.
-9. A TOML document with no table, two namespaces' tables, a non-string value, a relation's table with an unknown key, or a table nested deeper than a relation is refused, and so is a string with an escape. Basic, literal and multi-line strings each parse. A relation written inline and the same relation written as a table of its own parse to equal namespaces.
-10. A dotted namespace name parses quoted. Unquoted, it's refused as a nested table.
-11. Comments are allowed anywhere TOML allows them, and change nothing.
-12. The constraints form parses in each form, with and without `rewrite`. A key other than `rewrite` or `constraints`, an empty `constraints`, an entry written twice, an entry that breaks the grammar, and an empty `rewrite` are each refused.
+8. The constraints form parses, with and without `rewrite`. A key other than `rewrite` or `constraints`, an empty `constraints`, an entry written twice, an entry that breaks the grammar, and an empty `rewrite` are each refused.
 
 #### Names
 
@@ -354,13 +301,13 @@ The cases each class covers, at minimum.
 
 #### Printing
 
-1. The printer writes the canonical form of the sample, and of a namespace without relations, in each form. `rewrite` is left out when it is `this`, and constraints print sorted.
+1. The printer writes the canonical form of the sample, and of a namespace without relations. `rewrite` is left out when it is `this`, and constraints print sorted.
 2. The printer adds only the parentheses the grammar needs.
-3. The printer refuses, as a caller defect, a union or intersection with one operand, and a name made with `new_unchecked` that breaks the grammar or is `this`, so it never writes a document that parses differently or isn't valid in its form.
+3. The printer refuses, as a caller defect, a union or intersection with one operand, and a name made with `new_unchecked` that breaks the grammar or is `this`, so it never writes a document that parses differently or isn't valid JSON.
 
 #### Round trips
 
-1. A property test builds namespaces, prints them in each form, parses them back to equal namespaces, and prints the same text again. A namespace printed in one form and parsed from the other is equal too. The generated trees include both depth limits and wide runs of one operator, and the generated relations include constraints of every kind.
+1. A property test builds namespaces, prints them, parses them back to equal namespaces, and prints the same text again. The generated trees include both depth limits and wide runs of one operator, and the generated relations include constraints of every kind.
 2. A property test generates expression strings from the grammar's tokens and checks that parse, print and parse again gives an equal tree.
 
 #### Hostile input
