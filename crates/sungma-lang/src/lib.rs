@@ -3,3 +3,4 @@
 
 pub mod fact;
 pub mod namespace;
+pub mod schema;

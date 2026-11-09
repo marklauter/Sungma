@@ -10,12 +10,33 @@ cites:
 
 # Check takes a caller token and a subject token
 
-Zanzibar trusts every service that calls Check to name the right [[subject]]. A service that passes a user-supplied identity straight through lets a user claim to be anyone. Sungma closes that gap by never taking a subject by name. This belongs to roadmap item 15, authentication of Sungma's callers.
+Zanzibar trusts every service that calls Check to name the right [[subject]]. A service that passes a user-supplied identity straight through lets a user claim to be anyone. Sungma closes that gap by never taking a subject by name. This belongs to the roadmap's authentication and authorization of Sungma's own callers.
 
 ## Two tokens
 
 - **The caller token** identifies the client calling Check, such as a client-credentials JWT. Sungma authorizes the client in its own model, for example which clients may check which namespaces.
 - **The subject token** is the token of whoever the check is about. Sungma validates it and takes the subject from its `sub` claim, so a caller can't ask about Alice without a token Alice was issued. A client acting for a user forwards the user's token. A client acting for itself, such as a batch job, is its own subject and sends its own token as both.
+
+## The subject claim
+
+Sungma trusts one issuer, and a token's subject is that issuer's `sub` claim, as RFC 7519 defines it. This holds for both tokens, so the caller is the caller token's `sub`. A token without `sub` is refused.
+
+People and clients are both subjects, and Sungma doesn't tell them apart. A client in the client-credentials flow is named in facts the same way as a person.
+
+The issuer is configured so every token it issues carries a `sub` that is stable and unique for each principal. A UPN or an email doesn't qualify: either can change, or pass to someone else, and the facts about the old value would follow. With Rauthy, client-credentials tokens carry `sub` only with `client_credentials_map_sub` turned on.
+
+## One issuer of record
+
+Sungma trusts one identity provider, its issuer of record. A service may trust any identity provider it likes, but to call Sungma it exchanges its token for one from Sungma's issuer, through OAuth 2.0 Token Exchange (RFC 8693). The calling service exchanges the token itself, or a reverse proxy in front of Sungma exchanges it for every caller. Trust between identity providers is configured in the identity providers, so swapping one token for another stays their job, and Sungma never maps another provider's claims.
+
+This design is chosen because:
+
+1. **It's less code.** OAuth already specifies token exchange, so Sungma adds nothing of its own.
+2. **Identity providers already hold trust.** Deciding which providers to trust, and how their tokens map to one another, is their job.
+3. **Sungma's ids stay simple.** Every identity is a `sub` from one issuer, with no prefix and no mapping.
+4. **Callers can still skip the exchange,** through a reverse proxy that does it for them, which is a small project of its own.
+
+Two other designs were weighed. Trusting many issuers, each prefixed onto its subjects, needs no exchange, but one person becomes a different subject at each provider, and Sungma would map every issuer's claims. Adding a Sungma person that each provider's accounts link to fixes the first cost, but makes Sungma keep a store of people and link accounts safely, which is an identity provider's job.
 
 ## On behalf of
 
@@ -32,6 +53,5 @@ Forwarding can come first and exchange later without changing the check request,
 
 ## Open
 
-- Which claim identifies the caller: `client_id`, `azp`, or `sub` of the caller token.
-- How Sungma models which clients may check which namespaces, and which may act for users.
+- Which clients may act for users, beyond the `reader` guards in [[sungma-authorization]], which already decide which callers may check which relations.
 - Whether a check against an unknown namespace or relation answers `Unknown`, which shows a prober the names that exist, or `Denied`.

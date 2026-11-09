@@ -146,3 +146,7 @@ Names are stored before the versions that use them. A version read that misses a
 8. **Mutation testing.** No mutant survives the tests of its own crate, apart from recorded exclusions, each with its reason.
 
 Each test has a table of its own, so tests don't share state. Without DynamoDB Local the tests fail rather than skip.
+
+## Open
+
+1. **Writes larger than one unit of work.** A unit of work holds 100 items and 4 MB, so a big write, such as a namespace with many relations or a large batch of facts, can't commit in one. The answer decides how every write commits, not only big ones. Writes commit through a write id, as [Writes commit through a write id](../notes/writes-commit-through-a-write-id.md) decides, with a worked example and the answers it rejected, such as a head lease. Building it changes this spec and [One timeline](one-timeline.md).

@@ -156,7 +156,7 @@ A stamp taken before the write reaches the store is closer to arrival order than
 
 ## Required tests
 
-A clock whose reading misses true time reverses revisions without an error. A check can then miss a revocation. Its tests therefore cover a clock that is wrong, stepped, paused or lied to, as well as one in good order. Each class below is required.
+A clock whose reading misses true time reverses revisions without an error. A check can then miss a retired fact. Its tests therefore cover a clock that is wrong, stepped, paused or lied to, as well as one in good order. Each class below is required.
 
 1. **Readings.** Every reading has `settled` at or before `revision`, contains true time, and saturates rather than wraps at both ends of `u64`. A bound past 1 s faults.
 2. **Commit-wait.** `wait` resolves only once `settled` is past the stamp, takes another sleep when the bound grows during one, returns at once when the stamp is already past, and ends with a fault the clock reports.

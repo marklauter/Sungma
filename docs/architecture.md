@@ -1,6 +1,6 @@
 # Architecture
 
-Sungma is a Zanzibar-style authorization service. It answers one question: is subject S in the subjectset `namespace:resource#relation` at revision R? This page is the high-level view, the first two levels of C4. The code, the [specs](specs) and the [README](../README.md)'s crate list hold the detail.
+Sungma is a Zanzibar-style authorization service. It answers one question: is subject S in the subjectset `namespace:resource#relation` at revision R? This page is the high-level view, the first two levels of C4. The code and the [specs](specs) hold the detail.
 
 ## Context
 

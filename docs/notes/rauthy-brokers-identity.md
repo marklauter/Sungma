@@ -4,6 +4,7 @@ type: note
 summary: Every SaaS needs an identity provider, so a Sungma deployment ships Rauthy as its one issuer; Rauthy federates the organization's own providers, and Sungma keeps only an identity and what its UI shows.
 status: evolving
 cites:
+  - "[[scim-imports-users-and-groups]]"
   - "[[sungma-is-single-tenant]]"
   - "[[check-takes-a-caller-token-and-a-subject-token]]"
   - "[[author-needs-an-oauth-bff-crate]]"
@@ -43,15 +44,15 @@ Sungma keeps no user store of its own beyond:
 
 ### Tenancy
 
-Single tenancy removes Rauthy's biggest gap. Rauthy has no realms, and Sungma needs none: one deployment means one Rauthy, one JWKS, and one user namespace.
+Single tenancy removes Rauthy's biggest gap. Rauthy has no realms, and Sungma needs none: one deployment means one Rauthy, one JWKS, and one set of users.
 
 ### Users and groups reach Sungma through SCIM
 
-Sungma implements a SCIM v2 endpoint, and Rauthy pushes user and group changes to it. Sungma learns about users and groups only through this endpoint. It doesn't read them from Rauthy's API, so it stays independent of the IdP, and development uses the same path as production. Rauthy's admin API is for seeding test users, not for feeding Sungma. The endpoint is the anti-corruption layer: it turns SCIM resources into facts such as `group:eng#member@<sub>` and refreshes the display projection.
+Sungma implements a SCIM v2 endpoint, and Rauthy pushes user and group changes to it. Sungma learns about users and groups only through this endpoint. It doesn't read them from Rauthy's API, so it stays independent of the IdP, and development uses the same path as production. Rauthy's admin API is for seeding test users, not for feeding Sungma. [[scim-imports-users-and-groups]] says what the endpoint writes.
 
 Rauthy's event stream doesn't carry group or role changes. Its events cover security and operations: invalid logins, brute force, new users, email changes, password resets, JWKS rotation and health. Sungma may subscribe for side signals, such as ending sessions after `UserPasswordReset`. The stream is SSE without a documented resume cursor, so a consumer reconnects and fills gaps from `/auth/v1/events`.
 
-Watch is separate. It streams Sungma's own changelog of facts, ordered by its timeline, and never depends on Rauthy's delivery.
+Watch is separate. It streams Sungma's own fact changelog, ordered by its timeline, and never depends on Rauthy's delivery.
 
 In development, Rauthy runs in a container, so the SCIM base URL has to name the host as the container sees it, such as `host.containers.internal`. `localhost` would point back at Rauthy's own container.
 
@@ -85,7 +86,6 @@ Hiqlite on its own, not Postgres or Aurora Global under a Raft cache, keeps one 
 
 ## Open
 
-1. Whether Rauthy maps upstream group claims into its own groups, or whether groups are managed in Rauthy or Sungma.
+1. Whether Rauthy maps upstream group claims into its own groups.
 2. How the control plane provisions a deployment's Rauthy: clients, scopes, upstream providers and API keys.
-3. What the SCIM endpoint maps: users and groups only, or custom attributes to relations too.
-4. Whether Author's BFF ([[author-needs-an-oauth-bff-crate]]) gets its tests from a fake provider alone, or also from a Rauthy container in an integration suite.
+3. Whether Author's BFF ([[author-needs-an-oauth-bff-crate]]) gets its tests from a fake provider alone, or also from a Rauthy container in an integration suite.

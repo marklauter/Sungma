@@ -1,4 +1,4 @@
-//! Namespace documents: the JSON form of one namespace, as
+//! Namespace documents: the JSON and TOML forms of one namespace, as
 //! `docs/specs/namespace-documents.md` specifies.
 //!
 //! ```json
@@ -13,15 +13,26 @@
 //! }
 //! ```
 //!
-//! serde_json reads the JSON, and refuses a document that isn't JSON with
-//! its own error. Sungma reads each expression, checks the namespace whole, and
-//! reports every problem it finds, up to [`MAX_ERRORS`]. [`print()`] writes a
-//! namespace back as a document that parses as an equal namespace.
+//! ```toml
+//! [file]
+//! owner = "this"
+//! parent = "this"
+//! editor = "this | owner"
+//! viewer = "(this | editor | (parent, viewer)) ! banned"
+//! banned = "this"
+//! ```
+//!
+//! serde_json reads the JSON and toml_edit the TOML, and each refuses a
+//! document that isn't in its form with its own error. Sungma reads each
+//! expression, checks the namespace whole, and reports every problem it finds,
+//! up to [`MAX_ERRORS`]. [`print()`] and [`print_toml`] write a namespace back
+//! as a document that parses as an equal namespace.
 
 use std::{
     collections::HashSet,
     fmt::{self, Write},
     marker::PhantomData,
+    ops::Range,
 };
 
 use serde::{
@@ -29,6 +40,7 @@ use serde::{
     de::{self, IgnoredAny, MapAccess, SeqAccess, Visitor},
 };
 use thiserror::Error;
+use toml_edit::{Item, Table, Value};
 
 pub use sungma::name::{MAX_NAMESPACE_BYTES, MAX_QUOTE_BYTES, MAX_RELATION_BYTES};
 use sungma::{
@@ -75,6 +87,16 @@ impl DocumentError {
 pub enum ErrorKind {
     #[error("{0}")]
     Json(serde_json::Error),
+    /// toml_edit's message, without the line of the document its own error
+    /// quotes. The column counts characters from 1.
+    #[error("{message} at line {line} column {column}")]
+    Toml {
+        message: String,
+        line: usize,
+        column: usize,
+    },
+    #[error("a document doesn't start with a byte-order mark")]
+    ByteOrderMark,
     #[error("a document is at most {MAX_DOCUMENT_BYTES} bytes")]
     TooLarge,
     #[error("a document is a JSON object keyed by its namespace's name")]
@@ -85,10 +107,14 @@ pub enum ErrorKind {
     ManyNamespaces(usize),
     #[error("namespace '{0}' maps to an object of relations")]
     RelationsNotAnObject(String),
+    #[error("'{0}' isn't a namespace's table header, such as [name] or [\"dotted.name\"]")]
+    NotATable(String),
     #[error("a namespace declares at most {MAX_RELATIONS} relations, not {0}")]
     TooManyRelations(usize),
     #[error("'{0}' contains a JSON escape")]
     Escape(String),
+    #[error("'{0}' contains a TOML escape")]
+    TomlEscape(String),
     #[error(transparent)]
     Name(NameError),
     #[error("a relation maps to a non-empty expression string")]
@@ -106,6 +132,8 @@ pub enum ErrorKind {
     Namespace(NamespaceError),
     #[error("too many errors; the first {MAX_ERRORS} are reported")]
     TooManyErrors,
+    #[error("namespace '{0}' is declared twice")]
+    DuplicateNamespace(String),
 }
 
 /// Parses and checks a namespace document, as the [module](self) describes.
@@ -130,6 +158,75 @@ pub fn parse(text: &str) -> Result<NamespaceDocument, Vec<DocumentError>> {
         1 => namespaces.remove(0),
         count => return fail(ErrorKind::ManyNamespaces(count)),
     };
+    let relations = match relations {
+        Json::Object(entries) => Ok(entries),
+        Json::Other => Err(ErrorKind::RelationsNotAnObject(quote(namespace.text()))),
+    };
+    read(Form::Json, namespace, relations)
+}
+
+/// Parses and checks a namespace document in the TOML form, as the
+/// [module](self) describes: one table, its header the namespace's name.
+///
+/// Linear in the document's length, as [`parse`] is.
+pub fn parse_toml(text: &str) -> Result<NamespaceDocument, Vec<DocumentError>> {
+    let fail = |kind| Err(vec![error(None, None, kind)]);
+    if text.len() > MAX_DOCUMENT_BYTES {
+        return fail(ErrorKind::TooLarge);
+    }
+    // TOML allows a byte-order mark, and toml_edit skips one; a document
+    // in either form is refused with one.
+    if text.starts_with('\u{feff}') {
+        return fail(ErrorKind::ByteOrderMark);
+    }
+    let document = match toml_edit::Document::parse(text) {
+        Ok(document) => document,
+        Err(toml) => return fail(toml_error(text, &toml)),
+    };
+    let mut namespaces = entries(text, document.as_table());
+    let (namespace, item) = match namespaces.len() {
+        0 => return fail(ErrorKind::NoNamespace),
+        1 => namespaces.remove(0),
+        count => return fail(ErrorKind::ManyNamespaces(count)),
+    };
+    // Only a header declares a namespace: `[drive.file]` nests `file` in an
+    // implicit `drive`, `t.a = "x"` makes a dotted `t`, and `t = {}` is a value.
+    let relations = match item {
+        Item::Table(table) if !table.is_implicit() && !table.is_dotted() => {
+            Ok(entries(text, table)
+                .into_iter()
+                .map(|(name, item)| (name, leaf(text, item)))
+                .collect())
+        }
+        _ => Err(ErrorKind::NotATable(quote(namespace.text()))),
+    };
+    read(Form::Toml, namespace, relations)
+}
+
+/// The form a document is written in, which names the escapes it refuses.
+#[derive(Clone, Copy)]
+enum Form {
+    Json,
+    Toml,
+}
+
+impl Form {
+    fn escape(self, text: &str) -> ErrorKind {
+        match self {
+            Form::Json => ErrorKind::Escape(quote(text)),
+            Form::Toml => ErrorKind::TomlEscape(quote(text)),
+        }
+    }
+}
+
+/// Reads a namespace from what its form's library read: its name, and its
+/// relations' names and values in document order, or the error that refuses
+/// what the name maps to.
+fn read(
+    form: Form,
+    namespace: Text<'_>,
+    relations: Result<Vec<(Text<'_>, Leaf<'_>)>, ErrorKind>,
+) -> Result<NamespaceDocument, Vec<DocumentError>> {
     let mut errors = Errors::default();
     // A name that fails is still kept, unchecked, for the checks that
     // follow; the document is refused, so it never leaves.
@@ -139,17 +236,16 @@ pub fn parse(text: &str) -> Result<NamespaceDocument, Vec<DocumentError>> {
             NamespaceName::new_unchecked(name)
         }),
         Text::Escaped(name) => {
-            errors.push(None, None, ErrorKind::Escape(quote(&name)));
+            errors.push(None, None, form.escape(&name));
             NamespaceName::new_unchecked(name)
         }
     };
-    let Json::Object(entries) = relations else {
-        errors.push(
-            None,
-            None,
-            ErrorKind::RelationsNotAnObject(quote(namespace.as_str())),
-        );
-        return Err(errors.finish().unwrap_or_default());
+    let entries = match relations {
+        Ok(entries) => entries,
+        Err(kind) => {
+            errors.push(None, None, kind);
+            return Err(errors.finish().unwrap_or_default());
+        }
     };
     let declared = entries
         .iter()
@@ -158,7 +254,7 @@ pub fn parse(text: &str) -> Result<NamespaceDocument, Vec<DocumentError>> {
         .len();
     if declared > MAX_RELATIONS {
         // Nothing past the limit is read, so a hostile document costs no
-        // more than the JSON library's pass over it.
+        // more than its library's pass over it.
         errors.push(None, None, ErrorKind::TooManyRelations(declared));
         return Err(errors.finish().unwrap_or_default());
     }
@@ -171,7 +267,7 @@ pub fn parse(text: &str) -> Result<NamespaceDocument, Vec<DocumentError>> {
                 RelationName::new_unchecked(name)
             }),
             Text::Escaped(name) => {
-                errors.at(at, &name, None, ErrorKind::Escape(quote(&name)));
+                errors.at(at, &name, None, form.escape(&name));
                 RelationName::new_unchecked(name)
             }
         };
@@ -182,13 +278,14 @@ pub fn parse(text: &str) -> Result<NamespaceDocument, Vec<DocumentError>> {
             Leaf::Text(Text::Plain(expression)) if expression.len() > MAX_EXPRESSION_BYTES => {
                 Err((None, ErrorKind::ExpressionTooLong))
             }
-            Leaf::Text(Text::Plain(expression)) => Parser::new(expression).parse(),
-            Leaf::Text(Text::Escaped(expression)) => {
-                Err((None, ErrorKind::Escape(quote(&expression))))
+            Leaf::Text(Text::Plain(expression)) => {
+                Parser::new(&lex(expression, Mode::Expression)).parse()
             }
+            Leaf::Text(Text::Escaped(expression)) => Err((None, form.escape(&expression))),
             Leaf::Other => Err((None, ErrorKind::NotAnExpression)),
         };
-        let rewrite = rewrite.unwrap_or_else(|(column, kind)| {
+        let rewrite = rewrite.unwrap_or_else(|(place, kind)| {
+            let column = place.map(|place| place.column);
             errors.at(at, name.as_str(), column, kind);
             Rewrite::This
         });
@@ -207,6 +304,49 @@ pub fn parse(text: &str) -> Result<NamespaceDocument, Vec<DocumentError>> {
             relations,
         }),
         (errors, _) => Err(errors.unwrap_or_default()),
+    }
+}
+
+/// toml_edit's error, placed at the line and column where it starts.
+fn toml_error(text: &str, toml: &toml_edit::TomlError) -> ErrorKind {
+    let start = toml.span().map_or(0, |span| span.start);
+    let before = text.get(..start).unwrap_or_default();
+    let line = before.rsplit('\n').next().unwrap_or_default();
+    ErrorKind::Toml {
+        message: toml.message().to_owned(),
+        line: before.matches('\n').count() + 1,
+        column: line.chars().count() + 1,
+    }
+}
+
+/// A TOML table's keys, each read as a [`Text`], and their items, in
+/// document order.
+fn entries<'a>(text: &str, table: &'a Table) -> Vec<(Text<'a>, &'a Item)> {
+    table
+        .iter()
+        .filter_map(|(name, _)| table.get_key_value(name))
+        .map(|(key, item)| (toml_text(text, key.get(), key.span()), item))
+        .collect()
+}
+
+/// A relation's value in the TOML form: a string, or anything else.
+fn leaf<'a>(text: &str, item: &'a Item) -> Leaf<'a> {
+    match item {
+        Item::Value(Value::String(string)) => {
+            Leaf::Text(toml_text(text, string.value(), string.span()))
+        }
+        _ => Leaf::Other,
+    }
+}
+
+/// A TOML string, `value` as toml_edit decoded it from the document's text
+/// at `span`. Only a basic string, written in `"`, has escapes; a literal
+/// string's backslash is a character like any other. A string with no text
+/// at `span` to check is taken as escaped, so it is refused.
+fn toml_text<'a>(text: &str, value: &'a str, span: Option<Range<usize>>) -> Text<'a> {
+    match span.and_then(|span| text.get(span)) {
+        Some(raw) if !(raw.starts_with('"') && raw.contains('\\')) => Text::Plain(value),
+        _ => Text::Escaped(value.to_owned()),
     }
 }
 
@@ -252,7 +392,7 @@ impl Errors {
 }
 
 /// A namespace problem with the names it carries quoted.
-fn quoted(problem: NamespaceError) -> NamespaceError {
+pub(crate) fn quoted(problem: NamespaceError) -> NamespaceError {
     match problem {
         NamespaceError::DuplicateRelation(relation) => {
             NamespaceError::DuplicateRelation(quote(&relation))
@@ -271,7 +411,7 @@ fn quoted(problem: NamespaceError) -> NamespaceError {
     }
 }
 
-/// A JSON string, borrowed from the document when it holds no escape.
+/// A document's string, borrowed from the document when it holds no escape.
 enum Text<'a> {
     Plain(&'a str),
     Escaped(String),
@@ -420,7 +560,7 @@ impl<'de> Deserialize<'de> for Leaf<'de> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Token {
+pub(crate) enum Token {
     /// The keyword `this`.
     This,
     Name,
@@ -430,16 +570,29 @@ enum Token {
     Union,
     Intersection,
     Exclusion,
+    Colon,
+    Equals,
     /// A character no token starts with.
     Unknown,
     End,
 }
 
+/// Where a lexeme starts: its line, and its column counting characters from
+/// 1. An expression is one line, however many line breaks it holds.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
+pub struct Place {
+    pub line: usize,
+    pub column: usize,
+}
+
 #[derive(Clone, Copy)]
-struct Lexeme<'a> {
-    token: Token,
-    text: &'a str,
-    column: usize,
+pub(crate) struct Lexeme<'a> {
+    pub(crate) token: Token,
+    pub(crate) text: &'a str,
+    pub(crate) place: Place,
+    /// The byte offsets of `text` in what was lexed.
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
 impl Lexeme<'_> {
@@ -451,29 +604,50 @@ impl Lexeme<'_> {
     }
 }
 
-fn lex(expression: &str) -> Vec<Lexeme<'_>> {
+/// What is being lexed: one expression from a JSON or TOML string, or a
+/// whole document in Sungma schema language, which has lines and comments.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Mode {
+    Expression,
+    Schema,
+}
+
+pub(crate) fn lex(text: &str, mode: Mode) -> Vec<Lexeme<'_>> {
     let mut lexemes = Vec::new();
-    let mut chars = expression.char_indices().enumerate().peekable();
-    while let Some((column, (start, c))) = chars.next() {
-        let column = column + 1;
+    let mut chars = text.char_indices().peekable();
+    let (mut line, mut column) = (1, 0);
+    while let Some((start, c)) = chars.next() {
+        column += 1;
+        let place = Place { line, column };
         let token = match c {
+            '\n' if mode == Mode::Schema => {
+                (line, column) = (line + 1, 0);
+                continue;
+            }
             ' ' | '\t' | '\n' | '\r' => continue,
+            '/' if mode == Mode::Schema && matches!(chars.peek(), Some((_, '/'))) => {
+                while chars.next_if(|&(_, c)| c != '\n').is_some() {
+                    column += 1;
+                }
+                continue;
+            }
             '(' => Token::Open,
             ')' => Token::Close,
             ',' => Token::Comma,
             '|' => Token::Union,
             '&' => Token::Intersection,
             '!' => Token::Exclusion,
+            ':' => Token::Colon,
+            '=' => Token::Equals,
             c if c.is_ascii_alphabetic() || c == '_' => {
                 let mut end = start + 1;
-                while let Some(&(_, (at, c))) = chars.peek() {
-                    if !(c.is_ascii_alphanumeric() || c == '_') {
-                        break;
-                    }
+                while let Some((at, _)) =
+                    chars.next_if(|&(_, c)| c.is_ascii_alphanumeric() || c == '_')
+                {
                     end = at + 1;
-                    chars.next();
+                    column += 1;
                 }
-                let text = &expression[start..end];
+                let text = &text[start..end];
                 let token = match text {
                     "this" => Token::This,
                     _ => Token::Name,
@@ -481,49 +655,73 @@ fn lex(expression: &str) -> Vec<Lexeme<'_>> {
                 lexemes.push(Lexeme {
                     token,
                     text,
-                    column,
+                    place,
+                    start,
+                    end,
                 });
                 continue;
             }
             _ => Token::Unknown,
         };
-        let text = &expression[start..start + c.len_utf8()];
+        let end = start + c.len_utf8();
         lexemes.push(Lexeme {
             token,
-            text,
-            column,
+            text: &text[start..end],
+            place,
+            start,
+            end,
         });
     }
     lexemes.push(Lexeme {
         token: Token::End,
         text: "",
-        column: expression.chars().count() + 1,
+        place: Place {
+            line,
+            column: column + 1,
+        },
+        start: text.len(),
+        end: text.len(),
     });
     lexemes
 }
 
-/// A syntax error's column and kind.
-type Failure = (Option<usize>, ErrorKind);
+/// What a term starts with.
+const TERM: &str = "'this', a relation name or '('";
+
+/// A syntax error's place and kind.
+pub(crate) type Failure = (Option<Place>, ErrorKind);
 
 type Node = Rewrite<RelationName>;
 
 /// Recursive descent over the rewrite grammar, one function per level.
-struct Parser<'a> {
-    lexemes: Vec<Lexeme<'a>>,
+pub(crate) struct Parser<'l, 'a> {
+    lexemes: &'l [Lexeme<'a>],
     at: usize,
+    /// Where the expression ends: the parser reads the lexeme here as the
+    /// end, whatever it is.
+    end: usize,
     groups: usize,
 }
 
-impl<'a> Parser<'a> {
-    fn new(expression: &'a str) -> Self {
+impl<'l, 'a> Parser<'l, 'a> {
+    /// A parser for one whole expression, `lexemes`, which end in
+    /// [`Token::End`].
+    pub(crate) fn new(lexemes: &'l [Lexeme<'a>]) -> Self {
+        Self::within(lexemes, 0, lexemes.len() - 1)
+    }
+
+    /// A parser for the expression from lexeme `start` up to lexeme `end`.
+    pub(crate) fn within(lexemes: &'l [Lexeme<'a>], start: usize, end: usize) -> Self {
         Self {
-            lexemes: lex(expression),
-            at: 0,
+            lexemes,
+            at: start,
+            end,
             groups: 0,
         }
     }
 
-    fn parse(mut self) -> Result<Rewrite<RelationName>, Failure> {
+    /// A whole expression: a rewrite, then the end.
+    pub(crate) fn parse(mut self) -> Result<Rewrite<RelationName>, Failure> {
         let rewrite = self.union()?;
         let next = self.peek();
         if next.token != Token::End {
@@ -533,7 +731,15 @@ impl<'a> Parser<'a> {
     }
 
     fn peek(&self) -> Lexeme<'a> {
-        self.lexemes[self.at]
+        let lexeme = self.lexemes[self.at];
+        if self.at == self.end {
+            Lexeme {
+                token: Token::End,
+                ..lexeme
+            }
+        } else {
+            lexeme
+        }
     }
 
     fn next(&mut self) -> Lexeme<'a> {
@@ -590,21 +796,21 @@ impl<'a> Parser<'a> {
             Token::Open => {
                 self.groups += 1;
                 if self.groups > MAX_REWRITE_DEPTH {
-                    return Err((Some(lexeme.column), ErrorKind::TooManyParentheses));
+                    return Err((Some(lexeme.place), ErrorKind::TooManyParentheses));
                 }
                 let node = self.union()?;
                 self.close()?;
                 self.groups -= 1;
                 Ok(node)
             }
-            _ => Err(syntax(lexeme, "'this', a relation name or '('")),
+            _ => Err(syntax(lexeme, TERM)),
         }
     }
 
     /// Whether the `(` just read opens `(factset, computed)`.
     fn peek_is_fact_to(&self) -> bool {
         matches!(
-            self.lexemes[self.at..],
+            self.lexemes[self.at..self.end],
             [
                 Lexeme {
                     token: Token::This | Token::Name,
@@ -628,36 +834,39 @@ impl<'a> Parser<'a> {
     }
 
     fn relation(&mut self) -> Result<RelationName, Failure> {
+        const EXPECTED: &str = "a relation name";
         let lexeme = self.next();
         match lexeme.token {
             Token::Name => relation(lexeme),
-            _ => Err(syntax(lexeme, "a relation name")),
+            _ => Err(syntax(lexeme, EXPECTED)),
         }
     }
 
     fn close(&mut self) -> Result<(), Failure> {
+        const EXPECTED: &str = "')'";
         let lexeme = self.next();
         match lexeme.token {
             Token::Close => Ok(()),
-            _ => Err(syntax(lexeme, "')'")),
+            _ => Err(syntax(lexeme, EXPECTED)),
         }
     }
 }
 
-fn syntax(lexeme: Lexeme<'_>, expected: &'static str) -> Failure {
+pub(crate) fn syntax(lexeme: Lexeme<'_>, expected: &'static str) -> Failure {
     let found = lexeme.found();
-    (Some(lexeme.column), ErrorKind::Syntax { found, expected })
+    (Some(lexeme.place), ErrorKind::Syntax { found, expected })
 }
 
-/// A name token as a relation name, refused at its column if it isn't one.
-fn relation(lexeme: Lexeme<'_>) -> Result<RelationName, Failure> {
+/// A name token as a relation name, refused at its place if it isn't one.
+pub(crate) fn relation(lexeme: Lexeme<'_>) -> Result<RelationName, Failure> {
     lexeme
         .text
         .parse()
-        .map_err(|error| (Some(lexeme.column), ErrorKind::Name(error)))
+        .map_err(|error| (Some(lexeme.place), ErrorKind::Name(error)))
 }
 
-/// Why [`print()`] refused a namespace: no document can declare it.
+/// Why [`print()`] or [`print_toml`] refused a namespace: no document can
+/// declare it.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum PrintError {
     /// A name made with `new_unchecked` that breaks the grammar, such as
@@ -666,6 +875,16 @@ pub enum PrintError {
     Name(#[from] NameError),
     #[error("a union or intersection has one operand")]
     OneOperand,
+    #[error("a schema document declares at least one namespace")]
+    NoNamespace,
+    #[error("namespace '{0}' isn't in the theory")]
+    OutsideTheory(String),
+    #[error("namespace '{0}' is given twice")]
+    DuplicateNamespace(String),
+    #[error("the printed document would be more than {MAX_DOCUMENT_BYTES} bytes")]
+    TooLarge,
+    #[error("a printed rule would be more than {MAX_EXPRESSION_BYTES} bytes")]
+    ExpressionTooLong,
 }
 
 /// Writes a namespace as a document that [`parse`] reads back as an equal
@@ -674,15 +893,11 @@ pub fn print(
     namespace: &NamespaceName,
     relations: &Namespace<RelationName>,
 ) -> Result<String, PrintError> {
-    namespace.as_str().parse::<NamespaceName>()?;
-    let mut relations: Vec<_> = relations.relations().collect();
-    relations.sort_by_key(|(name, _)| *name);
+    let relations = printed(namespace, relations)?;
     let mut text = format!("{{\n  \"{namespace}\": {{");
-    for (i, (name, rewrite)) in relations.iter().enumerate() {
+    for (i, (name, expression)) in relations.iter().enumerate() {
         let separator = if i == 0 { "\n" } else { ",\n" };
-        let _ = write!(text, "{separator}    \"{}\": \"", printable(name)?);
-        expression(&mut text, rewrite)?;
-        text.push('"');
+        let _ = write!(text, "{separator}    \"{name}\": \"{expression}\"");
     }
     if relations.is_empty() {
         text.push_str("}\n}\n");
@@ -690,6 +905,45 @@ pub fn print(
         text.push_str("\n  }\n}\n");
     }
     Ok(text)
+}
+
+/// Writes a namespace as a TOML document that [`parse_toml`] reads back as
+/// an equal namespace: a header, quoted if the name is dotted, then one key
+/// per relation, sorted by name, with `\n` line ends.
+pub fn print_toml(
+    namespace: &NamespaceName,
+    relations: &Namespace<RelationName>,
+) -> Result<String, PrintError> {
+    let relations = printed(namespace, relations)?;
+    let mut text = if namespace.as_str().contains('.') {
+        format!("[\"{namespace}\"]\n")
+    } else {
+        format!("[{namespace}]\n")
+    };
+    for (name, expression) in relations {
+        let _ = writeln!(text, "{name} = \"{expression}\"");
+    }
+    Ok(text)
+}
+
+/// A namespace's relations sorted by name, each with its expression, once
+/// every name is one a document can declare.
+pub(crate) fn printed<'a>(
+    namespace: &NamespaceName,
+    relations: &'a Namespace<RelationName>,
+) -> Result<Vec<(&'a str, String)>, PrintError> {
+    namespace.as_str().parse::<NamespaceName>()?;
+    let mut relations: Vec<_> = relations.relations().collect();
+    relations.sort_by_key(|(name, _)| *name);
+    relations
+        .into_iter()
+        .map(|(name, rewrite)| {
+            let name = printable(name)?;
+            let mut text = String::new();
+            expression(&mut text, rewrite)?;
+            Ok((name, text))
+        })
+        .collect()
 }
 
 fn expression(text: &mut String, rewrite: &Rewrite<RelationName>) -> Result<(), PrintError> {
@@ -762,4 +1016,29 @@ fn grouped(
         expression(text, rewrite)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Text, toml_text};
+
+    #[test]
+    fn a_key_with_no_span_is_refused_as_escaped() {
+        let key = toml_edit::Key::new("viewer");
+        assert!(key.span().is_none());
+        assert!(matches!(
+            toml_text("", key.get(), key.span()),
+            Text::Escaped(_)
+        ));
+    }
+
+    #[test]
+    fn a_string_with_no_span_is_refused_as_escaped() {
+        let string = toml_edit::Formatted::new("viewer".to_owned());
+        assert!(string.span().is_none());
+        assert!(matches!(
+            toml_text("", string.value(), string.span()),
+            Text::Escaped(_)
+        ));
+    }
 }
