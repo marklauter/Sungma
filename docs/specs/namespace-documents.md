@@ -199,12 +199,12 @@ subjects = ["group#member", "identity"]
 "parent": { "subjects": ["folder"] }
 ```
 
-A relation whose rewrite doesn't read `this` accepts no facts. It's written as a plain string, or as an object or table with `rewrite` alone and no `subjects`.
+A relation whose rewrite doesn't read `this` is computed. It's written as a plain string, or as an object or table with `rewrite` alone.
 
 Writing a namespace checks the declarations:
 
 - A rewrite that reads `this` without declaring subjects is refused, and so is a relation that declares subjects without reading `this`.
-- For each fact-to-subjectset, every namespace its factset accepts must declare its computed relation. `(parent, viewer)` is refused unless `folder` declares `viewer`.
+- For each fact-to-subjectset, every namespace its factset accepts must declare its followed relation. `(parent, viewer)` is refused unless `folder` declares `viewer`.
 - Every accepted subject `namespace#relation` names a relation that namespace declares. `group#member` is refused unless `group` declares `member`.
 
 `identity` is reserved: no namespace may be named `identity`.
@@ -215,9 +215,9 @@ A relation's rewrite defines the closure of each [[subjectset]] formed from that
 
 - `this` is the subjects the [[fact]]s bind to the subjectset.
 - A computed subjectset is the closure of the subjectset formed from the same resource and the named relation.
-- A fact-to-subjectset reads the subjects the facts bind to the subjectset formed from the same resource and the factset. For each subject that is a resource member or a subjectset, it takes the closure of the subjectset formed from that subject's resource and the computed relation. An identity has no resource and is skipped.
+- A fact-to-subjectset reads the subjects the facts bind to the subjectset formed from the same resource and the factset. For each subject that is a resource member or a subjectset, it takes the closure of the subjectset formed from that subject's resource and the followed relation. An identity has no resource and is skipped.
 
-A subjectset whose relation its namespace doesn't declare has an empty closure. A fact-to-subjectset reaches one when the namespace of a resource it follows lacks the computed relation.
+A subjectset whose relation its namespace doesn't declare has an empty closure. A fact-to-subjectset reaches one when the namespace of a resource it follows lacks the followed relation.
 
 ## Checks
 
@@ -225,7 +225,7 @@ A namespace is checked whole when it is declared, and is refused if any of the f
 
 - A relation is declared twice.
 - A rewrite nests more than 100 levels deep. A leaf is one level, a run of `|` or `&` is one level however many operands it has, and each `!` adds a level. Grouping parentheses nested more than 100 deep are also refused, before the tree is built.
-- A computed subjectset, or the factset of a fact-to-subjectset, names a relation the namespace doesn't declare. The computed relation of a fact-to-subjectset belongs to the namespace of each fact's subject, so it's checked against the subjects the factset accepts, as [Accepted subjects](#accepted-subjects) says.
+- A computed subjectset, or the factset of a fact-to-subjectset, names a relation the namespace doesn't declare. The followed relation of a fact-to-subjectset belongs to the namespace of each fact's subject, so it's checked against the subjects the factset accepts, as [Accepted subjects](#accepted-subjects) says.
 - A relation's accepted subjects break a rule in [Accepted subjects](#accepted-subjects).
 - Computed subjectsets form a cycle, such as `"viewer": "editor"` with `"editor": "viewer"`, or `"viewer": "owner ! viewer"`. A cycle through a fact-to-subjectset, such as folders inside folders, reads a fact at each step and is allowed.
 
@@ -251,7 +251,7 @@ An error that quotes the document quotes at most 64 bytes of it, cut at a charac
 
 The printer writes a document, in either form, that the parser reads back as an equal namespace. Sungma stores the JSON form, and Author, Sungma's UI, shows Sungma schema language.
 
-- A relation that accepts no facts prints as its expression in JSON, `"name": "expression"`, and in TOML as a table of its own with `rewrite` alone, so every relation reads the same way.
+- A computed relation prints as its expression in JSON, `"name": "expression"`, and in TOML as a table of its own with `rewrite` alone, so every relation reads the same way.
 - A relation that accepts subjects prints in the accepted-subjects form, `"name": { "rewrite": "expression", "subjects": [...] }` in JSON, and in TOML as a table of its own, `[namespace.name]` with `rewrite = "expression"` and `subjects = [...]` on their own lines. `rewrite` is left out when it is `this`, and subjects print sorted, comparing bytes. In TOML, every relation is its own table, and the namespace's header stands alone above them.
 - A namespace without relations prints as `"name": {}` in JSON and as its header alone in TOML. A dotted namespace name prints quoted in TOML.
 - Operators print with a space on each side, and a fact-to-subjectset prints as `(factset, computed)`.
@@ -327,7 +327,7 @@ The cases each class covers, at minimum.
 
 1. A relation declared twice, a computed subjectset or factset the namespace doesn't declare, and a cycle of computed subjectsets are refused, including a relation that excludes itself.
 2. A cycle through a fact-to-subjectset is allowed, and so are relations that share a target.
-3. The computed relation of a fact-to-subjectset is refused when a namespace its factset accepts doesn't declare it.
+3. The followed relation of a fact-to-subjectset is refused when a namespace its factset accepts doesn't declare it.
 4. A dangling target is reported once for each relation that names it.
 5. Relations that reach each other are one cycle, reported at the relation where the check meets the cycle first, with a path back to that relation.
 6. A rewrite tree may be 100 levels deep and no deeper, whether the extra level is under a run, an exclusion's base or its excluded side.

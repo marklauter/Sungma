@@ -88,13 +88,13 @@ namespace: namespace
   auditor: identity, group#member = this | (parent, auditor)
   access_reader = admin | auditor
 
-// Each relation: who writes and reads the facts under it
+// Each relation: the closures that write and read its facts
 namespace: relation
   parent: namespace
   writer: identity, group#member = this | (parent, fact_writer)
   reader: identity, group#member = this | writer | (parent, fact_reader)
 
-// Each group: who owns it and who is in it
+// Each group: the closures of its owners and members
 namespace: group
   parent: root
   owner: identity, group#member = this | (parent, admin)
@@ -125,7 +125,7 @@ flowchart LR
   group -. "owner, member" .-> group
 ```
 
-Each `access_reader` accepts no facts. It names who reads the facts on a resource, and the endpoints that list them guard with it:
+`access_reader` relations are computed subjectsets. On a resource, the closure is the set of subjects that may read the resource's facts, and the endpoints that list those facts guard with it:
 
 - On `sungma.root`, the auditors. Every admin is an auditor, so admins and owners read the facts on `sungma.root:sungma` too.
 - On `sungma.namespace`, the namespace's admins, owners included, its auditors, and the deployment's auditors. It covers the facts on each `sungma.relation:{N}/{R}` too.
