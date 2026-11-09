@@ -34,6 +34,9 @@ pub enum FactWriteServiceError {
     /// its subjectset subject's relation.
     #[error("'{0}' names a relation the latest namespace version doesn't declare")]
     Undeclared(FactName),
+    /// None of the constraints of the fact's relation admits its subject.
+    #[error("'{0}' has a subject its relation's constraints don't admit")]
+    Unsatisfied(FactName),
     /// More facts than one write holds; the caller splits them.
     #[error("a write of {rows} rows is more than one write holds, {most}")]
     TooLarge { rows: usize, most: usize },
@@ -85,22 +88,25 @@ where
             writes.push(FactWrite::Insert(self.fact(name).await?));
         }
         // The additions follow the retirements, in the caller's order.
-        let added = |fact: &Fact| {
+        let added = |fact: &Fact, refusal: fn(FactName) -> FactWriteServiceError| {
             let at = writes[retire.len()..]
                 .iter()
-                .position(|write| matches!(write, FactWrite::Insert(f) if f == fact))?;
-            add.get(at)
+                .position(|write| matches!(write, FactWrite::Insert(f) if f == fact));
+            match at.and_then(|at| add.get(at)) {
+                Some(name) => refusal(name.clone()),
+                None => FactWriteServiceError::Store(StoreError(format!(
+                    "the store refused a fact it wasn't given to add: {fact:?}"
+                ))),
+            }
         };
         self.facts
             .write(&writes)
             .await
             .map_err(|error| match error {
-                FactWriteError::Undeclared(fact) => match added(&fact) {
-                    Some(name) => FactWriteServiceError::Undeclared(name.clone()),
-                    None => FactWriteServiceError::Store(StoreError(format!(
-                        "the store refused a fact it wasn't given to add: {fact:?}"
-                    ))),
-                },
+                FactWriteError::Undeclared(fact) => added(&fact, FactWriteServiceError::Undeclared),
+                FactWriteError::Unsatisfied(fact) => {
+                    added(&fact, FactWriteServiceError::Unsatisfied)
+                }
                 FactWriteError::TooLarge { rows, most } => {
                     FactWriteServiceError::TooLarge { rows, most }
                 }
@@ -157,7 +163,7 @@ where
     pub async fn write(
         &self,
         name: &NamespaceName,
-        write: NamespaceWrite<RelationName>,
+        write: NamespaceWrite<RelationName, NamespaceName>,
     ) -> Result<Revision, NamespaceWriteServiceError> {
         let (id, write) = match write {
             NamespaceWrite::Retire { based_on } => {
@@ -195,21 +201,28 @@ where
         ))
     }
 
-    /// The namespace with each relation name interned.
+    /// The namespace with each relation name, and each namespace name its
+    /// constraints name, interned.
     async fn intern(
         &self,
-        namespace: &Namespace<RelationName>,
+        namespace: &Namespace<RelationName, NamespaceName>,
     ) -> Result<Namespace, NamespaceWriteServiceError> {
-        let mut ids = HashMap::new();
+        let mut relations = HashMap::new();
         for name in namespace.names() {
             let id = self.interner.intern(Pool::Relations, name.as_str()).await?;
-            ids.insert(name.clone(), RelationId(id));
+            relations.insert(name.clone(), RelationId(id));
         }
-        namespace.try_map(|name| {
-            ids.get(name).copied().ok_or_else(|| {
-                InternError::Store(StoreError(format!("relation '{name}' wasn't interned"))).into()
-            })
-        })
+        let mut namespaces = HashMap::new();
+        for name in namespace.namespaces() {
+            namespaces.insert(name.clone(), self.namespace_id(name).await?);
+        }
+        let missing = |what: &str, name: &dyn std::fmt::Display| {
+            InternError::Store(StoreError(format!("{what} '{name}' wasn't interned"))).into()
+        };
+        namespace.try_map(
+            |name| (relations.get(name).copied()).ok_or_else(|| missing("relation", name)),
+            |name| (namespaces.get(name).copied()).ok_or_else(|| missing("namespace", name)),
+        )
     }
 }
 
@@ -233,7 +246,7 @@ pub enum SeedError {
 pub async fn seed<I, W>(
     interner: &I,
     writer: &W,
-    namespaces: Vec<(NamespaceName, Namespace<RelationName>)>,
+    namespaces: Vec<(NamespaceName, Namespace<RelationName, NamespaceName>)>,
     facts: &[FactName],
 ) -> Result<(), SeedError>
 where

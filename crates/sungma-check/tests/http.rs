@@ -27,9 +27,9 @@ use sungma_table::{
 use tower::ServiceExt;
 
 const NAMESPACES: [&str; 3] = [
-    include_str!("../../sungma/tests/fixtures/namespaces/file.json"),
-    include_str!("../../sungma/tests/fixtures/namespaces/folder.json"),
     include_str!("../../sungma/tests/fixtures/namespaces/group.json"),
+    include_str!("../../sungma/tests/fixtures/namespaces/folder.json"),
+    include_str!("../../sungma/tests/fixtures/namespaces/file.json"),
 ];
 const FACTS: &str = include_str!("../../sungma/tests/fixtures/docs.facts.json");
 
@@ -313,7 +313,7 @@ async fn a_check_past_the_depth_limit_is_a_fault() {
                 "subject": { "namespace": "group", "resource": format!("g{to}"), "relation": "member" } })
     };
     let chain: Vec<Value> = (0..=MAX_DEPTH).map(|n| link(n, n + 1)).collect();
-    let group = r#"{ "group": { "member": "this" } }"#;
+    let group = r#"{ "group": { "member": { "constraints": ["group#member", "identity"] } } }"#;
     let world = World::load(&[group], &Value::from(chain).to_string())
         .await
         .unwrap();

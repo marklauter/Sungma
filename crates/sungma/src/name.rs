@@ -70,7 +70,7 @@ pub const MAX_IDENTITY_BYTES: usize = 512;
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct NamespaceName(Arc<str>);
 
-/// One name, never `this` in any casing.
+/// One name, never `this`, `namespace` or `theory` in any casing.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct RelationName(Arc<str>);
 
@@ -184,9 +184,12 @@ fn is_name(text: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// `this` in any casing.
+/// `this`, the keyword, and `namespace` and `theory`, the headers of
+/// Sungma schema language, in any casing.
 fn is_reserved(name: &str) -> bool {
-    name.eq_ignore_ascii_case("this")
+    ["this", "namespace", "theory"]
+        .iter()
+        .any(|reserved| name.eq_ignore_ascii_case(reserved))
 }
 
 /// The most an error writes of a caller's text, escapes and cut mark

@@ -20,7 +20,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
     for (store, app) in stores().await {
         let (status, created) = write(
             &app,
-            json!({ "create": { "file": { "viewer": "owner", "owner": "this" } } }),
+            json!({ "create": { "file": { "viewer": "owner", "owner": { "constraints": ["identity"] } } } }),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{store}: {created}");
@@ -30,7 +30,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
         assert_eq!(status, StatusCode::OK, "{store}: {reply}");
         assert_eq!(
             reply["document"],
-            json!({ "file": { "owner": "this", "viewer": "owner" } }),
+            json!({ "file": { "owner": { "constraints": ["identity"] }, "viewer": "owner" } }),
             "{store}"
         );
         assert_eq!(reply["version"], v1, "{store}");
@@ -38,7 +38,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
 
         let (status, versioned) = write(
             &app,
-            json!({ "new_version": { "file": { "owner": "this" } }, "based_on": v1 }),
+            json!({ "new_version": { "file": { "owner": { "constraints": ["identity"] } } }, "based_on": v1 }),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{store}: {versioned}");
@@ -46,7 +46,10 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
         assert!(v2["revision"].as_u64() > v1["revision"].as_u64(), "{store}");
 
         let (_, reply) = read(&app, json!({ "namespace": "file" })).await;
-        assert_eq!(reply["document"], json!({ "file": { "owner": "this" } }));
+        assert_eq!(
+            reply["document"],
+            json!({ "file": { "owner": { "constraints": ["identity"] } } })
+        );
         assert_eq!(reply["version"], v2, "{store}");
 
         // A read at an earlier zookie still reads at the latest revision.
@@ -69,11 +72,15 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
 #[tokio::test]
 async fn a_write_not_based_on_the_latest_version_is_a_conflict() {
     for (store, app) in stores().await {
-        let (_, created) = write(&app, json!({ "create": { "file": { "owner": "this" } } })).await;
+        let (_, created) = write(
+            &app,
+            json!({ "create": { "file": { "owner": { "constraints": ["identity"] } } } }),
+        )
+        .await;
         let v1 = created["zookie"].clone();
         let (_, versioned) = write(
             &app,
-            json!({ "new_version": { "file": { "owner": "this", "viewer": "owner" } }, "based_on": v1 }),
+            json!({ "new_version": { "file": { "owner": { "constraints": ["identity"] }, "viewer": "owner" } }, "based_on": v1 }),
         )
         .await;
         let v2 = versioned["zookie"].clone();
@@ -122,7 +129,7 @@ async fn a_refused_document_lists_every_problem() {
     for (store, app) in stores().await {
         let (status, reply) = write(
             &app,
-            json!({ "create": { "file": { "viewer": "editor", "owner": "this", "this": "this" } } }),
+            json!({ "create": { "file": { "viewer": "editor", "owner": { "constraints": ["identity"] }, "this": { "constraints": ["identity"] } } } }),
         )
         .await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{store}: {reply}");
@@ -165,5 +172,36 @@ async fn a_body_of_no_known_shape_is_malformed() {
         let body = r#"{"create":{"file":{}}}"#;
         let (status, _) = post_raw(&app, "/namespaces/write", body, None).await;
         assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE, "{store}");
+    }
+}
+
+/// A version naming a relation another namespace doesn't declare is
+/// refused as unprocessable, naming the problem, and so is one naming more
+/// namespaces than one write checks, as too large.
+#[tokio::test]
+async fn a_version_whose_references_fail_is_refused() {
+    for (store, app) in stores().await {
+        let (status, reply) = write(
+            &app,
+            json!({ "create": { "file": { "owner": { "constraints": ["group#member"] } } } }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{store}: {reply}");
+        let error = reply["error"].as_str().unwrap();
+        assert!(error.contains("'group#member'"), "{store}: {error}");
+
+        let constraints: Vec<_> = (0..32).map(|i| format!("n{i}")).collect();
+        let relations: serde_json::Map<String, Value> = (0..4)
+            .map(|r| (format!("r{r}"), json!({ "constraints": constraints })))
+            .collect();
+        let mut relations = relations;
+        let more: Vec<_> = (32..64).map(|i| format!("n{i}")).collect();
+        relations.insert("s".to_owned(), json!({ "constraints": more }));
+        let more: Vec<_> = (64..96).map(|i| format!("n{i}")).collect();
+        relations.insert("t".to_owned(), json!({ "constraints": more }));
+        let more: Vec<_> = (96..128).map(|i| format!("n{i}")).collect();
+        relations.insert("u".to_owned(), json!({ "constraints": more }));
+        let (status, reply) = write(&app, json!({ "create": { "wide": relations } })).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{store}: {reply}");
     }
 }

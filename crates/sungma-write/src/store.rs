@@ -15,7 +15,7 @@ use thiserror::Error;
 use sungma::{
     graph::Fact,
     id::{NamespaceId, RelationId},
-    namespace::Namespace,
+    namespace::{Namespace, Problem},
     revision::Revision,
     store::StoreError,
 };
@@ -37,6 +37,10 @@ pub enum FactWriteError {
     /// the subject's relation. The fact would never count.
     #[error("the fact names a relation its namespace doesn't declare")]
     Undeclared(Fact),
+    /// None of the constraints of the fact's relation, in the latest
+    /// namespace version, admits the fact's subject.
+    #[error("the fact's subject isn't one its relation's constraints admit")]
+    Unsatisfied(Fact),
     /// The write takes more rows than one write holds, so the caller
     /// splits it.
     #[error("a write of {rows} rows is more than one write holds, {most}")]
@@ -58,7 +62,8 @@ pub enum FactWriteError {
 /// at R sees that write and every write acknowledged before it began.
 ///
 /// An insert is refused unless the latest namespace versions declare the
-/// fact's relation and, for a subjectset subject, the subject's relation.
+/// fact's relation and, for a subjectset subject, the subject's relation,
+/// and one of the fact's relation's constraints admits its subject.
 /// Inserting a fact whose stored span was written before its relation's
 /// epoch closes that span and opens a new one, so a grant asserted again
 /// after its relation comes back counts. [`crate::fact`] has both rules,
@@ -77,16 +82,16 @@ pub trait FactWriter {
 /// A write that follows a version names it by its revision, the version the
 /// caller read, as an etag names what a write expects to replace.
 ///
-/// Generic over how relations are named, as [`Namespace`] is: a store
-/// writes interned ids, and a caller names its relations.
+/// Generic over how relations and namespaces are named, as [`Namespace`]
+/// is: a store writes interned ids, and a caller names them.
 #[derive(Debug)]
-pub enum NamespaceWrite<R = RelationId> {
+pub enum NamespaceWrite<R = RelationId, N = NamespaceId> {
     /// Stores the first version of a namespace that has no latest version.
-    Create(Namespace<R>),
+    Create(Namespace<R, N>),
     /// Stores the next version, closing the latest version's span.
     NewVersion {
         based_on: Revision,
-        namespace: Namespace<R>,
+        namespace: Namespace<R, N>,
     },
     /// Closes the latest version's span and stores no new version.
     Retire { based_on: Revision },
@@ -102,6 +107,15 @@ pub enum NamespaceWriteError {
     /// A retirement of a namespace with no latest version.
     #[error("the namespace has no latest version to retire")]
     NothingToRetire,
+    /// The version names a relation another namespace's latest version
+    /// doesn't declare, through a constraint `namespace#relation` or the
+    /// relation a fact-to-subjectset follows. Each problem carries names.
+    #[error("{}", .0.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
+    References(Vec<Problem>),
+    /// The write takes more rows than one write holds: a version that names
+    /// more namespaces than one write can check.
+    #[error("a write of {rows} rows is more than one write holds, {most}")]
+    TooLarge { rows: usize, most: usize },
     /// The clock can't give a revision it trusts.
     #[error(transparent)]
     Clock(#[from] ClockFault),

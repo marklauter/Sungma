@@ -20,7 +20,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
     for (store, app) in stores().await {
         let (status, created) = write(
             &app,
-            json!({ "create": { "file": { "viewer": "owner", "owner": "this" } } }),
+            json!({ "create": { "file": { "viewer": "owner", "owner": { "constraints": ["identity"] } } } }),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{store}: {created}");
@@ -30,7 +30,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
         assert_eq!(status, StatusCode::OK, "{store}: {reply}");
         assert_eq!(
             reply["document"],
-            json!({ "file": { "owner": "this", "viewer": "owner" } }),
+            json!({ "file": { "owner": { "constraints": ["identity"] }, "viewer": "owner" } }),
             "{store}"
         );
         assert_eq!(reply["version"], v1, "{store}");
@@ -38,7 +38,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
 
         let (status, versioned) = write(
             &app,
-            json!({ "new_version": { "file": { "owner": "this" } }, "based_on": v1 }),
+            json!({ "new_version": { "file": { "owner": { "constraints": ["identity"] } } }, "based_on": v1 }),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{store}: {versioned}");
@@ -46,7 +46,10 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
         assert!(v2["revision"].as_u64() > v1["revision"].as_u64(), "{store}");
 
         let (_, reply) = read(&app, json!({ "namespace": "file" })).await;
-        assert_eq!(reply["document"], json!({ "file": { "owner": "this" } }));
+        assert_eq!(
+            reply["document"],
+            json!({ "file": { "owner": { "constraints": ["identity"] } } })
+        );
         assert_eq!(reply["version"], v2, "{store}");
 
         // A read at an earlier zookie still reads at the latest revision.

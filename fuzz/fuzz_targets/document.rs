@@ -22,7 +22,11 @@ fuzz_target!(|data: &[u8]| {
         relations.sort_by_key(|(name, _)| *name);
         relations
             .into_iter()
-            .map(|(name, rewrite)| (name.clone(), rewrite.clone()))
+            .map(|(name, rewrite)| {
+                let mut constraints = document.relations.constraints(name).to_vec();
+                constraints.sort();
+                (name.clone(), rewrite.clone(), constraints)
+            })
             .collect::<Vec<_>>()
     };
     assert_eq!(again.namespace, parsed.namespace);

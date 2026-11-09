@@ -1,18 +1,18 @@
 //! A node on the memory table, with the helpers tests reach for: seeding
-//! documents, declaring a relation from a rewrite written with names, and
-//! looking names up.
+//! documents, declaring a relation from a rewrite and constraints written
+//! with names, and looking names up.
 
 use std::sync::Arc;
 
 use sungma::{
     id::{NamespaceId, RelationId},
-    namespace::{Namespace, NamespaceError},
+    namespace::{Constraint, Namespace, NamespaceError},
     revision::Revision,
     rewrite::Rewrite,
     version::Version,
 };
 use sungma_check::store::{FactReader, NamespaceReader};
-use sungma_lang::fact;
+use sungma_lang::{fact, namespace::constraint};
 use sungma_names::store::Interner;
 use sungma_names::store::Pool;
 use sungma_table::memory::{MemorySequence, MemoryTable};
@@ -97,9 +97,11 @@ impl World {
     }
 
     /// Declares `relation` in `namespace` with a rewrite that names its
-    /// relations, keeping the namespace's other relations, as a new
-    /// version. The namespace is checked whole, and refused with its first
-    /// problem, which names relations by id.
+    /// relations and constraints as a document writes them, keeping the
+    /// namespace's other relations, as a new version. The namespace is
+    /// checked whole, and refused with its first problem, which names
+    /// relations by id. A constraint that isn't one panics, as a test's
+    /// mistake.
     ///
     /// Each call stores a new version, so a relation it adds gets the
     /// version's revision as its epoch, and facts seeded under it before
@@ -109,6 +111,7 @@ impl World {
         namespace: &str,
         relation: &str,
         rewrite: Rewrite<&str>,
+        constraints: &[&str],
     ) -> Result<(), NamespaceError> {
         let namespace = NamespaceId(self.intern(Pool::Namespaces, namespace).await);
         let relation = RelationId(self.intern(Pool::Relations, relation).await);
@@ -124,14 +127,55 @@ impl World {
                 .map(|(_, id)| *id)
                 .unwrap_or(RelationId(u32::MAX))
         });
+        let mut interned = Vec::new();
+        for text in constraints {
+            interned.push(match constraint(text).expect("a constraint") {
+                Constraint::Identity => Constraint::Identity,
+                Constraint::Resource(name) => Constraint::Resource(NamespaceId(
+                    self.intern(Pool::Namespaces, name.as_str()).await,
+                )),
+                Constraint::Subjectset(name, set) => Constraint::Subjectset(
+                    NamespaceId(self.intern(Pool::Namespaces, name.as_str()).await),
+                    RelationId(self.intern(Pool::Relations, set.as_str()).await),
+                ),
+            });
+        }
+        self.redeclare(namespace, relation, Some((rewrite, interned)))
+            .await
+    }
+
+    /// Writes a version of `namespace` that no longer declares `relation`,
+    /// keeping its other relations. A namespace a fact-to-subjectset was
+    /// checked against can drop the relation it follows this way.
+    pub async fn undeclare(&self, namespace: &str, relation: &str) -> Result<(), NamespaceError> {
+        let namespace = NamespaceId(self.intern(Pool::Namespaces, namespace).await);
+        let relation = RelationId(self.intern(Pool::Relations, relation).await);
+        self.redeclare(namespace, relation, None).await
+    }
+
+    /// Writes `namespace`'s next version: its relations but `relation`,
+    /// then `relation` as `declared`, when it's given.
+    async fn redeclare(
+        &self,
+        namespace: NamespaceId,
+        relation: RelationId,
+        declared: Option<(Rewrite, Vec<Constraint>)>,
+    ) -> Result<(), NamespaceError> {
         let current = self.latest(namespace).await;
         let mut relations: Vec<_> = current
             .iter()
-            .flat_map(|current| current.namespace().relations())
-            .filter(|(declared, _)| **declared != relation)
-            .map(|(declared, rewrite)| (*declared, rewrite.clone()))
+            .flat_map(|current| {
+                let declared = current.namespace();
+                declared.relations().map(move |(relation, rewrite)| {
+                    let constraints = declared.constraints(relation).to_vec();
+                    (*relation, rewrite.clone(), constraints)
+                })
+            })
+            .filter(|(declared, ..)| *declared != relation)
             .collect();
-        relations.push((relation, rewrite));
+        if let Some((rewrite, constraints)) = declared {
+            relations.push((relation, rewrite, constraints));
+        }
         let checked = Namespace::new(relations).map_err(|mut problems| problems.remove(0).error)?;
         let write = match current {
             Some(current) => NamespaceWrite::NewVersion {

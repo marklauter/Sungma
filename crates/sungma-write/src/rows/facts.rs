@@ -124,13 +124,17 @@ where
                 namespaces::latest(&self.reader, namespace, strong).await?,
             ));
         }
-        let epochs = |namespace: NamespaceId| {
+        let entry = |namespace: NamespaceId| {
             latest
                 .iter()
                 .find(|(id, _)| *id == namespace)
-                .and_then(|(_, entry)| entry.as_ref()?.epochs())
+                .and_then(|(_, entry)| entry.as_ref())
         };
-        check_inserts(writes, epochs)?;
+        let epochs = |namespace| entry(namespace)?.epochs();
+        check_inserts(writes, |namespace| {
+            let entry = entry(namespace)?;
+            Some((entry.epochs()?, entry.constraints()?))
+        })?;
         let mut changes = Vec::new();
         for (fact, inserts) in grouped(writes) {
             let seen =

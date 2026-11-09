@@ -15,7 +15,7 @@ use sungma_table::{
 };
 use sungma_write::service::NamespaceWriteServiceError;
 
-const FILE: &str = r#"{ "file": { "owner": "this", "viewer": "owner" } }"#;
+const FILE: &str = r#"{ "file": { "owner": { "constraints": ["identity"] }, "viewer": "owner" } }"#;
 
 /// A namespace whose names find no ids left is refused, and stores nothing.
 #[tokio::test]

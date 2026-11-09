@@ -9,7 +9,12 @@ use std::{collections::HashMap, sync::Arc};
 
 use thiserror::Error;
 
-use crate::{id::RelationId, namespace::Namespace, revision::Revision};
+use crate::{
+    graph::Subject,
+    id::RelationId,
+    namespace::{Constraint, Namespace},
+    revision::Revision,
+};
 
 /// The epoch of each relation a namespace version declares: the revision
 /// it was last declared at. A fact counts only when its relation has an
@@ -61,6 +66,54 @@ impl Epochs {
     /// Each declared relation and its epoch, in no order.
     pub fn iter(&self) -> impl Iterator<Item = (RelationId, Revision)> + '_ {
         self.0.iter().map(|(relation, epoch)| (*relation, *epoch))
+    }
+}
+
+/// The constraints of each relation a namespace version declares that has
+/// any, as a store keeps them beside its epochs, so a fact write can judge a
+/// fact's subject without reading the version's document. Order carries no
+/// meaning, so each relation's are kept sorted, and two sets of the same
+/// constraints are equal.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct Constraints(HashMap<RelationId, Vec<Constraint>>);
+
+impl Constraints {
+    pub fn new(constraints: HashMap<RelationId, Vec<Constraint>>) -> Self {
+        Self(
+            constraints
+                .into_iter()
+                .map(|(relation, mut constraints)| {
+                    constraints.sort();
+                    (relation, constraints)
+                })
+                .collect(),
+        )
+    }
+
+    /// The constraints of each relation `namespace` declares that has any.
+    pub fn of(namespace: &Namespace) -> Self {
+        Self::new(
+            namespace
+                .relations()
+                .map(|(relation, _)| (*relation, namespace.constraints(relation).to_vec()))
+                .filter(|(_, constraints)| !constraints.is_empty())
+                .collect(),
+        )
+    }
+
+    /// Whether a fact under `relation` may bind `subject`: one of the
+    /// relation's constraints admits it. A relation with none admits nothing.
+    pub fn admits(&self, relation: RelationId, subject: &Subject) -> bool {
+        self.0
+            .get(&relation)
+            .is_some_and(|constraints| constraints.iter().any(|c| c.admits(subject)))
+    }
+
+    /// Each relation with constraints and its constraints, in no order.
+    pub fn iter(&self) -> impl Iterator<Item = (RelationId, &[Constraint])> + '_ {
+        self.0
+            .iter()
+            .map(|(relation, constraints)| (*relation, constraints.as_slice()))
     }
 }
 

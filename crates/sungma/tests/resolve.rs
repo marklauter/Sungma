@@ -4,7 +4,7 @@ use sungma::{
     graph::Fact,
     id::{NamespaceId, RelationId},
     name::{FactName, NamespaceName, RelationName, SubjectName},
-    namespace::Namespace,
+    namespace::{Constraint, Namespace},
     rewrite::Rewrite,
 };
 use sungma_names::store::NameWriter;
@@ -132,9 +132,17 @@ async fn a_namespace_gets_its_relation_names_back() {
     let world = world().await;
     let dictionary = world.names();
     let named = |name: &str| name.parse::<RelationName>().unwrap();
+    let folder = "folder".parse::<NamespaceName>().unwrap();
     let namespace = Namespace::new(vec![
-        (named("owner"), Rewrite::This),
-        (named("parent"), Rewrite::This),
+        (named("owner"), Rewrite::This, vec![Constraint::Identity]),
+        (
+            named("parent"),
+            Rewrite::This,
+            vec![
+                Constraint::Resource(folder.clone()),
+                Constraint::Subjectset(folder, named("owner")),
+            ],
+        ),
         (
             named("viewer"),
             Rewrite::Union(sungma::nonempty![
@@ -144,6 +152,7 @@ async fn a_namespace_gets_its_relation_names_back() {
                     computed: named("member"),
                 },
             ]),
+            vec![],
         ),
     ])
     .unwrap();
@@ -154,21 +163,38 @@ async fn a_namespace_gets_its_relation_names_back() {
             resolve::relation(dictionary, name).await.unwrap(),
         ));
     }
+    let mut namespace_ids = Vec::new();
+    for name in namespace.namespaces() {
+        namespace_ids.push((
+            name.clone(),
+            resolve::namespace(dictionary, name).await.unwrap(),
+        ));
+    }
     let interned = namespace
-        .map(|name| ids.iter().find(|(n, _)| n == name).unwrap().1)
+        .map(
+            |name| ids.iter().find(|(n, _)| n == name).unwrap().1,
+            |name| namespace_ids.iter().find(|(n, _)| n == name).unwrap().1,
+        )
         .unwrap();
     let back = resolve::namespace_names(dictionary, &interned)
         .await
         .unwrap();
-    let relations = |namespace: &Namespace<RelationName>| {
+    let relations = |namespace: &Namespace<RelationName, NamespaceName>| {
         namespace
             .relations()
-            .map(|(name, rewrite)| (name.clone(), rewrite.clone()))
+            .map(|(name, rewrite)| {
+                let constraints = namespace.constraints(name).to_vec();
+                (name.clone(), rewrite.clone(), constraints)
+            })
             .collect::<Vec<_>>()
     };
     assert_eq!(relations(&back), relations(&namespace));
     let resolved = resolve::namespace(dictionary, &"file".parse::<NamespaceName>().unwrap()).await;
     assert!(resolved.is_ok());
+}
+
+fn identities() -> Vec<Constraint<NamespaceName, RelationName>> {
+    vec![Constraint::Identity]
 }
 
 #[test]
@@ -187,10 +213,11 @@ fn a_namespace_names_each_relation_once_in_the_order_met() {
                 ])),
                 Box::new(Rewrite::Computed(named("banned"))),
             ),
+            vec![],
         ),
-        (named("owner"), Rewrite::This),
-        (named("parent"), Rewrite::This),
-        (named("banned"), Rewrite::This),
+        (named("owner"), Rewrite::This, identities()),
+        (named("parent"), Rewrite::This, identities()),
+        (named("banned"), Rewrite::This, identities()),
     ])
     .unwrap();
     let names: Vec<&str> = namespace.names().iter().map(|name| name.as_str()).collect();

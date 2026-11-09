@@ -25,9 +25,12 @@ use sungma_write::{
     store::{FactWrite, FactWriter, NamespaceWrite},
 };
 
-type Print = fn(&NamespaceName, &Namespace<RelationName>) -> Result<String, String>;
+type Print = fn(&NamespaceName, &Namespace<RelationName, NamespaceName>) -> Result<String, String>;
 
-fn print(name: &NamespaceName, relations: &Namespace<RelationName>) -> Result<String, String> {
+fn print(
+    name: &NamespaceName,
+    relations: &Namespace<RelationName, NamespaceName>,
+) -> Result<String, String> {
     namespace::print(name, relations).map_err(|error| error.to_string())
 }
 
@@ -59,7 +62,22 @@ impl World {
         ReadingDictionary(NameRows::new(self.table, Consistency::Eventual))
     }
 
+    /// Writes `name` declaring each of `relations` as `this`, taking
+    /// identities.
     async fn namespace(&self, name: &str, relations: &[&str], write: Write) -> Revision {
+        self.constrained(name, relations, &["identity"], write)
+            .await
+    }
+
+    /// Writes `name` declaring each of `relations` as `this`, with
+    /// `constraints` as a document writes them.
+    async fn constrained(
+        &self,
+        name: &str,
+        relations: &[&str],
+        constraints: &[&str],
+        write: Write,
+    ) -> Revision {
         let interner = LeasingInterner::new(
             NameRows::new(self.table, Consistency::Strong),
             NameRowWriter::new(self.table, self.table, self.sequence),
@@ -68,7 +86,13 @@ impl World {
         let relations = Namespace::new(
             relations
                 .iter()
-                .map(|relation| (relation.parse().unwrap(), Rewrite::This))
+                .map(|relation| {
+                    let constraints = constraints
+                        .iter()
+                        .map(|text| namespace::constraint(text).unwrap())
+                        .collect();
+                    (relation.parse().unwrap(), Rewrite::This, constraints)
+                })
                 .collect(),
         )
         .unwrap();
@@ -129,8 +153,11 @@ fn person(name: &str) -> SubjectName {
 #[tokio::test]
 async fn facts_read_back_in_subject_order_and_one_by_one() {
     let world = World::new();
-    world.namespace("file", &["owner"], Write::Create).await;
     world.namespace("group", &["member"], Write::Create).await;
+    let owners = ["identity", "group", "group#member"];
+    world
+        .constrained("file", &["owner"], &owners, Write::Create)
+        .await;
     let eng = SubjectName::Subjectset("group:eng#member".parse().unwrap());
     let member = SubjectName::Resource("group:eng".parse().unwrap());
     let written = world
@@ -204,7 +231,7 @@ async fn a_namespace_reads_as_its_stored_document() {
     assert_eq!(version.revision, created);
     assert_eq!(
         version.document,
-        "{\n  \"file\": {\n    \"owner\": \"this\",\n    \"viewer\": \"this\"\n  }\n}\n"
+        "{\n  \"file\": {\n    \"owner\": {\n      \"constraints\": [\"identity\"]\n    },\n    \"viewer\": {\n      \"constraints\": [\"identity\"]\n    }\n  }\n}\n"
     );
     world.namespace("file", &[], Write::Retire(created)).await;
     assert_eq!(service.read(&file, None).await.unwrap().version, None);

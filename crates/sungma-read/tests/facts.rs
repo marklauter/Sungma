@@ -12,9 +12,13 @@ use common::{post, post_raw, stores};
 async fn declare(app: &Router) -> Value {
     let mut zookie = Value::Null;
     for document in [
-        json!({ "file": { "owner": "this", "parent": "this", "viewer": "this | owner" } }),
-        json!({ "folder": { "viewer": "this" } }),
-        json!({ "group": { "member": "this" } }),
+        json!({ "group": { "member": { "constraints": ["identity"] } } }),
+        json!({ "folder": { "viewer": { "constraints": ["identity"] } } }),
+        json!({ "file": {
+            "owner": { "constraints": ["identity"] },
+            "parent": { "constraints": ["folder"] },
+            "viewer": { "rewrite": "this | owner", "constraints": ["group#member", "identity"] }
+        } }),
     ] {
         let (status, reply) = post(app, "/namespaces/write", json!({ "create": document })).await;
         assert_eq!(status, StatusCode::OK, "{reply}");
@@ -110,7 +114,7 @@ async fn a_read_counts_only_facts_their_namespace_declares() {
         let (_, created) = post(
             &app,
             "/namespaces/write",
-            json!({ "create": { "file": { "owner": "this", "banned": "this" } } }),
+            json!({ "create": { "file": { "owner": { "constraints": ["identity"] }, "banned": { "constraints": ["identity"] } } } }),
         )
         .await;
         let banned = |identity: &str| {
@@ -122,7 +126,7 @@ async fn a_read_counts_only_facts_their_namespace_declares() {
         let (_, dropped) = post(
             &app,
             "/namespaces/write",
-            json!({ "new_version": { "file": { "owner": "this" } }, "based_on": created["zookie"] }),
+            json!({ "new_version": { "file": { "owner": { "constraints": ["identity"] } } }, "based_on": created["zookie"] }),
         )
         .await;
         let (_, reply) = read(&app, set.clone()).await;
@@ -131,7 +135,7 @@ async fn a_read_counts_only_facts_their_namespace_declares() {
         post(
             &app,
             "/namespaces/write",
-            json!({ "new_version": { "file": { "owner": "this", "banned": "this" } },
+            json!({ "new_version": { "file": { "owner": { "constraints": ["identity"] }, "banned": { "constraints": ["identity"] } } },
                     "based_on": dropped["zookie"] }),
         )
         .await;

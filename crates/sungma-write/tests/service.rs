@@ -2,7 +2,7 @@
 
 use sungma::{
     name::{FactName, NamespaceName, RelationName, SubjectName},
-    namespace::Namespace,
+    namespace::{Constraint, Namespace, NamespaceError},
     revision::Revision,
     rewrite::Rewrite,
     store::StoreError,
@@ -19,11 +19,17 @@ use sungma_write::{
     store::{FactWrite, FactWriteError, FactWriter, NamespaceWrite, NamespaceWriteError},
 };
 
-fn relations(names: &[&str]) -> Namespace<RelationName> {
+fn relations(names: &[&str]) -> Namespace<RelationName, NamespaceName> {
     Namespace::new(
         names
             .iter()
-            .map(|name| (name.parse().unwrap(), Rewrite::This))
+            .map(|name| {
+                (
+                    name.parse().unwrap(),
+                    Rewrite::This,
+                    vec![Constraint::Identity],
+                )
+            })
             .collect(),
     )
     .unwrap()
@@ -100,6 +106,26 @@ async fn a_writer_that_fails_fails_the_write() {
         "{written:?}"
     );
     // A writer that refuses a fact it wasn't asked to add has failed.
+    fn unasked() -> sungma::graph::Fact {
+        sungma::graph::Fact {
+            subjectset: sungma::graph::Subjectset {
+                resource: sungma::graph::Resource {
+                    namespace: sungma::id::NamespaceId(99),
+                    id: "x".parse().unwrap(),
+                },
+                relation: sungma::id::RelationId(99),
+            },
+            subject: sungma::graph::Subject::Identity("x".parse().unwrap()),
+        }
+    }
+    let confused = Failing(|| FactWriteError::Unsatisfied(unasked()));
+    let written = FactWriteService::new(dictionary, &confused)
+        .write(&[owner("alice")], &[])
+        .await;
+    assert!(
+        matches!(written, Err(FactWriteServiceError::Store(_))),
+        "{written:?}"
+    );
     let confused = Failing(|| {
         FactWriteError::Undeclared(sungma::graph::Fact {
             subjectset: sungma::graph::Subjectset {
@@ -207,7 +233,7 @@ async fn a_new_version_and_a_retirement_follow_the_latest_version() {
     assert!(world.latest(id).await.is_none());
 }
 
-fn file() -> Vec<(NamespaceName, Namespace<RelationName>)> {
+fn file() -> Vec<(NamespaceName, Namespace<RelationName, NamespaceName>)> {
     vec![("file".parse().unwrap(), relations(&["owner"]))]
 }
 
@@ -271,4 +297,99 @@ async fn facts_the_namespaces_do_not_declare_are_refused() {
     let seeded = seed(node.interner(), node.writer(), file(), &[editor]).await;
     assert!(matches!(seeded, Err(SeedError::Fact(_))), "{seeded:?}");
     assert_eq!(world.head().await, Revision(1));
+}
+
+/// A fact whose subject its relation's constraints don't admit is refused,
+/// named as the caller named it.
+#[tokio::test]
+async fn a_fact_its_relation_does_not_admit_is_named_as_the_caller_named_it() {
+    let world = World::new();
+    declared(&world).await;
+    world.intern(Pool::Namespaces, "folder").await;
+    let folder = FactName {
+        subjectset: "file:readme#owner".parse().unwrap(),
+        subject: SubjectName::Resource("folder:root".parse().unwrap()),
+    };
+    let written = FactWriteService::new(world.names(), world.node().writer())
+        .write(&[owner("alice"), folder.clone()], &[])
+        .await;
+    assert!(
+        matches!(&written, Err(FactWriteServiceError::Unsatisfied(name)) if *name == folder),
+        "{written:?}"
+    );
+    assert_eq!(
+        written.unwrap_err().to_string(),
+        "'file:readme#owner@folder:root' has a subject its relation's constraints don't admit"
+    );
+}
+
+/// A namespace's constraints are interned and stored with it, and one that
+/// names a relation another namespace doesn't declare is refused with its
+/// names.
+#[tokio::test]
+async fn constraints_are_interned_and_checked_against_other_namespaces() {
+    let world = World::new();
+    let service = NamespaceWriteService::new(world.node().interner(), world.node().writer());
+    let doc = |text: &str| sungma_lang::namespace::parse(text).unwrap().relations;
+    let refused = service
+        .write(
+            &"file".parse().unwrap(),
+            NamespaceWrite::Create(doc(
+                r#"{ "file": { "owner": { "constraints": ["group#member", "folder"] } } }"#,
+            )),
+        )
+        .await;
+    let Err(NamespaceWriteServiceError::Write(NamespaceWriteError::References(problems))) = refused
+    else {
+        panic!("expected refused references, got {refused:?}");
+    };
+    assert_eq!(
+        problems
+            .iter()
+            .map(|problem| &problem.error)
+            .collect::<Vec<_>>(),
+        [&NamespaceError::UndeclaredConstraint {
+            relation: "owner".to_owned(),
+            constraint: "group#member".to_owned(),
+        }]
+    );
+    service
+        .write(
+            &"group".parse().unwrap(),
+            NamespaceWrite::Create(doc(
+                r#"{ "group": { "member": { "constraints": ["group#member", "identity"] } } }"#,
+            )),
+        )
+        .await
+        .unwrap();
+    service
+        .write(
+            &"file".parse().unwrap(),
+            NamespaceWrite::Create(doc(
+                r#"{ "file": { "owner": { "constraints": ["group#member", "folder"] } } }"#,
+            )),
+        )
+        .await
+        .unwrap();
+    let folder = resolve::namespace(world.names(), &"folder".parse().unwrap()).await;
+    let folder = folder.expect("the constraint's namespace is interned");
+    let file = resolve::namespace(world.names(), &"file".parse().unwrap())
+        .await
+        .unwrap();
+    let owner = resolve::relation(world.names(), &"owner".parse().unwrap())
+        .await
+        .unwrap();
+    let version = world.latest(file).await.unwrap();
+    assert!(
+        version
+            .namespace()
+            .constraints(&owner)
+            .contains(&Constraint::Resource(folder))
+    );
+    let lookup = world
+        .names()
+        .lookup(Pool::Namespaces, "group")
+        .await
+        .unwrap();
+    assert!(lookup.is_some());
 }

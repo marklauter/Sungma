@@ -13,7 +13,7 @@ use sungma::{
     graph::{Fact, Resource, Subject, Subjectset},
     id::{NamespaceId, RelationId},
     name::{Identity, ResourceId},
-    namespace::Namespace,
+    namespace::{Constraint, Namespace},
     revision::Revision,
     rewrite::Rewrite::This,
 };
@@ -154,7 +154,7 @@ pub const OWNER: RelationId = RelationId(0);
 pub const OTHER: RelationId = RelationId(1);
 
 pub fn declaring(relation: RelationId) -> Namespace {
-    Namespace::new(vec![(relation, This)]).unwrap()
+    Namespace::new(vec![(relation, This, vec![Constraint::Identity])]).unwrap()
 }
 
 /// Interns `doc`, `owner` and `other`, and creates `doc` declaring `owner`.
