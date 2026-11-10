@@ -24,6 +24,8 @@
 "."
 "#"
 "group#member"
+".."
+"..group#member"
 "//"
 "\x0a"
 "\x0a  "

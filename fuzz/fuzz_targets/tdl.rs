@@ -44,14 +44,7 @@ fuzz_target!(|data: &[u8]| {
     let Ok(parsed) = tdl::parse(text) else {
         return;
     };
-    // Spaced out, a document near its limit can print past it, and a
-    // namespace in a theory can name one without a dot, which no document
-    // in a theory can write.
-    let printed = match print(&parsed) {
-        Ok(printed) => printed,
-        Err(PrintError::TooLarge | PrintError::Undotted { .. }) => return,
-        Err(error) => panic!("parsed namespaces print: {error}"),
-    };
+    let printed = print(&parsed).expect("parsed namespaces print");
     let again = tdl::parse(&printed).expect("printed namespaces parse");
     assert_eq!(declared(&again), declared(&parsed));
     assert_eq!(print(&again), Ok(printed));

@@ -6,7 +6,7 @@ namespace: file
   auditor<@identity>: this & editor
   viewer: (editor | (parent, viewer)) ! banned
   parent<@identity, folder, folder#owner>
-  banned<@identity, group#member>
+  banned<@identity, ..group#member>
 
 namespace: folder
   viewer<@identity>
@@ -14,4 +14,4 @@ namespace: folder
 
 theory: io
 namespace: x.y
-  r<drive.file#owner>
+  r<..drive.file#owner, ..group#member, file>
