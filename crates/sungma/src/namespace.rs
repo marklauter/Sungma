@@ -6,13 +6,13 @@
 //! every problem it finds:
 //!
 //! - a relation declared twice;
-//! - a rewrite tree deeper than [`MAX_REWRITE_DEPTH`];
+//! - a rewrite tree deeper than the depth limit, [`DEFAULT_REWRITE_DEPTH`]
+//!   unless [`Namespace::with_depth`] gives another;
 //! - a computed subjectset or factset naming a relation the namespace doesn't
 //!   declare;
 //! - a relation that reads `this` without constraints, or one with
 //!   constraints that doesn't read `this`;
-//! - more than [`MAX_CONSTRAINTS`] constraints on a relation, or one
-//!   constraint declared twice;
+//! - a constraint declared twice on one relation;
 //! - a cycle of computed subjectsets, such as `viewer: editor` with
 //!   `editor: viewer`, or `viewer: this ! viewer`. Relations that reach
 //!   each other, a strongly connected component, are one problem however
@@ -43,19 +43,18 @@ use crate::{
     rewrite::Rewrite,
 };
 
-/// How deeply rewrite operators may nest. A leaf is one level.
-pub const MAX_REWRITE_DEPTH: usize = 100;
+/// How deeply rewrite operators may nest unless a caller says otherwise. A
+/// leaf is one level.
+pub const DEFAULT_REWRITE_DEPTH: usize = 100;
 
 /// How many relations a cycle error names before it says how many more.
 pub const MAX_CYCLE_NAMES: usize = 8;
 
-/// How many constraints a relation declares at most.
-pub const MAX_CONSTRAINTS: usize = 32;
-
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum NamespaceError {
-    #[error("a rewrite tree deeper than {MAX_REWRITE_DEPTH} levels is refused")]
-    TooDeep,
+    /// A rewrite tree deeper than the limit it carries.
+    #[error("a rewrite tree deeper than {0} levels is refused")]
+    TooDeep(usize),
     #[error("relation '{0}' is declared more than once")]
     DuplicateRelation(String),
     #[error("relation '{relation}' references '{target}', which the namespace doesn't declare")]
@@ -68,8 +67,6 @@ pub enum NamespaceError {
     Unconstrained(String),
     #[error("relation '{0}' declares constraints and doesn't read 'this'")]
     ConstrainedComputed(String),
-    #[error("relation '{relation}' declares {count} constraints, more than {MAX_CONSTRAINTS}")]
-    TooManyConstraints { relation: String, count: usize },
     #[error("relation '{relation}' declares constraint '{constraint}' more than once")]
     DuplicateConstraint {
         relation: String,
@@ -118,7 +115,7 @@ pub struct Problem {
 /// namespaces and relations are named, as [`Namespace`] is.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Constraint<N = NamespaceId, R = RelationId> {
-    /// `identity`: an identity.
+    /// `@identity`: an identity.
     Identity,
     /// `namespace`: a resource member of the namespace, `namespace:id`.
     Resource(N),
@@ -170,11 +167,12 @@ impl Constraint {
     }
 }
 
-/// As a document writes it: `identity`, `namespace` or `namespace#relation`.
+/// As a document writes it: `@identity`, `namespace` or
+/// `namespace#relation`.
 impl<N: Display, R: Display> Display for Constraint<N, R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Constraint::Identity => f.write_str("identity"),
+            Constraint::Identity => f.write_str("@identity"),
             Constraint::Resource(namespace) => namespace.fmt(f),
             Constraint::Subjectset(namespace, relation) => write!(f, "{namespace}#{relation}"),
         }
@@ -221,12 +219,18 @@ where
     /// cycle's shortest path is searched only within its own component.
     /// Sorting the problems found adds `p log p` for `p` problems.
     pub fn new(relations: Vec<Declared<R, N>>) -> Result<Self, Vec<Problem>> {
+        Self::with_depth(relations, DEFAULT_REWRITE_DEPTH)
+    }
+
+    /// Like [`Namespace::new`], with rewrites nesting at most `depth`
+    /// levels.
+    pub fn with_depth(relations: Vec<Declared<R, N>>, depth: usize) -> Result<Self, Vec<Problem>> {
         // Each relation at its first declaration; a later one is a problem.
         let mut index = HashMap::new();
         for (at, (relation, ..)) in relations.iter().enumerate() {
             index.entry(relation.clone()).or_insert(at);
         }
-        let problems = problems(&relations, &index);
+        let problems = problems(&relations, &index, depth);
         if !problems.is_empty() {
             return Err(problems);
         }
@@ -477,10 +481,12 @@ fn once<A: Eq + Hash + Clone, B: Clone, E>(
 /// Every problem in a whole namespace, as the [module](self) describes, in
 /// declaration order. A relation's dangling targets are each reported once,
 /// and a cycle at the relation of its component the check meets first.
-/// `declared` holds each relation at its first declaration.
+/// `declared` holds each relation at its first declaration, and rewrites
+/// nest at most `depth` levels.
 fn problems<R: Eq + Hash + Display, N: Eq + Hash + Display>(
     relations: &[Declared<R, N>],
     declared: &HashMap<R, usize>,
+    depth: usize,
 ) -> Vec<Problem> {
     let mut problems = Vec::new();
     let mut problem = |at, error| problems.push(Problem { at, error });
@@ -494,7 +500,7 @@ fn problems<R: Eq + Hash + Display, N: Eq + Hash + Display>(
         for error in constraint_problems(relation, constraints) {
             problem(at, error);
         }
-        if let Err(error) = check_tree(rewrite, 1) {
+        if let Err(error) = check_tree(rewrite, 1, depth) {
             // A tree past the depth limit isn't walked further, so one built
             // in code, however deep, can't overflow the stack.
             problem(at, error);
@@ -554,18 +560,11 @@ fn problems<R: Eq + Hash + Display, N: Eq + Hash + Display>(
     problems
 }
 
-/// Refuses more than [`MAX_CONSTRAINTS`] constraints, and reports each
-/// constraint declared twice once. Past the limit, nothing more is checked.
+/// Reports each constraint declared twice once.
 fn constraint_problems<R: Eq + Hash + Display, N: Eq + Hash + Display>(
     relation: &R,
     constraints: &[Constraint<N, R>],
 ) -> Vec<NamespaceError> {
-    if constraints.len() > MAX_CONSTRAINTS {
-        return vec![NamespaceError::TooManyConstraints {
-            relation: relation.to_string(),
-            count: constraints.len(),
-        }];
-    }
     let mut seen = HashSet::new();
     let mut twice = HashSet::new();
     constraints
@@ -578,20 +577,20 @@ fn constraint_problems<R: Eq + Hash + Display, N: Eq + Hash + Display>(
         .collect()
 }
 
-/// Refuses nesting past [`MAX_REWRITE_DEPTH`].
+/// Refuses nesting past `depth`.
 /// `level` is the depth of `rewrite`, the root being 1.
-fn check_tree<R>(rewrite: &Rewrite<R>, level: usize) -> Result<(), NamespaceError> {
-    if level > MAX_REWRITE_DEPTH {
-        return Err(NamespaceError::TooDeep);
+fn check_tree<R>(rewrite: &Rewrite<R>, level: usize, depth: usize) -> Result<(), NamespaceError> {
+    if level > depth {
+        return Err(NamespaceError::TooDeep(depth));
     }
     match rewrite {
         Rewrite::This | Rewrite::Computed(_) | Rewrite::FactTo { .. } => Ok(()),
         Rewrite::Union(operands) | Rewrite::Intersection(operands) => operands
             .iter()
-            .try_for_each(|operand| check_tree(operand, level + 1)),
+            .try_for_each(|operand| check_tree(operand, level + 1, depth)),
         Rewrite::Exclusion(base, excluded) => {
-            check_tree(base, level + 1)?;
-            check_tree(excluded, level + 1)
+            check_tree(base, level + 1, depth)?;
+            check_tree(excluded, level + 1, depth)
         }
     }
 }
@@ -848,8 +847,8 @@ mod tests {
         let namespace = Namespace::new(vec![(0, This, vec![Constraint::Resource("a")])]).unwrap();
         let renamed = namespace.try_map(
             |relation| Ok(*relation),
-            |_| Err::<i32, _>(NamespaceError::TooDeep),
+            |_| Err::<i32, _>(NamespaceError::TooDeep(1)),
         );
-        assert_eq!(renamed.unwrap_err(), NamespaceError::TooDeep);
+        assert_eq!(renamed.unwrap_err(), NamespaceError::TooDeep(1));
     }
 }

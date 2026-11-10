@@ -190,7 +190,7 @@ where
 
 /// Refuses a version that names a relation another namespace doesn't
 /// declare, through a constraint `namespace#relation` or the relation a
-/// fact-to-subjectset follows, as `docs/specs/namespace-documents.md` says.
+/// fact-to-subjectset follows, as `docs/specs/theory-documents.md` says.
 /// `named` is the version with names, `ids` the same version with ids, and
 /// `referenced` the latest entry of each other namespace it's judged by. A
 /// namespace never written, or retired, declares nothing, so a reference

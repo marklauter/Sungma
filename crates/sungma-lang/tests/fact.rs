@@ -333,7 +333,7 @@ async fn declare_all(json: &str, world: &World) -> u64 {
         let kind = match (subject["namespace"].as_str(), subject["relation"].as_str()) {
             (Some(namespace), Some(relation)) => format!("{namespace}#{relation}"),
             (Some(namespace), None) => namespace.to_owned(),
-            _ => "identity".to_owned(),
+            _ => "@identity".to_owned(),
         };
         if let Some(constraints) = relations
             .get_mut(namespace)
@@ -367,18 +367,16 @@ async fn declare_all(json: &str, world: &World) -> u64 {
             world.intern(Pool::Namespaces, namespace).await;
             continue;
         }
-        let rules: serde_json::Map<String, Value> = names
-            .iter()
-            .map(|(name, constraints)| {
-                let constraints: Vec<_> = if constraints.is_empty() {
-                    vec!["identity".to_owned()]
-                } else {
-                    constraints.iter().cloned().collect()
-                };
-                ((*name).to_owned(), json!({ "constraints": constraints }))
-            })
-            .collect();
-        documents.push(json!({ namespace: rules }).to_string());
+        let mut document = format!("namespace: {namespace}\n");
+        for (name, constraints) in names {
+            let constraints: Vec<_> = if constraints.is_empty() {
+                vec!["@identity".to_owned()]
+            } else {
+                constraints.iter().cloned().collect()
+            };
+            document.push_str(&format!("  {name}<{}>\n", constraints.join(", ")));
+        }
+        documents.push(document);
     }
     let documents: Vec<&str> = documents.iter().map(String::as_str).collect();
     world.load_namespaces(&documents).await.unwrap();

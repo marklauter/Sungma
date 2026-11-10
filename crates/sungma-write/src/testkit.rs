@@ -27,7 +27,7 @@ use sungma_check::{
     store::NamespaceReader,
 };
 use sungma_clock::DevClock;
-use sungma_lang::namespace;
+use sungma_lang::tdl;
 use sungma_names::store::Pool;
 use sungma_names::{read::NameRows, store::NameWriter, write::NameRowWriter};
 use sungma_table::{
@@ -65,15 +65,15 @@ pub fn print(
     name: &NamespaceName,
     relations: &Namespace<RelationName, NamespaceName>,
 ) -> Result<String, String> {
-    namespace::print(name, relations).map_err(|error| error.to_string())
+    tdl::print(&[(name, relations)]).map_err(|error| error.to_string())
 }
 
 pub fn parse(
     document: &str,
 ) -> Result<(NamespaceName, Namespace<RelationName, NamespaceName>), String> {
-    namespace::parse(document)
+    tdl::parse_one(document)
         .map(|document| (document.namespace, document.relations))
-        .map_err(|errors| namespace::Refusal(errors).to_string())
+        .map_err(|errors| tdl::Refusal(errors).to_string())
 }
 
 /// The write and Check contexts over one table `E` and sequence `S`.

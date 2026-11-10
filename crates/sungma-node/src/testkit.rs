@@ -12,7 +12,7 @@ use sungma::{
     version::Version,
 };
 use sungma_check::store::{FactReader, NamespaceReader};
-use sungma_lang::{fact, namespace::constraint};
+use sungma_lang::{fact, tdl::constraint};
 use sungma_names::store::Interner;
 use sungma_names::store::Pool;
 use sungma_table::memory::{MemorySequence, MemoryTable};

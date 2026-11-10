@@ -1,6 +1,6 @@
 //! One node's contexts wired over one table: names and the interner,
 //! the writer, Check's reader, and the API's reads, sharing the table's
-//! table. The node prints and parses namespace documents with
+//! table. The node prints and parses namespaces in TDL with
 //! `sungma-lang` and injects both, so no context needs the document
 //! language. [`Node::memory`] runs it on the memory table, for tests and
 //! development.
@@ -18,7 +18,7 @@ use sungma::{
 };
 use sungma_check::rows::RowReader;
 use sungma_clock::{Clock, DevClock};
-use sungma_lang::{fact, namespace};
+use sungma_lang::{fact, tdl};
 use sungma_names::intern::LeasingInterner;
 use sungma_names::store::ReadingDictionary;
 use sungma_names::{read::NameRows, write::NameRowWriter};
@@ -50,22 +50,23 @@ fn print(
     name: &NamespaceName,
     relations: &Namespace<RelationName, NamespaceName>,
 ) -> Result<String, String> {
-    namespace::print(name, relations).map_err(|error| error.to_string())
+    tdl::print(&[(name, relations)]).map_err(|error| error.to_string())
 }
 
+/// A stored version's document, which declares one namespace.
 fn parse(
     document: &str,
 ) -> Result<(NamespaceName, Namespace<RelationName, NamespaceName>), String> {
-    namespace::parse(document)
+    tdl::parse_one(document)
         .map(|document| (document.namespace, document.relations))
-        .map_err(|errors| namespace::Refusal(errors).to_string())
+        .map_err(|errors| tdl::Refusal(errors).to_string())
 }
 
 /// Why seed documents didn't load.
 #[derive(Debug, Error)]
 pub enum SeedError {
     #[error(transparent)]
-    Refused(#[from] namespace::Refusal),
+    Refused(#[from] tdl::Refusal),
     #[error(transparent)]
     Namespace(#[from] NamespaceWriteServiceError),
     #[error(transparent)]
@@ -203,19 +204,20 @@ where
     S: Sequence + Send + Sync,
     C: Clock + Sync,
 {
-    /// Seeds the namespace documents and the fact document; see
-    /// [`service::seed`]. Every document is parsed before anything is
-    /// written.
-    pub async fn seed(&self, namespaces: &[&str], facts: &str) -> Result<(), SeedError> {
-        let documents = namespaces
-            .iter()
-            .map(|document| namespace::parse(document).map_err(namespace::Refusal))
-            .collect::<Result<Vec<_>, _>>()?;
+    /// Seeds the namespaces of the theory documents, in document order, and
+    /// the fact document; see [`service::seed`]. Every document is parsed
+    /// before anything is written.
+    pub async fn seed(&self, theories: &[&str], facts: &str) -> Result<(), SeedError> {
+        let mut namespaces = Vec::new();
+        for document in theories {
+            let documents = tdl::parse(document).map_err(tdl::Refusal)?;
+            namespaces.extend(
+                documents
+                    .into_iter()
+                    .map(|document| (document.namespace, document.relations)),
+            );
+        }
         let facts = fact::parse(facts)?;
-        let namespaces = documents
-            .into_iter()
-            .map(|document| (document.namespace, document.relations))
-            .collect();
         service::seed(&self.interner, &self.writer, namespaces, &facts).await?;
         Ok(())
     }

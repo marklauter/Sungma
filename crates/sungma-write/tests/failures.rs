@@ -92,11 +92,11 @@ fn requests() -> Vec<(&'static str, Value)> {
         ("/facts/write", json!({ "retire": [readme("alice")] })),
         (
             "/namespaces/write",
-            json!({ "create": { "file": { "owner": { "constraints": ["identity"] } } } }),
+            json!({ "create": "namespace: file\n  owner<@identity>\n" }),
         ),
         (
             "/namespaces/write",
-            json!({ "new_version": { "file": { "owner": { "constraints": ["identity"] } } }, "based_on": zookie }),
+            json!({ "new_version": "namespace: file\n  owner<@identity>\n", "based_on": zookie }),
         ),
         (
             "/namespaces/write",
@@ -138,7 +138,7 @@ async fn a_clock_that_fails_is_a_bad_gateway() {
     let (status, reply) = post(
         &app,
         "/namespaces/write",
-        json!({ "create": { "file": { "owner": { "constraints": ["identity"] } } } }),
+        json!({ "create": "namespace: file\n  owner<@identity>\n" }),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_GATEWAY, "{reply}");
@@ -171,7 +171,7 @@ async fn a_pool_with_no_ids_left_is_a_fault() {
     let (status, reply) = post(
         &app,
         "/namespaces/write",
-        json!({ "create": { "file": { "owner": { "constraints": ["identity"] } } } }),
+        json!({ "create": "namespace: file\n  owner<@identity>\n" }),
     )
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{reply}");

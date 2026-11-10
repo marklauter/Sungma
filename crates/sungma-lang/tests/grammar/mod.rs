@@ -1,6 +1,6 @@
-//! The rewrite grammar's cases, the oracle every form's tests share: each
-//! form parses every valid case to its tree and prints it canonically, and
-//! refuses every invalid case where it goes wrong.
+//! The rewrite grammar's cases, the oracle the TDL tests read: each valid
+//! case parses to its tree and prints canonically, and each invalid case is
+//! refused where it goes wrong.
 
 use sungma::{
     name::{MAX_RELATION_BYTES, RelationName},
@@ -183,8 +183,7 @@ const RELATION: &str = "a relation name";
 
 /// Expressions the grammar refuses, each with the column, counting
 /// characters from 1, where it goes wrong, what is found there, and what was
-/// expected. A form whose rewrites aren't followed by the end expects more
-/// than [`END`] where an expression could have ended.
+/// expected.
 pub fn invalid() -> Vec<(&'static str, usize, &'static str, &'static str)> {
     vec![
         ("   ", 4, "the end", TERM),
@@ -220,7 +219,9 @@ pub fn invalid() -> Vec<(&'static str, usize, &'static str, &'static str)> {
         ("a.b", 2, "'.'", END),
         ("1a", 1, "'1'", TERM),
         ("a#b", 2, "'#'", END),
-        ("a:b", 2, "':'", END),
+        ("a = b", 3, "'='", END),
+        ("a > b", 3, "'>'", END),
+        ("a @ b", 3, "'@'", END),
         ("a-b", 2, "'-'", END),
         ("a | b ; c", 7, "';'", END),
         ("a ~ b", 3, "'~'", END),

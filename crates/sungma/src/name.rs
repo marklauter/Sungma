@@ -13,7 +13,7 @@
 //! as `docs/specs/fact-documents.md` specifies.
 //!
 //! Namespace and relation names are [`NamespaceName`] and [`RelationName`], as
-//! `docs/specs/namespace-documents.md` specifies. Text from a caller becomes
+//! `docs/specs/theory-documents.md` specifies. Text from a caller becomes
 //! one through [`FromStr`] or [`TryFrom`], which refuse a name outside the
 //! grammar; only a trusted source, such as storage, uses `new_unchecked`.
 
@@ -184,8 +184,8 @@ fn is_name(text: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// `this`, the keyword, and `namespace` and `theory`, the headers of
-/// Sungma schema language, in any casing.
+/// `this`, the keyword, and `namespace` and `theory`, the keywords of TDL,
+/// in any casing.
 fn is_reserved(name: &str) -> bool {
     ["this", "namespace", "theory"]
         .iter()

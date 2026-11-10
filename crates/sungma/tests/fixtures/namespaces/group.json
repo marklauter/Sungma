@@ -1,7 +1,0 @@
-{
-  "group": {
-    "member": {
-      "constraints": ["group#member", "identity"]
-    }
-  }
-}

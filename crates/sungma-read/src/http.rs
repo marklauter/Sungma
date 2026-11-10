@@ -13,8 +13,8 @@
 //! read at.
 //!
 //! A namespace read, `{ "namespace": "file" }` with an optional `zookie`,
-//! gives the version's document, the zookie of the version as `version`,
-//! and the zookie it read at.
+//! gives the version's document, its theory document in TDL as a string,
+//! the zookie of the version as `version`, and the zookie it read at.
 //!
 //! Beyond the statuses every route shares, a zookie ahead of the latest
 //! revision is 400, a namespace read that finds no version is 404, and a
@@ -30,7 +30,7 @@ use axum::{
     routing::post,
 };
 use serde::{Deserialize, Deserializer, Serialize};
-use serde_json::{Value, value::RawValue};
+use serde_json::Value;
 use sungma::{
     name::{NamespaceName, RelationName, ResourceId, ResourceName, SubjectName, SubjectsetName},
     revision::Revision,
@@ -151,7 +151,7 @@ struct NamespacesBody {
 struct NamespacesReply {
     request_id: String,
     /// The stored document as it is.
-    document: Box<RawValue>,
+    document: String,
     version: Zookie,
     zookie: Zookie,
 }
@@ -185,20 +185,11 @@ where
         );
         return failure(StatusCode::NOT_FOUND, &request_id, error);
     };
-    // The store gives the text it stored; a store whose text isn't JSON
-    // has failed.
-    match RawValue::from_string(version.document) {
-        Ok(document) => Json(NamespacesReply {
-            request_id,
-            document,
-            version: version.revision.into(),
-            zookie: read.revision.into(),
-        })
-        .into_response(),
-        Err(error) => failure(
-            StatusCode::BAD_GATEWAY,
-            &request_id,
-            format!("the stored document isn't JSON: {error}"),
-        ),
-    }
+    Json(NamespacesReply {
+        request_id,
+        document: version.document,
+        version: version.revision.into(),
+        zookie: read.revision.into(),
+    })
+    .into_response()
 }

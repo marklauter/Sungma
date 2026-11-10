@@ -1,6 +1,6 @@
-//! Sungma's languages: namespace documents and fact JSON, read into the
-//! [`sungma`] model and, for namespaces, printed back.
+//! Sungma's languages: TDL, Theory Definition Language, for namespaces, and
+//! fact JSON, read into the [`sungma`] model and, for namespaces, printed
+//! back.
 
 pub mod fact;
-pub mod namespace;
-pub mod schema;
+pub mod tdl;

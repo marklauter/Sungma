@@ -3,9 +3,8 @@
 //! first, copies the newest entry. A version's row holds the printed
 //! document with names, the canonical form, the epoch of each relation it
 //! declares, keyed by relation id, and the constraints of each relation
-//! that has any, keyed by relation id, each written with ids as a document
-//! writes it with names: `identity`, `7` or `7#12`. A retirement's row is
-//! marked retired.
+//! that has any, keyed by relation id, each written with ids: `identity`,
+//! `7` or `7#12`. A retirement's row is marked retired.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -32,6 +31,8 @@ const REVISION: &str = "revision";
 const DOCUMENT: &str = "document";
 const EPOCHS: &str = "epochs";
 const CONSTRAINTS: &str = "constraints";
+/// An identity constraint in a row.
+const IDENTITY: &str = "identity";
 const RETIRED: &str = "retired";
 
 pub fn partition(namespace: NamespaceId) -> Vec<u8> {
@@ -110,7 +111,7 @@ impl Entry {
                     .map(|(relation, constraints)| {
                         let set = constraints
                             .iter()
-                            .map(|constraint| (constraint.to_string(), Value::Flag(true)))
+                            .map(|constraint| (row_constraint(constraint), Value::Flag(true)))
                             .collect();
                         (relation.0.to_string(), Value::Map(set))
                     })
@@ -166,6 +167,15 @@ impl Entry {
     }
 }
 
+/// A constraint as a row writes it with ids.
+fn row_constraint(constraint: &Constraint) -> String {
+    match constraint {
+        Constraint::Identity => IDENTITY.to_owned(),
+        Constraint::Resource(namespace) => namespace.0.to_string(),
+        Constraint::Subjectset(namespace, relation) => format!("{}#{}", namespace.0, relation.0),
+    }
+}
+
 /// A constraint as a row writes it with ids, refused when Sungma didn't
 /// write it.
 fn stored_constraint(text: &str) -> Result<Constraint, StoreError> {
@@ -174,7 +184,7 @@ fn stored_constraint(text: &str) -> Result<Constraint, StoreError> {
             .map_err(|_| StoreError(format!("'{text}' in a constraint isn't an id")))
     };
     Ok(match text.split_once('#') {
-        _ if text == "identity" => Constraint::Identity,
+        _ if text == IDENTITY => Constraint::Identity,
         None => Constraint::Resource(NamespaceId(id(text)?)),
         Some((namespace, relation)) => {
             Constraint::Subjectset(NamespaceId(id(namespace)?), RelationId(id(relation)?))

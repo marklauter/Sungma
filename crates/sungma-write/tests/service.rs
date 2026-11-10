@@ -330,13 +330,13 @@ async fn a_fact_its_relation_does_not_admit_is_named_as_the_caller_named_it() {
 async fn constraints_are_interned_and_checked_against_other_namespaces() {
     let world = World::new();
     let service = NamespaceWriteService::new(world.node().interner(), world.node().writer());
-    let doc = |text: &str| sungma_lang::namespace::parse(text).unwrap().relations;
+    let doc = |text: &str| sungma_lang::tdl::parse_one(text).unwrap().relations;
     let refused = service
         .write(
             &"file".parse().unwrap(),
-            NamespaceWrite::Create(doc(
-                r#"{ "file": { "owner": { "constraints": ["group#member", "folder"] } } }"#,
-            )),
+            NamespaceWrite::Create(doc("namespace: file
+  owner<group#member, folder>
+")),
         )
         .await;
     let Err(NamespaceWriteServiceError::Write(NamespaceWriteError::References(problems))) = refused
@@ -356,18 +356,16 @@ async fn constraints_are_interned_and_checked_against_other_namespaces() {
     service
         .write(
             &"group".parse().unwrap(),
-            NamespaceWrite::Create(doc(
-                r#"{ "group": { "member": { "constraints": ["group#member", "identity"] } } }"#,
-            )),
+            NamespaceWrite::Create(doc("namespace: group\n  member<@identity, group#member>\n")),
         )
         .await
         .unwrap();
     service
         .write(
             &"file".parse().unwrap(),
-            NamespaceWrite::Create(doc(
-                r#"{ "file": { "owner": { "constraints": ["group#member", "folder"] } } }"#,
-            )),
+            NamespaceWrite::Create(doc("namespace: file
+  owner<group#member, folder>
+")),
         )
         .await
         .unwrap();

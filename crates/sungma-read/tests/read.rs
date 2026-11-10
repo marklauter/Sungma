@@ -10,7 +10,7 @@ use sungma::{
     rewrite::Rewrite,
 };
 use sungma_clock::DevClock;
-use sungma_lang::namespace;
+use sungma_lang::tdl;
 use sungma_names::intern::LeasingInterner;
 use sungma_names::{read::NameRows, write::NameRowWriter};
 use sungma_names::{resolve, store::ReadingDictionary};
@@ -31,7 +31,7 @@ fn print(
     name: &NamespaceName,
     relations: &Namespace<RelationName, NamespaceName>,
 ) -> Result<String, String> {
-    namespace::print(name, relations).map_err(|error| error.to_string())
+    tdl::print(&[(name, relations)]).map_err(|error| error.to_string())
 }
 
 struct World {
@@ -65,7 +65,7 @@ impl World {
     /// Writes `name` declaring each of `relations` as `this`, taking
     /// identities.
     async fn namespace(&self, name: &str, relations: &[&str], write: Write) -> Revision {
-        self.constrained(name, relations, &["identity"], write)
+        self.constrained(name, relations, &["@identity"], write)
             .await
     }
 
@@ -89,7 +89,7 @@ impl World {
                 .map(|relation| {
                     let constraints = constraints
                         .iter()
-                        .map(|text| namespace::constraint(text).unwrap())
+                        .map(|text| tdl::constraint(text).unwrap())
                         .collect();
                     (relation.parse().unwrap(), Rewrite::This, constraints)
                 })
@@ -154,7 +154,7 @@ fn person(name: &str) -> SubjectName {
 async fn facts_read_back_in_subject_order_and_one_by_one() {
     let world = World::new();
     world.namespace("group", &["member"], Write::Create).await;
-    let owners = ["identity", "group", "group#member"];
+    let owners = ["@identity", "group", "group#member"];
     world
         .constrained("file", &["owner"], &owners, Write::Create)
         .await;
@@ -231,7 +231,7 @@ async fn a_namespace_reads_as_its_stored_document() {
     assert_eq!(version.revision, created);
     assert_eq!(
         version.document,
-        "{\n  \"file\": {\n    \"owner\": {\n      \"constraints\": [\"identity\"]\n    },\n    \"viewer\": {\n      \"constraints\": [\"identity\"]\n    }\n  }\n}\n"
+        "namespace: file\n  owner<@identity>\n  viewer<@identity>\n"
     );
     world.namespace("file", &[], Write::Retire(created)).await;
     assert_eq!(service.read(&file, None).await.unwrap().version, None);

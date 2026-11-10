@@ -12,13 +12,9 @@ use common::{post, post_raw, stores};
 async fn declare(app: &Router) -> Value {
     let mut zookie = Value::Null;
     for document in [
-        json!({ "group": { "member": { "constraints": ["identity"] } } }),
-        json!({ "folder": { "viewer": { "constraints": ["identity"] } } }),
-        json!({ "file": {
-            "owner": { "constraints": ["identity"] },
-            "parent": { "constraints": ["folder"] },
-            "viewer": { "rewrite": "this | owner", "constraints": ["group#member", "identity"] }
-        } }),
+        "namespace: group\n  member<@identity>\n",
+        "namespace: folder\n  viewer<@identity>\n",
+        "namespace: file\n  owner<@identity>\n  parent<folder>\n  viewer<@identity, group#member>: this | owner\n",
     ] {
         let (status, reply) = post(app, "/namespaces/write", json!({ "create": document })).await;
         assert_eq!(status, StatusCode::OK, "{reply}");
@@ -114,7 +110,7 @@ async fn a_read_counts_only_facts_their_namespace_declares() {
         let (_, created) = post(
             &app,
             "/namespaces/write",
-            json!({ "create": { "file": { "owner": { "constraints": ["identity"] }, "banned": { "constraints": ["identity"] } } } }),
+            json!({ "create": "namespace: file\n  owner<@identity>\n  banned<@identity>\n" }),
         )
         .await;
         let banned = |identity: &str| {
@@ -126,7 +122,7 @@ async fn a_read_counts_only_facts_their_namespace_declares() {
         let (_, dropped) = post(
             &app,
             "/namespaces/write",
-            json!({ "new_version": { "file": { "owner": { "constraints": ["identity"] } } }, "based_on": created["zookie"] }),
+            json!({ "new_version": "namespace: file\n  owner<@identity>\n", "based_on": created["zookie"] }),
         )
         .await;
         let (_, reply) = read(&app, set.clone()).await;
@@ -135,7 +131,7 @@ async fn a_read_counts_only_facts_their_namespace_declares() {
         post(
             &app,
             "/namespaces/write",
-            json!({ "new_version": { "file": { "owner": { "constraints": ["identity"] }, "banned": { "constraints": ["identity"] } } },
+            json!({ "new_version": "namespace: file\n  owner<@identity>\n  banned<@identity>\n",
                     "based_on": dropped["zookie"] }),
         )
         .await;

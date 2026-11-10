@@ -15,12 +15,14 @@
 //! A namespace write is one of:
 //!
 //! ```json
-//! { "create": { "file": { "owner": { "constraints": ["identity"] } } } }
-//! { "new_version": { "file": { "owner": { "constraints": ["identity"] }, "viewer": "owner" } }, "based_on": { "revision": 12 } }
+//! { "create": "namespace: file\n  owner<@identity>\n" }
+//! { "new_version": "namespace: file\n  owner<@identity>\n  viewer: owner\n", "based_on": { "revision": 12 } }
 //! { "retire": "file", "based_on": { "revision": 14 } }
 //! ```
 //!
-//! and gives the zookie of its revision. `based_on` is the zookie of the
+//! where `create` and `new_version` hold a theory document, in TDL, that
+//! declares the one namespace written, and gives the zookie of its
+//! revision. `based_on` is the zookie of the
 //! version the write follows. A write that doesn't follow the latest
 //! version is refused with the zookie of the latest version as `latest`,
 //! `null` when there's none, so the caller can read it and try again.
@@ -47,12 +49,11 @@ use axum::{
     routing::post,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::value::RawValue;
 use sungma::{name::NamespaceName, revision::Revision};
 use sungma_http::{Refused, Requests, Zookie, accept, failure};
 use sungma_lang::{
     fact::WriteRequest,
-    namespace::{self, Refusal},
+    tdl::{self, Refusal},
 };
 use sungma_names::store::{InternError, Interner};
 
@@ -138,16 +139,16 @@ where
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NamespacesBody {
-    create: Option<Box<RawValue>>,
-    new_version: Option<Box<RawValue>>,
+    create: Option<String>,
+    new_version: Option<String>,
     retire: Option<String>,
     based_on: Option<Zookie>,
 }
 
 /// A write as the body names it, its document not yet parsed.
 enum Write {
-    Create(Box<RawValue>),
-    NewVersion(Box<RawValue>, Revision),
+    Create(String),
+    NewVersion(String, Revision),
     Retire(NamespaceName, Revision),
 }
 
@@ -188,8 +189,8 @@ where
         Ok(write) => write,
         Err(refused) => return refused.reply(&request_id),
     };
-    let parsed = |document: Box<RawValue>| {
-        namespace::parse(document.get()).map_err(|errors| {
+    let parsed = |document: String| {
+        tdl::parse_one(&document).map_err(|errors| {
             Refused(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 Refusal(errors).to_string(),

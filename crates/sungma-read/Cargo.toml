@@ -17,7 +17,7 @@ required-features = ["server"]
 [dependencies]
 axum = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true, features = ["raw_value"] }
+serde_json = { workspace = true, optional = true }
 sungma.workspace = true
 sungma-dynamodb = { workspace = true, optional = true }
 sungma-http = { workspace = true, optional = true }

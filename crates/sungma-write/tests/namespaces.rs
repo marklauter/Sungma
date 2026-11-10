@@ -20,7 +20,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
     for (store, app) in stores().await {
         let (status, created) = write(
             &app,
-            json!({ "create": { "file": { "viewer": "owner", "owner": { "constraints": ["identity"] } } } }),
+            json!({ "create": "namespace: file\n  viewer: owner\n  owner<@identity>\n" }),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{store}: {created}");
@@ -30,7 +30,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
         assert_eq!(status, StatusCode::OK, "{store}: {reply}");
         assert_eq!(
             reply["document"],
-            json!({ "file": { "owner": { "constraints": ["identity"] }, "viewer": "owner" } }),
+            json!("namespace: file\n  owner<@identity>\n  viewer: owner\n"),
             "{store}"
         );
         assert_eq!(reply["version"], v1, "{store}");
@@ -38,7 +38,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
 
         let (status, versioned) = write(
             &app,
-            json!({ "new_version": { "file": { "owner": { "constraints": ["identity"] } } }, "based_on": v1 }),
+            json!({ "new_version": "namespace: file\n  owner<@identity>\n", "based_on": v1 }),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{store}: {versioned}");
@@ -48,7 +48,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
         let (_, reply) = read(&app, json!({ "namespace": "file" })).await;
         assert_eq!(
             reply["document"],
-            json!({ "file": { "owner": { "constraints": ["identity"] } } })
+            json!("namespace: file\n  owner<@identity>\n")
         );
         assert_eq!(reply["version"], v2, "{store}");
 
@@ -64,7 +64,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
         assert!(reply["error"].as_str().unwrap().contains("file"), "{store}");
 
         // Created again after its retirement.
-        let (status, reply) = write(&app, json!({ "create": { "file": {} } })).await;
+        let (status, reply) = write(&app, json!({ "create": "namespace: file\n" })).await;
         assert_eq!(status, StatusCode::OK, "{store}: {reply}");
     }
 }
@@ -74,20 +74,20 @@ async fn a_write_not_based_on_the_latest_version_is_a_conflict() {
     for (store, app) in stores().await {
         let (_, created) = write(
             &app,
-            json!({ "create": { "file": { "owner": { "constraints": ["identity"] } } } }),
+            json!({ "create": "namespace: file\n  owner<@identity>\n" }),
         )
         .await;
         let v1 = created["zookie"].clone();
         let (_, versioned) = write(
             &app,
-            json!({ "new_version": { "file": { "owner": { "constraints": ["identity"] }, "viewer": "owner" } }, "based_on": v1 }),
+            json!({ "new_version": "namespace: file\n  owner<@identity>\n  viewer: owner\n", "based_on": v1 }),
         )
         .await;
         let v2 = versioned["zookie"].clone();
         for body in [
-            json!({ "new_version": { "file": {} }, "based_on": v1 }),
+            json!({ "new_version": "namespace: file\n", "based_on": v1 }),
             json!({ "retire": "file", "based_on": v1 }),
-            json!({ "create": { "file": {} } }),
+            json!({ "create": "namespace: file\n" }),
         ] {
             let (status, reply) = write(&app, body.clone()).await;
             assert_eq!(status, StatusCode::CONFLICT, "{store}: {body}");
@@ -97,7 +97,7 @@ async fn a_write_not_based_on_the_latest_version_is_a_conflict() {
         // A namespace with no version has no latest to name.
         let (status, reply) = write(
             &app,
-            json!({ "new_version": { "folder": {} }, "based_on": v1 }),
+            json!({ "new_version": "namespace: folder\n", "based_on": v1 }),
         )
         .await;
         assert_eq!(status, StatusCode::CONFLICT, "{store}");
@@ -112,7 +112,7 @@ async fn retiring_a_namespace_with_no_version_is_refused() {
         let (status, _) = write(&app, json!({ "retire": "file", "based_on": based_on })).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{store}");
 
-        let (_, created) = write(&app, json!({ "create": { "file": {} } })).await;
+        let (_, created) = write(&app, json!({ "create": "namespace: file\n" })).await;
         let v1 = created["zookie"].clone();
         let (_, retired) = write(&app, json!({ "retire": "file", "based_on": v1 })).await;
         let (status, _) = write(
@@ -129,7 +129,7 @@ async fn a_refused_document_lists_every_problem() {
     for (store, app) in stores().await {
         let (status, reply) = write(
             &app,
-            json!({ "create": { "file": { "viewer": "editor", "owner": { "constraints": ["identity"] }, "this": { "constraints": ["identity"] } } } }),
+            json!({ "create": "namespace: file\n  viewer: editor\n  owner<@identity>\n  this<@identity>\n" }),
         )
         .await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{store}: {reply}");
@@ -141,10 +141,10 @@ async fn a_refused_document_lists_every_problem() {
         let (status, _) = read(&app, json!({ "namespace": "file" })).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{store}");
 
-        let (_, created) = write(&app, json!({ "create": { "file": {} } })).await;
+        let (_, created) = write(&app, json!({ "create": "namespace: file\n" })).await;
         let (status, reply) = write(
             &app,
-            json!({ "new_version": { "file": { "viewer": "editor" } }, "based_on": created["zookie"] }),
+            json!({ "new_version": "namespace: file\n  viewer: editor\n", "based_on": created["zookie"] }),
         )
         .await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{store}: {reply}");
@@ -157,19 +157,19 @@ async fn a_body_of_no_known_shape_is_malformed() {
         let zookie = json!({ "revision": 1 });
         for body in [
             json!({}),
-            json!({ "create": { "file": {} }, "based_on": zookie }),
-            json!({ "new_version": { "file": {} } }),
+            json!({ "create": "namespace: file\n", "based_on": zookie }),
+            json!({ "new_version": "namespace: file\n" }),
             json!({ "retire": "file" }),
-            json!({ "create": { "file": {} }, "retire": "file", "based_on": zookie }),
+            json!({ "create": "namespace: file\n", "retire": "file", "based_on": zookie }),
             json!({ "retire": "no such name!", "based_on": zookie }),
-            json!({ "create": { "file": {} }, "extra": 1 }),
+            json!({ "create": "namespace: file\n", "extra": 1 }),
         ] {
             let (status, reply) = write(&app, body.clone()).await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{store}: {body}");
             assert!(reply["request_id"].is_string(), "{store}");
             assert!(reply["error"].is_string(), "{store}");
         }
-        let body = r#"{"create":{"file":{}}}"#;
+        let body = r#"{"create":"namespace: file\n"}"#;
         let (status, _) = post_raw(&app, "/namespaces/write", body, None).await;
         assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE, "{store}");
     }
@@ -183,25 +183,25 @@ async fn a_version_whose_references_fail_is_refused() {
     for (store, app) in stores().await {
         let (status, reply) = write(
             &app,
-            json!({ "create": { "file": { "owner": { "constraints": ["group#member"] } } } }),
+            json!({ "create": "namespace: file\n  owner<group#member>\n" }),
         )
         .await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{store}: {reply}");
         let error = reply["error"].as_str().unwrap();
         assert!(error.contains("'group#member'"), "{store}: {error}");
 
-        let constraints: Vec<_> = (0..32).map(|i| format!("n{i}#member")).collect();
-        let relations: serde_json::Map<String, Value> = (0..4)
-            .map(|r| (format!("r{r}"), json!({ "constraints": constraints })))
-            .collect();
-        let mut relations = relations;
-        let more: Vec<_> = (32..64).map(|i| format!("n{i}#member")).collect();
-        relations.insert("s".to_owned(), json!({ "constraints": more }));
-        let more: Vec<_> = (64..96).map(|i| format!("n{i}#member")).collect();
-        relations.insert("t".to_owned(), json!({ "constraints": more }));
-        let more: Vec<_> = (96..128).map(|i| format!("n{i}#member")).collect();
-        relations.insert("u".to_owned(), json!({ "constraints": more }));
-        let (status, reply) = write(&app, json!({ "create": { "wide": relations } })).await;
+        let relation = |name: &str, namespaces: std::ops::Range<usize>| {
+            let constraints: Vec<_> = namespaces.map(|i| format!("n{i}#member")).collect();
+            format!("  {name}<{}>\n", constraints.join(", "))
+        };
+        let mut wide = "namespace: wide\n".to_owned();
+        for r in 0..4 {
+            wide.push_str(&relation(&format!("r{r}"), 0..32));
+        }
+        wide.push_str(&relation("s", 32..64));
+        wide.push_str(&relation("t", 64..96));
+        wide.push_str(&relation("u", 96..128));
+        let (status, reply) = write(&app, json!({ "create": wide })).await;
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{store}: {reply}");
     }
 }

@@ -284,10 +284,10 @@ async fn passing_the_depth_limit_ends_the_check() {
 async fn late_bound_relation_missing_on_target_is_empty() {
     let world = world().await;
     world
-        .declare("group", "viewer", This, &["identity"])
+        .declare("group", "viewer", This, &["@identity"])
         .await
         .unwrap();
-    let parents = ["folder", "folder#owner", "group", "identity"];
+    let parents = ["folder", "folder#owner", "group", "@identity"];
     world
         .declare("file", "parent", This, &parents)
         .await
@@ -317,10 +317,10 @@ async fn a_parent_of_an_undeclared_namespace_is_empty() {
     // `ghost` declares `viewer` when the parent fact is written, then is
     // retired, so no version declares anything.
     world
-        .declare("ghost", "viewer", This, &["identity"])
+        .declare("ghost", "viewer", This, &["@identity"])
         .await
         .unwrap();
-    let parents = ["folder", "folder#owner", "ghost", "identity"];
+    let parents = ["folder", "folder#owner", "ghost", "@identity"];
     world
         .declare("file", "parent", This, &parents)
         .await
@@ -656,7 +656,7 @@ async fn a_store_error_anywhere_in_the_tree_fails_expand() {
     // leaves as references without a read.
     let unowned = Exclusion(Box::new(Computed("owner")), Box::new(This));
     world
-        .declare("file", "unowned", unowned, &["identity"])
+        .declare("file", "unowned", unowned, &["@identity"])
         .await
         .unwrap();
     let cases = [

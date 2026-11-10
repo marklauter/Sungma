@@ -1,4 +1,4 @@
-//! `sungma-write [<facts.json> <namespace.json>...]` serves the Write
+//! `sungma-write [<facts.json> <namespaces.theory>...]` serves the Write
 //! service on `SUNGMA_ADDR`, `127.0.0.1:8082` by default.
 //!
 //! With `SUNGMA_DYNAMODB_URL` set, it runs on DynamoDB Local at that URL,
@@ -6,8 +6,9 @@
 //! it's missing. Otherwise it runs in memory.
 //!
 //! The files are optional seed data: a fact document and at least one
-//! namespace document, written through the write services into a new
-//! store. A table that already exists isn't seeded again.
+//! theory document, its namespaces written in document order through the
+//! write services into a new store. A table that already exists isn't
+//! seeded again.
 
 use std::{env, error::Error, fs, num::NonZeroU32, sync::Arc};
 
@@ -16,7 +17,7 @@ use sungma::{
     namespace::Namespace,
 };
 use sungma_dynamodb::{Table, items::DynamoTable, local};
-use sungma_lang::{fact, namespace};
+use sungma_lang::{fact, tdl};
 use sungma_names::{intern::LeasingInterner, read::NameRows, write::NameRowWriter};
 use sungma_table::{
     memory::{MemorySequence, MemoryTable},
@@ -42,7 +43,7 @@ async fn main() -> Result<(), Failed> {
     let seed = match args.as_slice() {
         [] => None,
         [facts, namespaces @ ..] if !namespaces.is_empty() => Some((facts, namespaces)),
-        _ => return Err("usage: sungma-write [<facts.json> <namespace.json>...]".into()),
+        _ => return Err("usage: sungma-write [<facts.json> <namespaces.theory>...]".into()),
     };
     let seed = match seed {
         Some((facts, namespaces)) => Some((
@@ -84,7 +85,7 @@ fn print(
     name: &NamespaceName,
     relations: &Namespace<RelationName, NamespaceName>,
 ) -> Result<String, String> {
-    namespace::print(name, relations).map_err(|error| error.to_string())
+    tdl::print(&[(name, relations)]).map_err(|error| error.to_string())
 }
 
 async fn serve<E, S>(
@@ -104,14 +105,15 @@ where
     );
     let writer = RowWriter::dev(table.clone(), table.clone(), names(), print).await?;
     if let Some((facts, documents)) = &seed {
-        let namespaces = documents
-            .iter()
-            .map(|document| {
-                namespace::parse(document)
-                    .map(|document| (document.namespace, document.relations))
-                    .map_err(namespace::Refusal)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut namespaces = Vec::new();
+        for document in documents {
+            let documents = tdl::parse(document).map_err(tdl::Refusal)?;
+            namespaces.extend(
+                documents
+                    .into_iter()
+                    .map(|document| (document.namespace, document.relations)),
+            );
+        }
         let facts = fact::parse(facts)?;
         service::seed(&interner, &writer, namespaces, &facts).await?;
     }

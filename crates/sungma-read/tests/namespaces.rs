@@ -20,7 +20,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
     for (store, app) in stores().await {
         let (status, created) = write(
             &app,
-            json!({ "create": { "file": { "viewer": "owner", "owner": { "constraints": ["identity"] } } } }),
+            json!({ "create": "namespace: file\n  viewer: owner\n  owner<@identity>\n" }),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{store}: {created}");
@@ -30,7 +30,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
         assert_eq!(status, StatusCode::OK, "{store}: {reply}");
         assert_eq!(
             reply["document"],
-            json!({ "file": { "owner": { "constraints": ["identity"] }, "viewer": "owner" } }),
+            json!("namespace: file\n  owner<@identity>\n  viewer: owner\n"),
             "{store}"
         );
         assert_eq!(reply["version"], v1, "{store}");
@@ -38,7 +38,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
 
         let (status, versioned) = write(
             &app,
-            json!({ "new_version": { "file": { "owner": { "constraints": ["identity"] } } }, "based_on": v1 }),
+            json!({ "new_version": "namespace: file\n  owner<@identity>\n", "based_on": v1 }),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{store}: {versioned}");
@@ -48,7 +48,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
         let (_, reply) = read(&app, json!({ "namespace": "file" })).await;
         assert_eq!(
             reply["document"],
-            json!({ "file": { "owner": { "constraints": ["identity"] } } })
+            json!("namespace: file\n  owner<@identity>\n")
         );
         assert_eq!(reply["version"], v2, "{store}");
 
@@ -64,7 +64,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
         assert!(reply["error"].as_str().unwrap().contains("file"), "{store}");
 
         // Created again after its retirement.
-        let (status, reply) = write(&app, json!({ "create": { "file": {} } })).await;
+        let (status, reply) = write(&app, json!({ "create": "namespace: file\n" })).await;
         assert_eq!(status, StatusCode::OK, "{store}: {reply}");
     }
 }
@@ -99,7 +99,7 @@ async fn a_read_of_a_namespace_never_written_finds_no_version() {
 #[tokio::test]
 async fn a_zookie_ahead_of_the_latest_revision_is_refused() {
     for (store, app) in stores().await {
-        let (_, created) = write(&app, json!({ "create": { "file": {} } })).await;
+        let (_, created) = write(&app, json!({ "create": "namespace: file\n" })).await;
         let ahead = created["zookie"]["revision"].as_u64().unwrap() + 1;
         let (status, reply) = read(
             &app,

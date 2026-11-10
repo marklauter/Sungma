@@ -17,7 +17,7 @@ use sungma_check::{
     rows::RowReader,
 };
 use sungma_dynamodb::{Table, items::DynamoTable, local};
-use sungma_lang::namespace;
+use sungma_lang::tdl;
 use sungma_names::{read::NameRows, store::ReadingDictionary};
 use sungma_table::{
     memory::MemoryTable,
@@ -53,9 +53,9 @@ async fn main() -> Result<(), Failed> {
 fn parse(
     document: &str,
 ) -> Result<(NamespaceName, Namespace<RelationName, NamespaceName>), String> {
-    namespace::parse(document)
+    tdl::parse_one(document)
         .map(|document| (document.namespace, document.relations))
-        .map_err(|errors| namespace::Refusal(errors).to_string())
+        .map_err(|errors| tdl::Refusal(errors).to_string())
 }
 
 async fn serve<E: ItemReader + Clone + Send + Sync + 'static>(table: E) -> Result<(), Failed> {

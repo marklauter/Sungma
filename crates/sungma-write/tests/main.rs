@@ -8,7 +8,6 @@ use std::{
     process::{Command, Output},
 };
 
-use serde_json::Value;
 use sungma_dynamodb::{Table, items::DynamoTable, local};
 use sungma_read::namespaces::NamespaceReadService;
 
@@ -23,15 +22,15 @@ const UNBOUND: &str = "invalid socket address";
 const NAMESPACES: [&str; 3] = [
     concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../sungma/tests/fixtures/namespaces/group.json"
+        "/../sungma/tests/fixtures/namespaces/group.theory"
     ),
     concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../sungma/tests/fixtures/namespaces/folder.json"
+        "/../sungma/tests/fixtures/namespaces/folder.theory"
     ),
     concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../sungma/tests/fixtures/namespaces/file.json"
+        "/../sungma/tests/fixtures/namespaces/file.theory"
     ),
 ];
 
@@ -84,7 +83,7 @@ fn the_server_seeds_its_files_before_it_binds() {
 #[test]
 fn a_seed_that_is_refused_stops_the_server() {
     let facts = format!("{FIXTURES}/docs.facts.json");
-    let missing = format!("{FIXTURES}/namespaces/missing.json");
+    let missing = format!("{FIXTURES}/namespaces/missing.theory");
     let output = run(&[&facts, &missing], &[]);
     assert!(!output.status.success());
     assert!(!stderr(&output).contains(UNBOUND));
@@ -93,8 +92,8 @@ fn a_seed_that_is_refused_stops_the_server() {
 #[test]
 fn a_seed_that_breaks_the_grammar_stops_the_server() {
     let facts = format!("{FIXTURES}/docs.facts.json");
-    let refused = format!("{}/refused.json", env!("CARGO_TARGET_TMPDIR"));
-    fs::write(&refused, r#"{ "file": { "viewer": "editor" } }"#).unwrap();
+    let refused = format!("{}/refused.theory", env!("CARGO_TARGET_TMPDIR"));
+    fs::write(&refused, "namespace: file\n  viewer: editor\n").unwrap();
     // A namespace document, then a fact document, that's refused.
     for args in [[facts.as_str(), &refused], [&refused, NAMESPACES[0]]] {
         let output = run(&args, &[]);
@@ -125,9 +124,9 @@ async fn the_server_runs_on_dynamodb_when_given_a_url() {
         .read(&"file".parse().unwrap(), None)
         .await
         .unwrap();
-    let stored: Value = serde_json::from_str(&read.version.unwrap().document).unwrap();
-    let file: Value = serde_json::from_str(&fs::read_to_string(NAMESPACES[2]).unwrap()).unwrap();
-    assert_eq!(stored, file);
+    // The fixture is in the printer's form.
+    let stored = read.version.unwrap().document;
+    assert_eq!(stored, fs::read_to_string(NAMESPACES[2]).unwrap());
 
     let again = run(&seed(&facts), &env);
     let stderr = stderr(&again);

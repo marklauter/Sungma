@@ -3,25 +3,25 @@
 use sungma::{
     id::{NamespaceId, RelationId},
     namespace::{
-        Constraint, Declared, MAX_CONSTRAINTS, MAX_CYCLE_NAMES, MAX_REWRITE_DEPTH, Namespace,
-        NamespaceError, Problem,
+        Constraint, DEFAULT_REWRITE_DEPTH, Declared, MAX_CYCLE_NAMES, Namespace, NamespaceError,
+        Problem,
     },
     nonempty,
     rewrite::Rewrite::{self, Computed, Exclusion, This, Union},
 };
-use sungma_lang::namespace::{ErrorKind, Refusal, parse};
+use sungma_lang::tdl::{ErrorKind, Refusal, parse};
 use sungma_names::resolve;
 use sungma_names::store::Pool;
 use sungma_node::testkit::World;
 
 /// Parses and checks the document.
-fn load(json: &str) -> Result<(), Refusal> {
-    parse(json).map(|_| ()).map_err(Refusal)
+fn load(text: &str) -> Result<(), Refusal> {
+    parse(text).map(|_| ()).map_err(Refusal)
 }
 
 /// The one namespace error a document is refused with.
-fn refused(json: &str) -> NamespaceError {
-    match parse(json) {
+fn refused(text: &str) -> NamespaceError {
+    match parse(text) {
         Err(mut errors) if errors.len() == 1 => match errors.remove(0).kind {
             ErrorKind::Namespace(error) => error,
             other => panic!("expected a namespace error, got {other:?}"),
@@ -51,8 +51,8 @@ fn names(cycle: &[&str]) -> NamespaceError {
 async fn a_refused_document_stores_no_namespace() {
     let world = World::new();
     let documents = [
-        r#"{ "file": { "owner": { "constraints": ["identity"] } } }"#,
-        r#"{ "folder": { "viewer": "editor" } }"#,
+        "namespace: file\n  owner<@identity>\n",
+        "namespace: folder\n  viewer: editor\n",
     ];
     let refused = world.load_namespaces(&documents).await;
     assert!(
@@ -67,18 +67,16 @@ async fn a_refused_document_stores_no_namespace() {
 
 #[test]
 fn a_cycle_through_a_fact_is_left_to_evaluation() {
-    let json = r#"{ "folder": {
-        "parent": { "constraints": ["identity"] },
-        "viewer": { "rewrite": "this | (parent, viewer)", "constraints": ["identity"] }
-    } }"#;
-    assert!(load(json).is_ok());
+    let text = "namespace: folder
+  parent<@identity>
+  viewer<@identity>: this | (parent, viewer)
+";
+    assert!(load(text).is_ok());
 }
 
 #[test]
 fn a_relation_declared_twice_is_refused() {
-    let error = refused(
-        r#"{ "file": { "owner": { "constraints": ["identity"] }, "owner": { "constraints": ["identity"] } } }"#,
-    );
+    let error = refused("namespace: file\n  owner<@identity>\n  owner<@identity>\n");
     assert_eq!(error, NamespaceError::DuplicateRelation("owner".to_owned()));
     assert_eq!(
         error.to_string(),
@@ -88,20 +86,20 @@ fn a_relation_declared_twice_is_refused() {
 
 #[test]
 fn a_namespace_document_is_refused_as_a_whole() {
-    let result =
-        load(r#"{ "file": { "owner": { "constraints": ["identity"] }, "viewer": "editor" } }"#);
+    let result = load("namespace: file\n  owner<@identity>\n  viewer: editor\n");
     let Err(error) = result else {
         panic!("expected a refused document, got {result:?}");
     };
     assert_eq!(
         error.to_string(),
-        "relation 'viewer': relation 'viewer' references 'editor', which the namespace doesn't declare"
+        "line 3, column 3: namespace 'file', relation 'viewer': \
+         relation 'viewer' references 'editor', which the namespace doesn't declare"
     );
 }
 
 #[test]
 fn a_computed_subjectset_must_be_declared() {
-    let error = refused(r#"{ "file": { "viewer": "owner" } }"#);
+    let error = refused("namespace: file\n  viewer: owner\n");
     assert_eq!(
         error.to_string(),
         "relation 'viewer' references 'owner', which the namespace doesn't declare"
@@ -110,11 +108,8 @@ fn a_computed_subjectset_must_be_declared() {
 
 #[test]
 fn a_factset_must_be_declared() {
-    let json = r#"{ "file": {
-        "viewer": "(parent, viewer)"
-    } }"#;
     assert_eq!(
-        refused(json),
+        refused("namespace: file\n  viewer: (parent, viewer)\n"),
         NamespaceError::DanglingReference {
             relation: "viewer".to_owned(),
             target: "parent".to_owned(),
@@ -124,20 +119,13 @@ fn a_factset_must_be_declared() {
 
 #[test]
 fn a_relation_followed_in_another_namespace_is_left_to_the_write() {
-    let json = r#"{ "file": {
-        "parent": { "constraints": ["folder", "identity"] },
-        "viewer": "(parent, anything)"
-    } }"#;
-    assert!(load(json).is_ok());
+    let text = "namespace: file\n  parent<folder, @identity>\n  viewer: (parent, anything)\n";
+    assert!(load(text).is_ok());
 }
 
 #[test]
 fn a_cycle_of_computed_subjectsets_is_refused() {
-    let json = r#"{ "file": {
-        "editor": "viewer",
-        "viewer": { "rewrite": "this | editor", "constraints": ["identity"] }
-    } }"#;
-    let error = refused(json);
+    let error = refused("namespace: file\n  editor: viewer\n  viewer<@identity>: this | editor\n");
     assert_eq!(error, names(&["editor", "viewer", "editor"]));
     assert_eq!(
         error.to_string(),
@@ -147,29 +135,20 @@ fn a_cycle_of_computed_subjectsets_is_refused() {
 
 #[test]
 fn a_relation_excluding_itself_is_refused() {
-    let json =
-        r#"{ "file": { "viewer": { "rewrite": "this ! viewer", "constraints": ["identity"] } } }"#;
-    assert_eq!(refused(json), names(&["viewer", "viewer"]));
+    let text = "namespace: file\n  viewer<@identity>: this ! viewer\n";
+    assert_eq!(refused(text), names(&["viewer", "viewer"]));
 }
 
 #[test]
 fn a_cycle_is_reported_from_where_it_closes() {
-    let json = r#"{ "file": {
-        "a": "b",
-        "b": "c",
-        "c": "b"
-    } }"#;
-    assert_eq!(refused(json), names(&["b", "c", "b"]));
+    let text = "namespace: file\n  a: b\n  b: c\n  c: b\n";
+    assert_eq!(refused(text), names(&["b", "c", "b"]));
 }
 
 #[test]
 fn relations_sharing_a_target_are_no_cycle() {
-    let json = r#"{ "file": {
-        "a": "c",
-        "b": "c | a",
-        "c": { "constraints": ["identity"] }
-    } }"#;
-    assert!(load(json).is_ok());
+    let text = "namespace: file\n  a: c\n  b: c | a\n  c<@identity>\n";
+    assert!(load(text).is_ok());
 }
 
 /// A chain of single-operand unions, `levels` deep counting the leaf.
@@ -194,14 +173,16 @@ async fn declare(rewrite: Rewrite<&'static str>) -> Result<(), NamespaceError> {
 }
 
 #[tokio::test]
-async fn a_rewrite_tree_may_be_max_depth_deep() {
-    assert_eq!(declare(nested(MAX_REWRITE_DEPTH)).await, Ok(()));
+async fn a_rewrite_tree_may_be_as_deep_as_the_limit() {
+    assert_eq!(declare(nested(DEFAULT_REWRITE_DEPTH)).await, Ok(()));
 }
 
 #[tokio::test]
 async fn a_deeper_rewrite_tree_is_refused() {
-    let error = declare(nested(MAX_REWRITE_DEPTH + 1)).await.unwrap_err();
-    assert_eq!(error, NamespaceError::TooDeep);
+    let error = declare(nested(DEFAULT_REWRITE_DEPTH + 1))
+        .await
+        .unwrap_err();
+    assert_eq!(error, NamespaceError::TooDeep(DEFAULT_REWRITE_DEPTH));
     assert_eq!(
         error.to_string(),
         "a rewrite tree deeper than 100 levels is refused"
@@ -210,25 +191,31 @@ async fn a_deeper_rewrite_tree_is_refused() {
 
 #[tokio::test]
 async fn a_deeper_exclusion_base_is_refused() {
-    let base = nested_in(MAX_REWRITE_DEPTH + 1, |rewrite| {
+    let base = nested_in(DEFAULT_REWRITE_DEPTH + 1, |rewrite| {
         Exclusion(Box::new(rewrite), Box::new(This))
     });
-    assert_eq!(declare(base).await, Err(NamespaceError::TooDeep));
+    assert_eq!(
+        declare(base).await,
+        Err(NamespaceError::TooDeep(DEFAULT_REWRITE_DEPTH))
+    );
 }
 
 #[tokio::test]
 async fn a_deeper_excluded_operand_is_refused() {
-    let excluded = nested_in(MAX_REWRITE_DEPTH + 1, |rewrite| {
+    let excluded = nested_in(DEFAULT_REWRITE_DEPTH + 1, |rewrite| {
         Exclusion(Box::new(This), Box::new(rewrite))
     });
-    assert_eq!(declare(excluded).await, Err(NamespaceError::TooDeep));
+    assert_eq!(
+        declare(excluded).await,
+        Err(NamespaceError::TooDeep(DEFAULT_REWRITE_DEPTH))
+    );
 }
 
 #[tokio::test]
 async fn redeclaring_a_relation_checks_the_whole_namespace_by_id() {
     let world = World::new();
     world
-        .declare("file", "owner", This, &["identity"])
+        .declare("file", "owner", This, &["@identity"])
         .await
         .unwrap();
     world
@@ -257,7 +244,7 @@ fn a_namespace_built_with_a_relation_twice_is_refused() {
     );
 }
 
-/// A namespace built in code bypasses the document limits, so its checks must
+/// A namespace built in code bypasses the document limit, so its checks must
 /// hold up at any size: a chain far longer than a document allows.
 #[test]
 fn a_long_chain_built_in_code_is_checked_without_a_crash() {
@@ -351,7 +338,7 @@ fn a_cycle_path_stays_within_its_relations() {
 
 #[test]
 fn a_relation_reading_this_without_constraints_is_refused() {
-    let errors = parse(r#"{ "file": { "owner": "this", "viewer": "owner | this" } }"#).unwrap_err();
+    let errors = parse("namespace: file\n  owner: this\n  viewer: owner | this\n").unwrap_err();
     assert_eq!(errors.len(), 2);
     assert!(matches!(
         &errors[0].kind,
@@ -359,17 +346,14 @@ fn a_relation_reading_this_without_constraints_is_refused() {
     ));
     assert_eq!(
         errors[1].to_string(),
-        "relation 'viewer': relation 'viewer' reads 'this' and declares no constraints"
+        "line 3, column 3: namespace 'file', relation 'viewer': \
+         relation 'viewer' reads 'this' and declares no constraints"
     );
 }
 
 #[test]
 fn a_computed_relation_with_constraints_is_refused() {
-    let json = r#"{ "file": {
-        "owner": { "constraints": ["identity"] },
-        "viewer": { "rewrite": "owner", "constraints": ["identity"] }
-    } }"#;
-    let error = refused(json);
+    let error = refused("namespace: file\n  owner<@identity>\n  viewer<@identity>: owner\n");
     assert_eq!(
         error,
         NamespaceError::ConstrainedComputed("viewer".to_owned())
@@ -382,7 +366,9 @@ fn a_computed_relation_with_constraints_is_refused() {
 
 #[test]
 fn a_rewrite_left_out_reads_this() {
-    let document = parse(r#"{ "file": { "owner": { "constraints": ["identity"] } } }"#).unwrap();
+    let document = parse("namespace: file\n  owner<@identity>\n")
+        .unwrap()
+        .remove(0);
     let owner = "owner".parse().unwrap();
     assert_eq!(
         document.relations.rewrite(&owner).map(|rewrite| &**rewrite),
@@ -397,11 +383,9 @@ fn a_rewrite_left_out_reads_this() {
 #[test]
 fn this_anywhere_in_a_rewrite_needs_constraints() {
     for rewrite in ["owner ! this", "owner & (this | owner)", "(this)"] {
-        let json = format!(
-            r#"{{ "file": {{ "owner": {{ "constraints": ["identity"] }}, "r": "{rewrite}" }} }}"#
-        );
+        let text = format!("namespace: file\n  owner<@identity>\n  r: {rewrite}\n");
         assert_eq!(
-            refused(&json),
+            refused(&text),
             NamespaceError::Unconstrained("r".to_owned()),
             "{rewrite}"
         );
@@ -410,52 +394,21 @@ fn this_anywhere_in_a_rewrite_needs_constraints() {
 
 #[test]
 fn a_constraint_written_twice_is_refused_once() {
-    let json = r#"{ "file": {
-        "owner": { "constraints": ["identity", "folder", "identity", "identity", "folder"] }
-    } }"#;
-    let errors = parse(json).unwrap_err();
+    let text = "namespace: file\n  owner<@identity, folder, @identity, @identity, folder>\n";
+    let errors = parse(text).unwrap_err();
     let found: Vec<_> = errors.iter().map(|error| error.kind.to_string()).collect();
     assert_eq!(
         found,
         [
-            "relation 'owner' declares constraint 'identity' more than once",
+            "relation 'owner' declares constraint '@identity' more than once",
             "relation 'owner' declares constraint 'folder' more than once",
         ]
     );
 }
 
-/// A namespace whose `owner` takes `count` distinct namespaces.
-fn constrained(count: usize) -> String {
-    let constraints: Vec<_> = (0..count).map(|i| format!(r#""n{i}""#)).collect();
-    format!(
-        r#"{{ "file": {{ "owner": {{ "constraints": [{}] }} }} }}"#,
-        constraints.join(", ")
-    )
-}
-
-#[test]
-fn a_relation_declares_at_most_max_constraints() {
-    assert!(load(&constrained(MAX_CONSTRAINTS)).is_ok());
-    let error = refused(&constrained(MAX_CONSTRAINTS + 1));
-    assert_eq!(
-        error,
-        NamespaceError::TooManyConstraints {
-            relation: "owner".to_owned(),
-            count: MAX_CONSTRAINTS + 1,
-        }
-    );
-    assert_eq!(
-        error.to_string(),
-        "relation 'owner' declares 33 constraints, more than 32"
-    );
-}
-
 #[test]
 fn a_constraint_naming_its_own_namespace_needs_the_relation_declared() {
-    let json = r#"{ "group": {
-        "member": { "constraints": ["group#member", "group#admin", "identity"] }
-    } }"#;
-    let error = refused(json);
+    let error = refused("namespace: group\n  member<group#member, group#admin, @identity>\n");
     assert_eq!(
         error,
         NamespaceError::UndeclaredConstraint {
@@ -471,17 +424,16 @@ fn a_constraint_naming_its_own_namespace_needs_the_relation_declared() {
 
 #[test]
 fn a_constraint_naming_another_namespace_is_left_to_the_write() {
-    let json = r#"{ "file": { "owner": { "constraints": ["group#member", "folder"] } } }"#;
-    assert!(load(json).is_ok());
+    assert!(load("namespace: file\n  owner<group#member, folder>\n").is_ok());
 }
 
 #[test]
 fn a_followed_relation_its_own_namespace_lacks_is_refused() {
-    let json = r#"{ "folder": {
-        "parent": { "constraints": ["folder", "identity", "folder#parent"] },
-        "viewer": "(parent, viewer) | (parent, missing) | (parent, missing)"
-    } }"#;
-    let error = refused(json);
+    let text = "namespace: folder
+  parent<folder, @identity, folder#parent>
+  viewer: (parent, viewer) | (parent, missing) | (parent, missing)
+";
+    let error = refused(text);
     assert_eq!(
         error,
         NamespaceError::UndeclaredFollowed {
@@ -497,12 +449,8 @@ fn a_followed_relation_its_own_namespace_lacks_is_refused() {
 }
 
 #[test]
-fn a_namespace_named_identity_is_refused() {
-    let errors = parse(r#"{ "identity": {} }"#).unwrap_err();
-    assert_eq!(errors.len(), 1);
-    assert_eq!(errors[0].to_string(), "'identity' is reserved");
-    assert!(load(r#"{ "identities": {} }"#).is_ok());
-    assert!(load(r#"{ "drive.identity": {} }"#).is_ok());
+fn a_namespace_may_be_named_identity() {
+    assert!(load("namespace: identity\n  owner<@identity, identity>\n").is_ok());
 }
 
 /// The checks that reach past a namespace answer for its own references,
@@ -671,20 +619,49 @@ fn a_constraint_admits_only_its_kind_of_subject() {
     }
 }
 
-/// A namespace built in code bypasses the document limits, so a relation
-/// with far more constraints than the limit is refused without a crash.
+/// A namespace built in code bypasses the document limit, so a relation
+/// with a great many constraints is checked without a crash.
 #[test]
-fn far_more_constraints_built_in_code_are_one_problem() {
-    let constraints: Vec<_> = (0..100_000).map(Constraint::Resource).collect();
+fn many_constraints_built_in_code_are_checked() {
+    let mut constraints: Vec<_> = (0..100_000).map(Constraint::Resource).collect();
+    assert!(Namespace::new(vec![(0, This, constraints.clone())]).is_ok());
+    constraints.push(Constraint::Resource(7));
     let problems = Namespace::new(vec![(0, This, constraints)]).unwrap_err();
     assert_eq!(
         problems,
         [Problem {
             at: 0,
-            error: NamespaceError::TooManyConstraints {
+            error: NamespaceError::DuplicateConstraint {
                 relation: "0".to_owned(),
-                count: 100_000,
+                constraint: "7".to_owned(),
             },
         }]
     );
+}
+
+#[test]
+fn a_depth_other_than_the_default_holds() {
+    let deep = |levels| vec![("deep", nested(levels), vec![Constraint::Identity])];
+    assert!(Namespace::<_, &str>::with_depth(deep(3), 3).is_ok());
+    let problems = Namespace::<_, &str>::with_depth(deep(4), 3).unwrap_err();
+    assert_eq!(problems[0].error, NamespaceError::TooDeep(3));
+    assert_eq!(
+        problems[0].error.to_string(),
+        "a rewrite tree deeper than 3 levels is refused"
+    );
+    let deeper = DEFAULT_REWRITE_DEPTH + 50;
+    assert!(Namespace::<_, &str>::with_depth(deep(deeper), deeper).is_ok());
+}
+
+#[test]
+fn a_constraint_displays_as_a_document_writes_it() {
+    let shown: Vec<_> = [
+        Constraint::Identity,
+        Constraint::Resource("folder"),
+        Constraint::Subjectset("group", "member"),
+    ]
+    .iter()
+    .map(ToString::to_string)
+    .collect();
+    assert_eq!(shown, ["@identity", "folder", "group#member"]);
 }

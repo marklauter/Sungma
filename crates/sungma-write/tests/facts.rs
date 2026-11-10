@@ -12,13 +12,9 @@ use common::{post, post_raw, stores};
 async fn declare(app: &Router) -> Value {
     let mut zookie = Value::Null;
     for document in [
-        json!({ "group": { "member": { "constraints": ["identity"] } } }),
-        json!({ "folder": { "viewer": { "constraints": ["identity"] } } }),
-        json!({ "file": {
-            "owner": { "constraints": ["identity"] },
-            "parent": { "constraints": ["folder"] },
-            "viewer": { "rewrite": "this | owner", "constraints": ["group#member", "identity"] }
-        } }),
+        "namespace: group\n  member<@identity>\n",
+        "namespace: folder\n  viewer<@identity>\n",
+        "namespace: file\n  owner<@identity>\n  parent<folder>\n  viewer<@identity, group#member>: this | owner\n",
     ] {
         let (status, reply) = post(app, "/namespaces/write", json!({ "create": document })).await;
         assert_eq!(status, StatusCode::OK, "{reply}");
