@@ -203,11 +203,11 @@ A document is rejected if it breaks a rule of TDL, declares one namespace twice 
 - a rewrite nests deeper than the depth limit (a leaf or a run of `|` or `&` is one level, and each `!` adds one), or groups parentheses deeper than it;
 - a computed subjectset or a factset names an undeclared relation;
 - a rewrite reads `this` without constraints, or a relation declares constraints without reading `this`;
-- a constraint `namespace#relation` names a relation that namespace doesn't declare;
-- a fact-to-subjectset's followed relation isn't declared by every namespace in its factset's constraints: with `parent: folder`, `(parent, viewer)` needs `folder` to declare `viewer`;
+- a constraint names its own namespace with a relation it doesn't declare;
+- a fact-to-subjectset's factset names its own namespace in a constraint, and the namespace doesn't declare the followed relation: in `folder`, with `parent<folder>`, `(parent, viewer)` needs `folder` to declare `viewer`;
 - computed subjectsets form a cycle, such as `viewer: editor` with `editor: viewer`. A cycle through a fact-to-subjectset, such as folders in folders, is allowed.
 
-A reference to another namespace in the same document is checked against the document, in either order. A reference outside it is checked against that namespace's latest version.
+The parser checks each namespace on its own. It doesn't check references to other namespaces, in the document or outside it.
 
 ## Limits
 
@@ -222,7 +222,7 @@ Errors are reported as they are encountered in the document, up to the error lim
 
 - A syntax error stops its rewrite, and parsing goes on with the next relation.
 - A relation whose rewrite fails is still declared, so references to it don't dangle.
-- Relations that reach each other report one cycle, at the first one the check meets, with a path back to it. The path lists at most 8 relations, then how many more.
+- Relations that reach each other report one cycle, at the first one the check meets, with the full path back to it.
 
 Each error is a variant of one enum, carrying the names involved. There are no string codes.
 
@@ -230,7 +230,7 @@ An error quotes at most 64 bytes, cut at a character boundary and marked as cut,
 
 ## Printing
 
-The printer writes namespaces as a document that parses back as equal namespaces, and the same namespaces always print as the same text.
+The printer only prints. It doesn't check what it's given, and it never refuses. Namespaces the parser accepted print as a document that parses back as equal namespaces, and the same namespaces always print as the same text.
 
 - Undotted namespaces print first, sorted, with no `theory:` line above them. They must come first, or they would read as part of the theory above them.
 - Then each theory prints once, sorted by name: its `theory:` line, then its namespaces, sorted, with the theory name and its dot taken off. `x.y.z` prints as `y.z` under `theory: x`. A constraint that names a namespace outside its own namespace's theory prints with `..`.
@@ -239,8 +239,7 @@ The printer writes namespaces as a document that parses back as equal namespaces
 - Parentheses print only where the grammar needs them: a union inside a union, a union or intersection inside an intersection or on the left of `!`, and any operator on the right of `!`.
 - A blank line follows each `theory:` line, and one comes before each `theory:` line after the start of the document. Namespaces follow one another with no blank line between them.
 - Lines end in `\n`.
-- The printer has no size limit.
-- It refuses, with a `PrintError`, what the parser would refuse: an empty set of namespaces, a namespace given twice, a rewrite deeper than the default depth limit, an invalid name, and a union or intersection with one operand.
+- The printer has no size limit, and prints a rewrite of any depth.
 
 Author, Sungma's UI, shows and edits namespaces in TDL.
 <!-- /final -->
@@ -289,9 +288,8 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 
 1. Each check in [Checks](#checks) refuses what it should, including a relation that excludes itself, and allows cycles through a fact-to-subjectset and relations that share a target.
 2. An empty constraint list, an entry twice, or a malformed entry is refused.
-3. A fact whose subject satisfies no constraint, or under a computed relation, is refused.
-4. A dangling target is reported once per relation that names it, and a set of relations that reach each other is one cycle error with a path.
-5. Redeclaring a relation checks the whole namespace again.
+3. A dangling target within a namespace is reported once per relation that names it, and a set of relations that reach each other is one cycle error with the full path.
+4. A constraint or fact-to-subjectset that names another namespace isn't checked, whether that namespace is in the document or not.
 
 #### Errors
 
@@ -308,7 +306,7 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 
 1. The canonical form, `: this` left out, sorted constraints, and only needed parentheses.
 2. Undotted namespaces print first with no `theory:` line, then each theory once, sorted, with its namespaces under it and the prefix taken off.
-3. Each refusal, and a document past 2 MiB is written.
+3. The printer prints whatever it's given without refusing: an empty set, a namespace given twice, a rewrite far past the depth limit, and a document past 2 MiB.
 
 #### Round trips
 
