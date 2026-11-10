@@ -1080,6 +1080,96 @@ fn keywords_arent_relation_names_but_name_namespaces() {
 }
 
 #[test]
+fn this_is_reserved_as_a_namespace_segment_and_a_theory_name() {
+    for (text, name) in [
+        (
+            "namespace: this
+",
+            "this",
+        ),
+        (
+            "namespace: THIS
+",
+            "THIS",
+        ),
+        (
+            "namespace: a.this
+",
+            "a.this",
+        ),
+        (
+            "namespace: This.a
+",
+            "This.a",
+        ),
+        (
+            "theory: this
+namespace: a
+",
+            "this",
+        ),
+        (
+            "theory: tHis
+namespace: a
+",
+            "tHis",
+        ),
+        (
+            "theory: t
+namespace: this
+",
+            "t.this",
+        ),
+        (
+            "namespace: a
+  r<this>
+",
+            "this",
+        ),
+        (
+            "namespace: a
+  r<This#member>
+",
+            "This",
+        ),
+        (
+            "namespace: a
+  r<b.THIS>
+",
+            "b.THIS",
+        ),
+        (
+            "theory: t
+namespace: a
+  r<this>
+",
+            "t.this",
+        ),
+        (
+            "theory: t
+namespace: a
+  r<..this>
+",
+            "this",
+        ),
+    ] {
+        let error = only(text);
+        assert!(
+            matches!(error.kind, ErrorKind::Name(NameError::Reserved(_))),
+            "{text}: {error}"
+        );
+        assert!(error.to_string().contains(&format!("'{name}'")), "{error}");
+    }
+    let documents = parsed(
+        "theory: these
+namespace: thisone
+  r<this_, a.This1>
+",
+    );
+    assert_eq!(names(&documents), ["these.thisone"]);
+}
+
+#[test]
 fn the_parser_reads_sungma_s_own_namespaces() {
     let documents = parsed("namespace: sungma.audit\ntheory: sungma\nnamespace: root\n");
     assert_eq!(names(&documents), ["sungma.audit", "sungma.root"]);

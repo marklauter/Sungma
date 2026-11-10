@@ -66,7 +66,8 @@ pub const MAX_IDENTITY_BYTES: usize = 512;
 // Each name holds its text in an `Arc<str>`, so a clone shares the text
 // rather than copying it.
 
-/// One or more names joined by dots, such as `file` or `drive.file`.
+/// One or more segments joined by dots, such as `file` or `drive.file`: each
+/// a name other than `this`, the rewrite keyword, in any casing.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct NamespaceName(Arc<str>);
 
@@ -158,6 +159,11 @@ fn check_namespace_name(text: &str) -> Result<(), NameError> {
         Err(NameError::TooLong(quote(text), MAX_NAMESPACE_BYTES))
     } else if !text.split('.').all(is_name) {
         Err(NameError::Invalid(quote(text)))
+    } else if text
+        .split('.')
+        .any(|segment| segment.eq_ignore_ascii_case("this"))
+    {
+        Err(NameError::Reserved(quote(text)))
     } else {
         Ok(())
     }

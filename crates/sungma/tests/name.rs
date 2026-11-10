@@ -182,6 +182,27 @@ fn namespace_and_theory_are_reserved_relation_names_in_any_casing() {
 }
 
 #[test]
+fn this_is_reserved_as_a_namespace_segment_in_any_casing() {
+    for reserved in ["this", "This", "THIS", "a.this", "tHiS.a", "a.b.This"] {
+        assert_eq!(
+            NamespaceName::try_from(reserved),
+            Err(NameError::Reserved(reserved.to_owned()))
+        );
+    }
+    for allowed in ["thisone", "a.this_", "_this", "these.a"] {
+        assert!(NamespaceName::try_from(allowed).is_ok(), "{allowed}");
+    }
+    assert_eq!(NamespaceName::new_unchecked("this").as_ref(), "this");
+}
+
+/// Whether a namespace name has `this` as a segment, in any casing.
+fn reserved_segment(namespace: &str) -> bool {
+    namespace
+        .split('.')
+        .any(|segment| segment.eq_ignore_ascii_case("this"))
+}
+
+#[test]
 fn a_name_error_quotes_a_bounded_and_escaped_cut_of_the_text() {
     let long = format!("{}{}", "x".repeat(300), char::from_u32(0x202e).unwrap());
     let error = format!("{long}:a").parse::<ResourceName>().unwrap_err();
@@ -203,6 +224,7 @@ proptest! {
         id in "[!-~]{1,64}",
         relation in RELATION,
     ) {
+        prop_assume!(!reserved_segment(&namespace));
         prop_assume!(
             !["this", "namespace", "theory"]
                 .iter()
@@ -218,6 +240,7 @@ proptest! {
 
     #[test]
     fn a_resource_name_parses_into_its_parts(namespace in NAMESPACE, id in "[!-~]{1,64}") {
+        prop_assume!(!reserved_segment(&namespace));
         let text = format!("{namespace}:{id}");
         let name: ResourceName = text.parse().unwrap();
         prop_assert_eq!(name.namespace().as_str(), &namespace);
