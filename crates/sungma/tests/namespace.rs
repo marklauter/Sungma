@@ -360,6 +360,7 @@ fn a_computed_relation_with_constraints_is_refused() {
 fn a_rewrite_left_out_reads_this() {
     let document = parse("namespace: file\n  owner<@identity>\n")
         .unwrap()
+        .namespaces
         .remove(0);
     let owner = "owner".parse().unwrap();
     assert_eq!(

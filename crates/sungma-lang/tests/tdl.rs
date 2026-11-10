@@ -25,7 +25,9 @@ use grammar::DECLARED;
 const LARGE: usize = 2 * 1024 * 1024;
 
 fn parsed(text: &str) -> Vec<NamespaceDocument> {
-    tdl::parse(text).unwrap_or_else(|errors| panic!("refused {text:?}: {errors:?}"))
+    tdl::parse(text)
+        .unwrap_or_else(|errors| panic!("refused {text:?}: {errors:?}"))
+        .namespaces
 }
 
 fn refused(text: &str) -> Vec<TdlError> {
@@ -830,6 +832,111 @@ fn references_are_found_in_a_rewrite_of_any_depth() {
         let found: Vec<_> = found.iter().map(ToString::to_string).collect();
         assert_eq!(found, ["folder", "folder#v"]);
     });
+}
+
+// Warnings.
+
+/// The warnings of an accepted document, as `(line, column, namespace,
+/// message)`.
+fn warnings(text: &str) -> Vec<(usize, usize, Option<String>, String)> {
+    tdl::parse(text)
+        .unwrap_or_else(|errors| panic!("refused {text:?}: {errors:?}"))
+        .warnings
+        .into_iter()
+        .map(|warning| {
+            let Place { line, column } = warning.place;
+            (line, column, warning.namespace, warning.kind.to_string())
+        })
+        .collect()
+}
+
+#[test]
+fn each_warning_is_given_where_it_should_be() {
+    let text = "theory: drive
+namespace: file
+  owner<@identity, grop#member, folder, ..io.dir>
+namespace: folder
+  parent<folder, file#owner>
+namespace: user
+theory: io
+namespace: dir
+  r<@identity>
+theory: drive
+namespace: empty
+";
+    let found = warnings(text);
+    let at = |line, column, namespace: &str, message: &str| {
+        (line, column, Some(namespace.to_owned()), message.to_owned())
+    };
+    assert_eq!(
+        found,
+        [
+            at(
+                3,
+                20,
+                "drive.file",
+                "a constraint names namespace 'drive.grop', which isn't in the document; '..' before it marks a namespace outside",
+            ),
+            at(
+                6,
+                1,
+                "drive.user",
+                "namespace 'drive.user' declares no relations"
+            ),
+            (
+                10,
+                1,
+                None,
+                "theory 'drive' opens more than one section".to_owned()
+            ),
+            at(
+                11,
+                1,
+                "drive.empty",
+                "namespace 'drive.empty' declares no relations"
+            ),
+        ]
+    );
+    // `..` outside any theory changes nothing.
+    assert_eq!(
+        warnings("namespace: a\n  r<@identity, ..a#r, ..b>\n"),
+        [
+            (
+                2,
+                16,
+                Some("a".to_owned()),
+                "'..' outside any theory changes nothing".to_owned()
+            ),
+            (
+                2,
+                23,
+                Some("a".to_owned()),
+                "'..' outside any theory changes nothing".to_owned()
+            ),
+        ]
+    );
+    // A warning reads with its place and namespace.
+    let warning = &tdl::parse("namespace: a\n").expect("accepted").warnings[0];
+    assert_eq!(
+        warning.to_string(),
+        "line 1, column 1: namespace 'a': namespace 'a' declares no relations"
+    );
+    // A refused document gives errors, not warnings.
+    refused("namespace: a\nnamespace: b\n  r: x\n");
+    // A document with nothing to warn of has no warnings.
+    assert!(warnings(DRIVE).is_empty());
+    assert!(warnings(SAMPLE).is_empty());
+    assert!(warnings("namespace: a\n  r<@identity, a, a#r>\n").is_empty());
+}
+
+#[test]
+fn a_constraint_written_with_dots_doesnt_warn() {
+    for text in [
+        "theory: t\nnamespace: a\n  r<..b, ..c#m, ..t.a#r>\n",
+        "theory: t\nnamespace: a\n  r<..t.a, @identity>\nnamespace: b\n  r<..t.a#r>\n",
+    ] {
+        assert!(warnings(text).is_empty(), "{text}");
+    }
 }
 
 // The theory name.
@@ -2284,10 +2391,13 @@ fn the_printer_prints_a_rewrite_past_the_depth_limit() {
         ..Settings::default()
     };
     let documents = tdl::parse_with(&depth_case(&chain(DEFAULT_REWRITE_DEPTH + 1)), deeper)
-        .expect("a rewrite at a deeper limit");
+        .expect("a rewrite at a deeper limit")
+        .namespaces;
     let printed = print(&documents);
     assert!(tdl::parse(&printed).is_err());
-    let again = tdl::parse_with(&printed, deeper).expect("printed as it parsed");
+    let again = tdl::parse_with(&printed, deeper)
+        .expect("printed as it parsed")
+        .namespaces;
     assert!(same(&again, &documents));
 }
 
@@ -2543,7 +2653,8 @@ proptest! {
             .collect();
         let text = print(&documents);
         let again = tdl::parse(&text)
-            .map_err(|errors| TestCaseError::fail(format!("{text}\n{errors:?}")))?;
+            .map_err(|errors| TestCaseError::fail(format!("{text}\n{errors:?}")))?
+            .namespaces;
         prop_assert!(same(&documents, &again), "{}", text);
         prop_assert_eq!(print(&again), text);
     }
@@ -2561,7 +2672,7 @@ proptest! {
             "namespace: t\n  r0<@identity>\n  r1<@identity>\n  r2<@identity>\n{}{expression}",
             signature(&expression)
         );
-        if let Ok(documents) = tdl::parse(&text) {
+        if let Ok(tdl::Parsed { namespaces: documents, .. }) = tdl::parse(&text) {
             let printed = print(&documents);
             let again = parsed(&printed);
             prop_assert!(same(&again, &documents));
@@ -2581,7 +2692,7 @@ proptest! {
     fn any_near_tdl_text_is_parsed_or_refused(
         text in r"(theory|namespace|this|@identity|\.\.|[:<>.,()|&!/ \n#rt0-9])*",
     ) {
-        if let Ok(documents) = tdl::parse(&text) {
+        if let Ok(tdl::Parsed { namespaces: documents, .. }) = tdl::parse(&text) {
             let printed = print(&documents);
             let again = parsed(&printed);
             prop_assert!(same(&again, &documents));

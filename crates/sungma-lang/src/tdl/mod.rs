@@ -29,6 +29,12 @@
 //! Each namespace is checked on its own. A reference to another namespace,
 //! through a constraint or a fact-to-subjectset, isn't checked, whether that
 //! namespace is in the document or not; it's left to the namespace write.
+//! Each namespace comes with its [`references`] to others.
+//!
+//! A [`Warning`] marks something legal that probably isn't meant, and never
+//! refuses a document: a constraint written without `..` naming a namespace
+//! that isn't in the document, `..` outside any theory, a theory opening
+//! more than one section, and a namespace without relations.
 
 mod print;
 mod rewrite;
@@ -206,6 +212,44 @@ impl TdlError {
     }
 }
 
+/// Something legal in a document that probably isn't what its author
+/// meant, with its place and the full name of the namespace it's in, where
+/// it's in one. A warning never refuses a document.
+#[derive(Debug, Error, PartialEq, Eq)]
+#[error("{}{}{kind}", TdlError::at(Some(*.place)), TdlError::within(.namespace, &None))]
+pub struct Warning {
+    pub namespace: Option<String>,
+    pub place: Place,
+    pub kind: WarningKind,
+}
+
+/// What a [`Warning`] is about, with the names involved, quoted.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum WarningKind {
+    /// A constraint written without `..` naming a namespace that isn't in
+    /// the document.
+    #[error(
+        "a constraint names namespace '{0}', which isn't in the document; '..' before it marks a namespace outside"
+    )]
+    NotInDocument(String),
+    /// `..` outside any theory, where it changes nothing.
+    #[error("'..' outside any theory changes nothing")]
+    DotsOutsideTheory,
+    /// A theory opening a section after its first.
+    #[error("theory '{0}' opens more than one section")]
+    TheoryReopened(String),
+    #[error("namespace '{0}' declares no relations")]
+    NoRelations(String),
+}
+
+/// A document's namespaces, under their full names, in document order, and
+/// its warnings, in document order.
+#[derive(Debug)]
+pub struct Parsed {
+    pub namespaces: Vec<NamespaceDocument>,
+    pub warnings: Vec<Warning>,
+}
+
 /// Every problem a refused document was found with.
 #[derive(Debug, Error)]
 #[error("{}", .0.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
@@ -218,9 +262,9 @@ const AFTER_CONSTRAINT: &str = "',' or '>'";
 const AFTER_CONSTRAINTS: &str = "':', a relation, 'namespace:', 'theory:' or the end";
 
 /// Parses and checks a document, as the [module](self) describes, into its
-/// namespaces under their full names, in document order, with the default
-/// [`Settings`].
-pub fn parse(text: &str) -> Result<Vec<NamespaceDocument>, Vec<TdlError>> {
+/// namespaces under their full names, in document order, and its warnings,
+/// with the default [`Settings`].
+pub fn parse(text: &str) -> Result<Parsed, Vec<TdlError>> {
     parse_with(text, Settings::default())
 }
 
@@ -228,7 +272,7 @@ pub fn parse(text: &str) -> Result<Vec<NamespaceDocument>, Vec<TdlError>> {
 ///
 /// Linear in the document's length: one pass to lex it, one to parse it, and
 /// [`Namespace::with_depth`]'s linear check of each namespace.
-pub fn parse_with(text: &str, settings: Settings) -> Result<Vec<NamespaceDocument>, Vec<TdlError>> {
+pub fn parse_with(text: &str, settings: Settings) -> Result<Parsed, Vec<TdlError>> {
     if text.starts_with('\u{feff}') {
         return Err(vec![unplaced(ErrorKind::ByteOrderMark)]);
     }
@@ -240,18 +284,24 @@ pub fn parse_with(text: &str, settings: Settings) -> Result<Vec<NamespaceDocumen
         depth: settings.depth,
         cap: settings.errors,
         errors: Vec::new(),
+        warnings: Vec::new(),
+        theories: HashSet::new(),
+        named: Vec::new(),
     };
     let namespaces = reader.document();
     match reader.finish() {
-        None => Ok(namespaces),
+        None => Ok(Parsed {
+            warnings: reader.warnings(&namespaces),
+            namespaces,
+        }),
         Some(errors) => Err(errors),
     }
 }
 
 /// Parses a document that declares one namespace, such as a namespace
-/// write's or a stored version's.
+/// write's or a stored version's. Its warnings are left out.
 pub fn parse_one(text: &str) -> Result<NamespaceDocument, Vec<TdlError>> {
-    let mut namespaces = parse(text)?;
+    let mut namespaces = parse(text)?.namespaces;
     match namespaces.len() {
         1 => Ok(namespaces.remove(0)),
         count => Err(vec![unplaced(ErrorKind::ManyNamespaces(count))]),
@@ -353,6 +403,13 @@ struct Reader<'l, 'a> {
     /// How many errors are reported.
     cap: usize,
     errors: Vec<TdlError>,
+    warnings: Vec<Warning>,
+    /// Each theory that has opened a section.
+    theories: HashSet<NamespaceName>,
+    /// Each constraint's namespace written without `..`: the namespace it's
+    /// in, its place, and the namespace it names, to be found in the
+    /// document.
+    named: Vec<(NamespaceName, Place, NamespaceName)>,
 }
 
 impl<'a> Reader<'_, 'a> {
@@ -519,6 +576,10 @@ impl<'a> Reader<'_, 'a> {
                     Err(name) => name,
                 };
                 if let Some((relations, places)) = self.relations(&name, &theory) {
+                    if places.is_empty() {
+                        let kind = WarningKind::NoRelations(quote(name.as_str()));
+                        self.warn(Some(&name), place, kind);
+                    }
                     let document = NamespaceDocument {
                         references: references(&name, &relations),
                         namespace: name,
@@ -573,6 +634,13 @@ impl<'a> Reader<'_, 'a> {
         if self.peek().token == Token::End || self.at_keyword("theory") {
             let kind = ErrorKind::EmptyTheory(quote(name.as_str()));
             self.push(None, None, (Some(header), kind));
+        }
+        if !self.theories.insert(name.clone()) {
+            self.warn(
+                None,
+                header,
+                WarningKind::TheoryReopened(quote(name.as_str())),
+            );
         }
         Theory::Named(name)
     }
@@ -699,7 +767,7 @@ impl<'a> Reader<'_, 'a> {
         // Each pass reads at least one lexeme or ends, so the lexemes bound
         // the passes.
         for _ in 0..self.lexemes.len() {
-            let failure = match self.constraint(theory) {
+            let failure = match self.constraint(namespace, theory) {
                 Ok(constraint) => {
                     constraints.push(constraint);
                     match self.peek().token {
@@ -730,13 +798,28 @@ impl<'a> Reader<'_, 'a> {
 
     /// One constraint, its theory's name before its namespace name unless
     /// `..` comes first.
-    fn constraint(&mut self, theory: &Theory) -> Result<NamedConstraint, Failure> {
+    /// `..` outside a theory, and a namespace named without it, are kept
+    /// for the warnings.
+    fn constraint(
+        &mut self,
+        namespace: &NamespaceName,
+        theory: &Theory,
+    ) -> Result<NamedConstraint, Failure> {
         let Some((first, written)) = self.joined() else {
             return Err(syntax(self.peek(), CONSTRAINT));
         };
-        theory
+        let constraint = theory
             .constraint(written)
-            .map_err(|error| (Some(first.place), ErrorKind::Name(error)))
+            .map_err(|error| (Some(first.place), ErrorKind::Name(error)))?;
+        if !written.starts_with(OUTSIDE) {
+            if let Some(named) = constraint.namespace() {
+                self.named
+                    .push((namespace.clone(), first.place, named.clone()));
+            }
+        } else if matches!(theory, Theory::None) {
+            self.warn(Some(namespace), first.place, WarningKind::DotsOutsideTheory);
+        }
+        Ok(constraint)
     }
 
     /// The rewrite of relation `name`, whose `:` was just read, or `None`
@@ -754,6 +837,32 @@ impl<'a> Reader<'_, 'a> {
             .parse()
             .map_err(|failure| self.push(Some(namespace), Some(name.as_str()), failure))
             .ok()
+    }
+
+    fn warn(&mut self, namespace: Option<&NamespaceName>, place: Place, kind: WarningKind) {
+        self.warnings.push(Warning {
+            namespace: namespace.map(|name| quote(name.as_str())),
+            place,
+            kind,
+        });
+    }
+
+    /// Every warning in document order, with a constraint's namespace that
+    /// isn't among `namespaces` warned of.
+    fn warnings(&mut self, namespaces: &[NamespaceDocument]) -> Vec<Warning> {
+        let declared: HashSet<_> = namespaces
+            .iter()
+            .map(|document| &document.namespace)
+            .collect();
+        for (namespace, place, named) in std::mem::take(&mut self.named) {
+            if !declared.contains(&named) {
+                let kind = WarningKind::NotInDocument(quote(named.as_str()));
+                self.warn(Some(&namespace), place, kind);
+            }
+        }
+        let mut warnings = std::mem::take(&mut self.warnings);
+        warnings.sort_by_key(|warning| warning.place);
+        warnings
     }
 
     /// Every error in document order, capped at the setting, or `None`.

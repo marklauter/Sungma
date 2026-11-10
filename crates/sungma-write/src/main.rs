@@ -110,6 +110,7 @@ where
             let documents = tdl::parse(document).map_err(tdl::Refusal)?;
             namespaces.extend(
                 documents
+                    .namespaces
                     .into_iter()
                     .map(|document| (document.namespace, document.relations)),
             );

@@ -41,11 +41,13 @@ fuzz_target!(|data: &[u8]| {
     let Ok(text) = std::str::from_utf8(data) else {
         return;
     };
-    let Ok(parsed) = tdl::parse(text) else {
+    let Ok(tdl::Parsed { namespaces: parsed, .. }) = tdl::parse(text) else {
         return;
     };
     let printed = print(&parsed);
-    let again = tdl::parse(&printed).expect("printed namespaces parse");
+    let again = tdl::parse(&printed)
+        .expect("printed namespaces parse")
+        .namespaces;
     assert_eq!(declared(&again), declared(&parsed));
     assert_eq!(print(&again), printed);
 });
