@@ -1,33 +1,24 @@
 # Sample
 
-Three namespaces for documents: groups hold members, folders sit in folders, and files sit in folders. Each is a namespace document, written in this order, since each names the ones before it:
+Three namespaces for documents: groups hold members, folders sit in folders, and files sit in folders. Each is written in TDL, in this order, since each names the ones before it (`crates/sungma/tests/fixtures/namespaces` holds them):
 
-```json
-{
-  "group": {
-    "member": { "constraints": ["group#member", "identity"] }
-  }
-}
+```tdl
+namespace: group
+  member<@identity, group#member>
 
-{
-  "folder": {
-    "banned": { "constraints": ["group#member", "identity"] },
-    "owner": { "constraints": ["identity"] },
-    "parent": { "constraints": ["folder"] },
-    "viewer": { "rewrite": "(this | (parent, viewer)) ! banned", "constraints": ["group#member", "identity"] }
-  }
-}
+namespace: folder
+  banned<@identity, group#member>
+  owner<@identity>
+  parent<folder>
+  viewer<@identity, group#member>: (this | (parent, viewer)) ! banned
 
-{
-  "file": {
-    "auditor": { "rewrite": "this & viewer", "constraints": ["identity"] },
-    "banned": { "constraints": ["identity"] },
-    "editor": { "rewrite": "this | owner", "constraints": ["group#member", "identity"] },
-    "owner": { "constraints": ["identity"] },
-    "parent": { "constraints": ["folder", "folder#owner", "identity"] },
-    "viewer": { "rewrite": "(this | editor | (parent, viewer)) ! banned", "constraints": ["group#member", "identity"] }
-  }
-}
+namespace: file
+  auditor<@identity>: this & viewer
+  banned<@identity>
+  editor<@identity, group#member>: this | owner
+  owner<@identity>
+  parent<@identity, folder, folder#owner>
+  viewer<@identity, group#member>: (this | editor | (parent, viewer)) ! banned
 ```
 
 Some facts under it, as a fact document (`crates/sungma/tests/fixtures/docs.facts.json` holds them all):

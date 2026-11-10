@@ -40,10 +40,10 @@ A proof of concept. The evaluator, decisions with grounds and replay, namespace 
 git config core.hooksPath .githooks
 ```
 
-`fuzz/` holds `cargo-fuzz` targets for the namespace and fact document parsers, which CI runs for a minute each, and for the NTP and NTS parsers, which it runs for 30 seconds each. Locally they need the nightly toolchain:
+`fuzz/` holds `cargo-fuzz` targets for the TDL and fact document parsers, which CI runs for a minute each, and for the NTP and NTS parsers, which it runs for 30 seconds each. Locally they need the nightly toolchain:
 
 ```sh
-cargo +nightly fuzz run document
+cargo +nightly fuzz run tdl
 cargo +nightly fuzz run fact
 ```
 
@@ -56,7 +56,7 @@ F=crates/sungma/tests/fixtures
 # The Write service creates the table and seeds it.
 # Each namespace after those it names.
 cargo run -p sungma-write --features server -- $F/docs.facts.json \
-  $F/namespaces/group.json $F/namespaces/folder.json $F/namespaces/file.json &
+  $F/namespaces/group.theory $F/namespaces/folder.theory $F/namespaces/file.theory &
 # Once it listens:
 cargo run -p sungma-check --features server &
 

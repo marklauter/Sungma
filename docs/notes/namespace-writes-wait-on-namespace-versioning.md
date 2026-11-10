@@ -9,7 +9,7 @@ status: evolving
 
 ## Where it stands
 
-- Namespaces enter as namespace documents (`docs/specs/namespace-documents.md`), parsed by `namespace::parse` (`crates/sungma-lang/src/namespace.rs`) and written through `NamespaceWriter::write_namespace` (`crates/sungma-write/src/store.rs`). The API writes them at `/namespaces/write`, and a node seeds them at startup.
+- Namespaces enter as theory documents (`docs/specs/theory-documents.md`), parsed by `tdl::parse` (`crates/sungma-lang/src/tdl/mod.rs`) and written through `NamespaceWriter::write_namespace` (`crates/sungma-write/src/store.rs`). The API writes them at `/namespaces/write`, and a node seeds them at startup.
 - `NamespaceReader` (`crates/sungma-check/src/store.rs`) reads the version whose span covers a revision.
 - A `Decision` (`crates/sungma-check/src/decision.rs`) records the fact `Revision` and the `Semantics` version, not which namespaces it was judged under. `replay` (`crates/sungma-check/src/replay.rs`) reads the namespaces of the decision's revision.
 - `Namespace::new` (`crates/sungma/src/namespace.rs`) checks a namespace whole and returns every problem. A namespace is valid once built, and a write port keeps that: no stored namespace fails to evaluate.
