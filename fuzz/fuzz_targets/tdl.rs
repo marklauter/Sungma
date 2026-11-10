@@ -5,9 +5,9 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use sungma_lang::tdl::{self, NamespaceDocument, PrintError};
+use sungma_lang::tdl::{self, NamespaceDocument};
 
-fn print(documents: &[NamespaceDocument]) -> Result<String, PrintError> {
+fn print(documents: &[NamespaceDocument]) -> String {
     let namespaces: Vec<_> = documents
         .iter()
         .map(|document| (&document.namespace, &document.relations))
@@ -44,8 +44,8 @@ fuzz_target!(|data: &[u8]| {
     let Ok(parsed) = tdl::parse(text) else {
         return;
     };
-    let printed = print(&parsed).expect("parsed namespaces print");
+    let printed = print(&parsed);
     let again = tdl::parse(&printed).expect("printed namespaces parse");
     assert_eq!(declared(&again), declared(&parsed));
-    assert_eq!(print(&again), Ok(printed));
+    assert_eq!(print(&again), printed);
 });

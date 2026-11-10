@@ -37,7 +37,7 @@ use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
 
-pub use print::{PrintError, print};
+pub use print::print;
 pub use rewrite::{ErrorKind, Place};
 pub use sungma::{
     name::{MAX_NAMESPACE_BYTES, MAX_QUOTE_BYTES, MAX_RELATION_BYTES},

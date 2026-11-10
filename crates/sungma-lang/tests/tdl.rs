@@ -15,7 +15,7 @@ use sungma::{
 };
 use sungma_lang::tdl::{
     self, DEFAULT_MAX_ERRORS, ErrorKind, MAX_NAMESPACE_BYTES, MAX_QUOTE_BYTES, MAX_RELATION_BYTES,
-    Named, NamedConstraint, NamespaceDocument, Place, PrintError, Refusal, Settings, TdlError,
+    Named, NamedConstraint, NamespaceDocument, Place, Refusal, Settings, TdlError,
 };
 
 use grammar::DECLARED;
@@ -135,7 +135,7 @@ fn constraints_of(document: &NamespaceDocument, name: &str) -> Vec<String> {
     constraints
 }
 
-fn print(documents: &[NamespaceDocument]) -> Result<String, PrintError> {
+fn print(documents: &[NamespaceDocument]) -> String {
     let namespaces: Vec<_> = documents
         .iter()
         .map(|document| (&document.namespace, &document.relations))
@@ -201,7 +201,7 @@ fn every_valid_form_parses_to_its_tree_and_prints_canonically() {
     for (expression, tree, canonical) in grammar::valid() {
         let document = one(&grammar_case(expression));
         assert_eq!(rewrite_of(&document, "r"), tree, "{expression}");
-        let text = print(&[document]).expect("a printable namespace");
+        let text = print(&[document]);
         let line = text
             .lines()
             .find(|line| line.starts_with("  r:") || line.starts_with("  r<"))
@@ -338,14 +338,14 @@ fn the_sample_parses_to_sungmas_four_namespaces() {
             exclusion(fact_to("parent", "owner"), fact_to("protected", "owner")),
         ])
     );
-    let printed = print(&documents).expect("a printable model");
+    let printed = print(&documents);
     assert!(
         printed.starts_with("theory: sungma\n\nnamespace: group\n"),
         "{printed}"
     );
     let again = parsed(&printed);
     assert!(same(&documents, &again));
-    assert_eq!(print(&again), Ok(printed));
+    assert_eq!(print(&again), printed);
 }
 
 #[test]
@@ -699,7 +699,7 @@ namespace: y.z
     shuffled.reverse();
     shuffled.swap(2, 3);
     assert_eq!(names(&shuffled), ["x.y.z", "c.d", "a", "b"]);
-    assert_eq!(print(&shuffled), Ok(text.to_owned()));
+    assert_eq!(print(&shuffled), text);
 }
 
 #[test]
@@ -1655,18 +1655,15 @@ namespace: folder
   parent<folder>
   viewer<..group#member, @identity>: (this | (parent, viewer)) ! banned
 ";
-    assert_eq!(print(&documents), Ok(expected.to_owned()));
-    assert_eq!(print(&reversed), Ok(expected.to_owned()));
-    assert_eq!(
-        print(&parsed("namespace: user")),
-        Ok("namespace: user\n".to_owned())
-    );
+    assert_eq!(print(&documents), expected);
+    assert_eq!(print(&reversed), expected);
+    assert_eq!(print(&parsed("namespace: user")), "namespace: user\n");
 }
 
 #[test]
 fn every_fixture_is_in_canonical_form() {
     for text in FIXTURES {
-        assert_eq!(print(&parsed(text)), Ok(text.to_owned()));
+        assert_eq!(print(&parsed(text)), *text);
     }
 }
 
@@ -1708,7 +1705,7 @@ theory: y
 
 namespace: a
 ";
-    let printed = print(&documents).expect("printable namespaces");
+    let printed = print(&documents);
     assert_eq!(printed, expected);
     let again = parsed(&printed);
     assert!(same(&documents, &again), "{printed}");
@@ -1716,11 +1713,11 @@ namespace: a
     // before them.
     assert_eq!(
         print(&parsed("theory: x\nnamespace: a\nnamespace: b\n")),
-        Ok("theory: x\n\nnamespace: a\nnamespace: b\n".to_owned())
+        "theory: x\n\nnamespace: a\nnamespace: b\n"
     );
     assert_eq!(
         print(&parsed("namespace: b\nnamespace: a\n")),
-        Ok("namespace: a\nnamespace: b\n".to_owned())
+        "namespace: a\nnamespace: b\n"
     );
 }
 
@@ -1761,11 +1758,11 @@ namespace: folder
 namespace: x.y
   r<..drive, folder>
 ";
-    let printed = print(&documents).expect("printable namespaces");
+    let printed = print(&documents);
     assert_eq!(printed, expected);
     let again = parsed(&printed);
     assert!(same(&documents, &again), "{printed}");
-    assert_eq!(print(&again), Ok(printed));
+    assert_eq!(print(&again), printed);
 }
 
 #[test]
@@ -1777,7 +1774,7 @@ fn constraints_print_sorted_with_the_prefix_taken_off() {
         constraints_of(&documents[0], "r"),
         ["@identity", "t.c#s", "t.identity", "t.t.b", "u.v.w"]
     );
-    let printed = print(&documents).expect("a printable namespace");
+    let printed = print(&documents);
     assert_eq!(
         printed,
         "theory: t\n\nnamespace: a\n  r<..u.v.w, @identity, c#s, identity, t.b>: this | s\n  s<@identity>\n"
@@ -1786,159 +1783,154 @@ fn constraints_print_sorted_with_the_prefix_taken_off() {
     assert!(same(&documents, &again));
     // Outside a theory, names print as they are, with no dots.
     let documents = parsed("namespace: a\n  r<b, ..x.y, b#r>\n");
-    assert_eq!(
-        print(&documents),
-        Ok("namespace: a\n  r<b, b#r, x.y>\n".to_owned())
-    );
+    assert_eq!(print(&documents), "namespace: a\n  r<b, b#r, x.y>\n");
+}
+
+/// Namespace `namespace` declaring `relations`, built in code.
+fn built(
+    namespace: &str,
+    relations: Vec<(&str, Rewrite<&str>, Vec<NamedConstraint>)>,
+) -> NamespaceDocument {
+    let relations = relations
+        .into_iter()
+        .map(|(name, rewrite, constraints)| {
+            (
+                relation(name),
+                rewrite.map(&mut |name| relation(name)),
+                constraints,
+            )
+        })
+        .collect();
+    NamespaceDocument {
+        namespace: namespace_name(namespace),
+        relations: Namespace::new(relations).expect("a valid namespace"),
+    }
 }
 
 #[test]
-fn the_printer_refuses_what_no_document_declares() {
-    assert_eq!(print(&[]), Err(PrintError::NoNamespace));
-    let mut twice = parsed(DRIVE);
-    twice.extend(parsed(DRIVE));
-    assert_eq!(
-        print(&twice),
-        Err(PrintError::DuplicateNamespace("drive.file".to_owned()))
-    );
-    let with = |namespace: &str, relations: Vec<(&str, Rewrite<&str>, Vec<NamedConstraint>)>| {
-        let relations = relations
-            .into_iter()
-            .map(|(name, rewrite, constraints)| {
-                (
-                    relation(name),
-                    rewrite.map(&mut |name| relation(name)),
-                    constraints,
-                )
-            })
-            .collect();
-        NamespaceDocument {
-            namespace: namespace_name(namespace),
-            relations: Namespace::new(relations).expect("a valid namespace"),
-        }
-    };
+fn the_printer_prints_what_no_document_declares() {
+    assert_eq!(print(&[]), "");
+    let once = "namespace: a\n  r<@identity>\n";
+    let mut twice = parsed(once);
+    twice.extend(parsed(once));
+    assert_eq!(print(&twice), format!("{once}{once}"));
     let identities = || vec![Constraint::Identity];
-    let one_operand = with("t", vec![("r", Union(nonempty![This]), identities())]);
-    assert_eq!(print(&[one_operand]), Err(PrintError::OneOperand));
-    let one_operand = with(
-        "t",
-        vec![("r", Intersection(nonempty![This]), identities())],
-    );
-    assert_eq!(print(&[one_operand]), Err(PrintError::OneOperand));
-    let excluded = with(
-        "t",
-        vec![("r", exclusion(This, Union(nonempty![This])), identities())],
-    );
-    assert_eq!(print(&[excluded]), Err(PrintError::OneOperand));
-    for namespace in ["a..b", "t.", "1t", "a b", "a:b"] {
-        let bad = with(namespace, vec![]);
-        assert!(
-            matches!(print(&[bad]), Err(PrintError::Name(_))),
-            "{namespace}"
-        );
-    }
-    for (name, rewrite) in [
-        ("this", This),
-        ("This", This),
-        ("r-s", This),
-        ("r:s", This),
-        ("r", exclusion(This, Computed("THIS"))),
+    // A union or intersection of one operand prints its operand.
+    for (rewrite, line) in [
+        (Union(nonempty![This]), "  r<@identity>"),
+        (Intersection(nonempty![This]), "  r<@identity>"),
         (
-            "r",
-            exclusion(
+            Union(nonempty![Intersection(nonempty![exclusion(
                 This,
-                FactTo {
-                    factset: "theory",
-                    computed: "r",
-                },
-            ),
+                Computed("s")
+            )])]),
+            "  r<@identity>: this ! s",
         ),
         (
-            "r",
+            exclusion(This, Union(nonempty![Computed("s")])),
+            "  r<@identity>: this ! s",
+        ),
+        (
+            exclusion(
+                Union(nonempty![This, Computed("s")]),
+                Union(nonempty![Computed("s")]),
+            ),
+            "  r<@identity>: (this | s) ! s",
+        ),
+        (
             exclusion(
                 This,
-                FactTo {
-                    factset: "r",
-                    computed: "a b",
-                },
+                Intersection(nonempty![Union(nonempty![Computed("s"), Computed("s")])]),
             ),
+            "  r<@identity>: this ! (s | s)",
+        ),
+        (
+            Union(nonempty![
+                Union(nonempty![Union(nonempty![Computed("s"), This])]),
+                Computed("s"),
+            ]),
+            "  r<@identity>: (s | this) | s",
         ),
     ] {
-        let mut relations = vec![(name, rewrite, identities())];
-        for declared in ["THIS", "theory", "a b"] {
-            relations.push((declared, This, identities()));
-        }
-        relations.dedup_by_key(|(name, ..)| *name);
-        let bad = with("t", relations);
-        assert!(matches!(print(&[bad]), Err(PrintError::Name(_))), "{name}");
-    }
-    for constraint in [
-        Constraint::Resource(namespace_name("a b")),
-        Constraint::Subjectset(namespace_name("t"), relation("this")),
-        Constraint::Subjectset(namespace_name("t"), relation("a b")),
-        Constraint::Subjectset(namespace_name("a.1"), relation("member")),
-        Constraint::Resource(namespace_name("a:b")),
-        Constraint::Subjectset(namespace_name("t"), relation("a:b")),
-    ] {
-        let bad = with("t", vec![("r", This, vec![constraint.clone()])]);
-        assert!(
-            matches!(print(&[bad]), Err(PrintError::Name(_))),
-            "{constraint:?}"
+        let document = built(
+            "t",
+            vec![("r", rewrite, identities()), ("s", This, identities())],
         );
+        let printed = print(&[document]);
+        assert_eq!(printed.lines().nth(1), Some(line), "{printed}");
     }
+    // A name prints as it is, whether a document could declare it or not.
+    for namespace in ["1t", "a b", "a:b", ""] {
+        let bad = built(namespace, vec![]);
+        assert_eq!(print(&[bad]), format!("namespace: {namespace}\n"));
+    }
+    assert_eq!(
+        print(&[built("a..b", vec![])]),
+        "theory: a\n\nnamespace: .b\n"
+    );
+    let bad = built(
+        "t",
+        vec![
+            (
+                "this",
+                exclusion(
+                    This,
+                    Union(nonempty![
+                        Computed("THIS"),
+                        FactTo {
+                            factset: "theory",
+                            computed: "a b",
+                        },
+                    ]),
+                ),
+                vec![
+                    Constraint::Resource(namespace_name("a b")),
+                    Constraint::Subjectset(namespace_name("t"), relation("a:b")),
+                    Constraint::Subjectset(namespace_name("a.1"), relation("this")),
+                ],
+            ),
+            ("THIS", This, identities()),
+            ("theory", This, identities()),
+        ],
+    );
+    assert_eq!(
+        print(&[bad]),
+        "namespace: t
+  THIS<@identity>
+  theory<@identity>
+  this<a b, a.1#this, t#a:b>: this ! (THIS | (theory, a b))
+"
+    );
 }
 
 #[test]
-fn the_printer_refuses_a_reference_the_parser_would() {
-    let with = |namespace: &str, relations: Vec<(&str, Rewrite<&str>, Vec<NamedConstraint>)>| {
-        let relations = relations
-            .into_iter()
-            .map(|(name, rewrite, constraints)| {
-                (
-                    relation(name),
-                    rewrite.map(&mut |name| relation(name)),
-                    constraints,
-                )
-            })
-            .collect();
-        NamespaceDocument {
-            namespace: namespace_name(namespace),
-            relations: Namespace::new(relations).expect("a valid namespace"),
-        }
-    };
+fn the_printer_prints_references_it_doesnt_check() {
     let subjectset = |namespace: &str, name: &str| {
         Constraint::Subjectset(namespace_name(namespace), relation(name))
     };
-    let b = || with("b", vec![("m", This, vec![Constraint::Identity])]);
+    let b = || built("b", vec![("m", This, vec![Constraint::Identity])]);
     // A constraint naming a relation another printed namespace lacks.
-    let a = with("a", vec![("r", This, vec![subjectset("b", "x")])]);
-    let documents = [a, b()];
-    let printed = print(&documents);
-    assert!(
-        matches!(
-            &printed,
-            Err(PrintError::Reference { namespace, error: NamespaceError::UndeclaredConstraint { .. } })
-                if namespace == "a"
-        ),
-        "{printed:?}"
+    let a = built("a", vec![("r", This, vec![subjectset("b", "x")])]);
+    assert_eq!(
+        print(&[a, b()]),
+        "namespace: a\n  r<b#x>\nnamespace: b\n  m<@identity>\n"
     );
     // One naming a relation its own namespace lacks.
-    let s = with("s", vec![("r", This, vec![subjectset("s", "x")])]);
-    assert!(
-        matches!(
-            print(&[s]),
-            Err(PrintError::Reference {
-                error: NamespaceError::UndeclaredConstraint { .. },
-                ..
-            })
-        ),
-        "a self-reference"
-    );
-    // A fact-to-subjectset following a relation another lacks.
-    let a = with(
+    let s = built("s", vec![("r", This, vec![subjectset("s", "x")])]);
+    assert_eq!(print(&[s]), "namespace: s\n  r<s#x>\n");
+    // A fact-to-subjectset following a relation its factset's namespaces
+    // lack.
+    let a = built(
         "a",
         vec![
-            ("p", This, vec![Constraint::Resource(namespace_name("b"))]),
+            (
+                "p",
+                This,
+                vec![
+                    Constraint::Resource(namespace_name("a")),
+                    Constraint::Resource(namespace_name("b")),
+                ],
+            ),
             (
                 "v",
                 FactTo {
@@ -1949,50 +1941,50 @@ fn the_printer_refuses_a_reference_the_parser_would() {
             ),
         ],
     );
-    assert!(
-        matches!(
-            print(&[a, b()]),
-            Err(PrintError::Reference {
-                error: NamespaceError::UndeclaredFollowed { .. },
-                ..
-            })
-        ),
-        "a followed relation"
+    assert_eq!(
+        print(&[a, b()]),
+        "namespace: a\n  p<a, b>\n  v: (p, x)\nnamespace: b\n  m<@identity>\n"
     );
-    // What the parser accepts prints: references that hold, and those to a
-    // namespace outside the printed set.
-    let a = with(
+    // What the parser accepts prints as a document it reads back.
+    let a = built(
         "a",
         vec![
             (
                 "r",
                 This,
-                vec![subjectset("b", "m"), subjectset("elsewhere", "x")],
+                vec![
+                    subjectset("b", "m"),
+                    subjectset("elsewhere", "x"),
+                    subjectset("a", "p"),
+                ],
             ),
             (
                 "p",
                 This,
-                vec![Constraint::Resource(namespace_name("elsewhere"))],
+                vec![
+                    Constraint::Resource(namespace_name("elsewhere")),
+                    Constraint::Resource(namespace_name("b")),
+                ],
             ),
             (
                 "v",
                 FactTo {
                     factset: "p",
-                    computed: "x",
+                    computed: "m",
                 },
                 vec![],
             ),
         ],
     );
     let documents = [a, b()];
-    let printed = print(&documents).expect("references that hold");
+    let printed = print(&documents);
     assert!(same(&parsed(&printed), &documents));
 }
 
 #[test]
-fn the_printer_refuses_a_rewrite_the_parser_would() {
+fn the_printer_prints_a_rewrite_past_the_depth_limit() {
     let at_limit = parsed(&depth_case(&chain(DEFAULT_REWRITE_DEPTH)));
-    let printed = print(&at_limit).expect("a rewrite at the limit");
+    let printed = print(&at_limit);
     assert!(same(&parsed(&printed), &at_limit));
     // Grouped on the right, each level past the first adds parentheses.
     let mut right = This;
@@ -2007,48 +1999,69 @@ fn the_printer_refuses_a_rewrite_the_parser_would() {
         )
         .expect("a valid namespace"),
     };
-    let printed = print(&[with(right.clone())]).expect("a rewrite at the limit");
+    let printed = print(&[with(right.clone())]);
     parsed(&printed);
-    assert_eq!(
-        print(&[with(exclusion(This, right))]),
-        Err(PrintError::TooDeep)
-    );
-    let past = tdl::parse_with(
-        &depth_case(&chain(DEFAULT_REWRITE_DEPTH + 1)),
-        Settings {
-            depth: DEFAULT_REWRITE_DEPTH + 1,
-            ..Settings::default()
-        },
+    let past = print(&[with(exclusion(This, right))]);
+    assert_eq!(past, right_grouped(DEFAULT_REWRITE_DEPTH + 1));
+    assert!(tdl::parse(&past).is_err());
+    let deeper = Settings {
+        depth: DEFAULT_REWRITE_DEPTH + 1,
+        ..Settings::default()
+    };
+    let documents = tdl::parse_with(&depth_case(&chain(DEFAULT_REWRITE_DEPTH + 1)), deeper)
+        .expect("a rewrite at a deeper limit");
+    let printed = print(&documents);
+    assert!(tdl::parse(&printed).is_err());
+    let again = tdl::parse_with(&printed, deeper).expect("printed as it parsed");
+    assert!(same(&again, &documents));
+}
+
+/// Namespace `t` printed with relation `r` reading `this ! (this ! ...)`,
+/// `levels` levels deep.
+fn right_grouped(levels: usize) -> String {
+    let groups = levels - 2;
+    format!(
+        "namespace: t\n  r<@identity>: {}this ! this{}\n",
+        "this ! (".repeat(groups),
+        ")".repeat(groups)
     )
-    .expect("a rewrite at a deeper limit");
-    assert_eq!(print(&past), Err(PrintError::TooDeep));
 }
 
 #[test]
-fn a_rewrite_built_far_past_the_depth_limit_is_refused_without_a_crash() {
+fn a_rewrite_a_million_deep_prints_without_a_crash() {
+    const LEVELS: usize = 1_000_000;
     // Building, checking and dropping the tree recurses through it, so
-    // they take the larger stack; printing takes a thread's usual one.
-    with_stack(|| {
-        let mut rewrite = This;
-        for _ in 1..100_000 {
-            rewrite = exclusion(rewrite, This);
-        }
-        let document = NamespaceDocument {
-            namespace: namespace_name("t"),
-            relations: Namespace::with_depth(
-                vec![(relation("r"), rewrite, vec![Constraint::Identity])],
-                usize::MAX,
-            )
-            .expect("a valid namespace"),
-        };
-        let printed = std::thread::scope(|scope| {
-            scope
-                .spawn(|| print(std::slice::from_ref(&document)))
-                .join()
-                .expect("printing doesn't crash")
-        });
-        assert_eq!(printed, Err(PrintError::TooDeep));
-    });
+    // they take a large stack; printing takes a thread's usual one.
+    std::thread::Builder::new()
+        .stack_size(1024 * 1024 * 1024)
+        .spawn(|| {
+            let mut rewrite = This;
+            for _ in 1..LEVELS {
+                rewrite = exclusion(This, rewrite);
+            }
+            let document = NamespaceDocument {
+                namespace: namespace_name("t"),
+                relations: Namespace::with_depth(
+                    vec![(relation("r"), rewrite, vec![Constraint::Identity])],
+                    usize::MAX,
+                )
+                .expect("a valid namespace"),
+            };
+            let printed = std::thread::scope(|scope| {
+                scope
+                    .spawn(|| print(std::slice::from_ref(&document)))
+                    .join()
+                    .expect("printing doesn't crash")
+            });
+            assert!(
+                printed == right_grouped(LEVELS),
+                "printed {} bytes",
+                printed.len()
+            );
+        })
+        .expect("a thread")
+        .join()
+        .expect("the test passes");
 }
 
 /// A namespace `t` printed as exactly `bytes`: relations sorted by name,
@@ -2074,7 +2087,7 @@ fn the_printer_has_no_size_limit() {
     // Past 2 MiB, printed, and read back as a stored version is.
     let text = printed_at(LARGE + 1);
     let documents = parsed(&text);
-    let printed = print(&documents).expect("no size limit");
+    let printed = print(&documents);
     assert_eq!(printed, text);
     let again = tdl::parse_one(&printed).expect("no size limit");
     assert!(same(&documents, &[again]));
@@ -2251,11 +2264,11 @@ proptest! {
                 relations: Namespace::new(relations).expect("a valid namespace"),
             })
             .collect();
-        let text = print(&documents).map_err(|error| TestCaseError::fail(error.to_string()))?;
+        let text = print(&documents);
         let again = tdl::parse(&text)
             .map_err(|errors| TestCaseError::fail(format!("{text}\n{errors:?}")))?;
         prop_assert!(same(&documents, &again), "{}", text);
-        prop_assert_eq!(print(&again), Ok(text));
+        prop_assert_eq!(print(&again), text);
     }
 }
 
@@ -2272,11 +2285,10 @@ proptest! {
             signature(&expression)
         );
         if let Ok(documents) = tdl::parse(&text) {
-            let printed = print(&documents)
-                .map_err(|error| TestCaseError::fail(error.to_string()))?;
+            let printed = print(&documents);
             let again = parsed(&printed);
             prop_assert!(same(&again, &documents));
-            prop_assert_eq!(print(&again), Ok(printed));
+            prop_assert_eq!(print(&again), printed);
         }
     }
 
@@ -2293,11 +2305,10 @@ proptest! {
         text in r"(theory|namespace|this|@identity|\.\.|[:<>.,()|&!/ \n#rt0-9])*",
     ) {
         if let Ok(documents) = tdl::parse(&text) {
-            let printed = print(&documents)
-                .map_err(|error| TestCaseError::fail(error.to_string()))?;
+            let printed = print(&documents);
             let again = parsed(&printed);
             prop_assert!(same(&again, &documents));
-            prop_assert_eq!(print(&again), Ok(printed));
+            prop_assert_eq!(print(&again), printed);
         }
     }
 }
@@ -2412,7 +2423,7 @@ fn a_namespace_built_far_larger_than_a_document_is_checked_without_a_crash() {
         namespace: namespace_name("t"),
         relations: chain,
     };
-    let printed = print(&[document]).expect("no size limit");
+    let printed = print(&[document]);
     assert!(printed.len() > LARGE);
     let ring: Vec<_> = (0..count)
         .map(|i| {

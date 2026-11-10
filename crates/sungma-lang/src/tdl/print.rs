@@ -4,44 +4,13 @@
 
 use std::fmt::Write;
 
-use thiserror::Error;
-
 use sungma::{
-    name::{NameError, NamespaceName, RelationName, quote},
-    namespace::{Constraint, NamespaceError, Problem},
+    name::{NamespaceName, RelationName},
+    namespace::Constraint,
     rewrite::Rewrite,
 };
 
-use super::{
-    DEFAULT_REWRITE_DEPTH, IDENTITY, Named, NamedConstraint, OUTSIDE, namespace_name,
-    reference_problems, rewrite::quoted,
-};
-
-/// Why [`print()`] refused namespaces: no document can declare them.
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum PrintError {
-    /// A name made with `new_unchecked` that breaks the grammar, such as
-    /// `this`.
-    #[error(transparent)]
-    Name(#[from] NameError),
-    #[error("a union or intersection has one operand")]
-    OneOperand,
-    #[error("a document declares at least one namespace")]
-    NoNamespace,
-    #[error("namespace '{0}' is given twice")]
-    DuplicateNamespace(String),
-    /// A rewrite nesting deeper, in levels or in grouping parentheses, than
-    /// [`parse`](super::parse) reads.
-    #[error("a rewrite nests more than {DEFAULT_REWRITE_DEPTH} deep")]
-    TooDeep,
-    /// A reference, through a constraint or a fact-to-subjectset, to a
-    /// relation that a namespace being printed doesn't declare.
-    #[error("namespace '{namespace}': {error}")]
-    Reference {
-        namespace: String,
-        error: NamespaceError,
-    },
-}
+use super::{IDENTITY, Named, NamedConstraint, OUTSIDE};
 
 /// Writes namespaces as a document that [`parse`](super::parse) reads back
 /// as equal namespaces, as `docs/specs/theory-documents.md` says: namespaces
@@ -56,35 +25,31 @@ pub enum PrintError {
 /// A constraint naming a namespace outside its own namespace's theory,
 /// including one without a dot, is written in full after `..`.
 ///
-/// References between the namespaces given, themselves included, are
-/// checked as the parser checks them; one to a namespace not given is left
-/// to the namespace write.
+/// The printer only prints: it checks nothing and never refuses. No
+/// namespaces print as an empty document, a namespace given twice prints
+/// twice, a union or intersection of one operand prints its operand, and a
+/// name prints as it is, whether a document could declare it or not. Only
+/// namespaces the parser accepts print as a document it reads back.
 ///
-/// The printed document has no size limit.
-pub fn print(namespaces: &[(&NamespaceName, &Named)]) -> Result<String, PrintError> {
-    if namespaces.is_empty() {
-        return Err(PrintError::NoNamespace);
-    }
-    let mut sorted = Vec::new();
-    for &(name, relations) in namespaces {
-        namespace_name(name.as_str())?;
-        let (theory, written) = match name.as_str().split_once('.') {
-            Some((theory, rest)) => (Some(theory), rest),
-            None => (None, name.as_str()),
-        };
-        sorted.push((theory, name, written, relations));
-    }
+/// The printed document has no size limit, and a rewrite of any depth
+/// prints without recursing through it.
+pub fn print(namespaces: &[(&NamespaceName, &Named)]) -> String {
+    let mut sorted: Vec<_> = namespaces
+        .iter()
+        .map(|&(name, relations)| {
+            let (theory, written) = match name.as_str().split_once('.') {
+                Some((theory, rest)) => (Some(theory), rest),
+                None => (None, name.as_str()),
+            };
+            (theory, name, written, relations)
+        })
+        .collect();
     // `None` sorts first, so namespaces without a dot come before every
     // theory.
     sorted.sort_by(|(one, a, ..), (other, b, ..)| (one, a).cmp(&(other, b)));
     let mut text = String::new();
     let mut section = None;
-    let mut previous: Option<&NamespaceName> = None;
-    for (theory, name, written, relations) in sorted {
-        if previous == Some(name) {
-            return Err(PrintError::DuplicateNamespace(quote(name.as_str())));
-        }
-        previous = Some(name);
+    for (theory, _, written, relations) in sorted {
         if let Some(theory) = theory
             && section != Some(theory)
         {
@@ -95,34 +60,24 @@ pub fn print(namespaces: &[(&NamespaceName, &Named)]) -> Result<String, PrintErr
             section = Some(theory);
         }
         let _ = writeln!(text, "namespace: {written}");
-        namespace(&mut text, theory, relations)?;
+        namespace(&mut text, theory, relations);
     }
-    let problems = reference_problems(namespaces).into_iter();
-    for (&(name, _), problems) in namespaces.iter().zip(problems) {
-        if let Some(Problem { error, .. }) = problems.into_iter().next() {
-            return Err(PrintError::Reference {
-                namespace: quote(name.as_str()),
-                error: quoted(error),
-            });
-        }
-    }
-    Ok(text)
+    text
 }
 
 /// Writes the relations of a namespace in `theory`, sorted by name.
-fn namespace(text: &mut String, theory: Option<&str>, relations: &Named) -> Result<(), PrintError> {
+fn namespace(text: &mut String, theory: Option<&str>, relations: &Named) {
     let mut sorted: Vec<_> = relations.relations().collect();
     sorted.sort_by_key(|(relation, _)| *relation);
     for (relation, rewrite) in sorted {
-        let mut constraints = relations
+        let mut constraints: Vec<_> = relations
             .constraints(relation)
             .iter()
             .map(|constraint| written_constraint(constraint, theory))
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect();
         constraints.sort();
-        let relation = printable(relation)?;
         let mut expression = String::new();
-        self::expression(&mut expression, rewrite, 1)?;
+        self::expression(&mut expression, rewrite);
         let _ = match (constraints.is_empty(), expression == "this") {
             (true, _) => writeln!(text, "  {relation}: {expression}"),
             (false, true) => writeln!(text, "  {relation}<{}>", constraints.join(", ")),
@@ -133,19 +88,14 @@ fn namespace(text: &mut String, theory: Option<&str>, relations: &Named) -> Resu
             ),
         };
     }
-    Ok(())
 }
 
 /// A constraint as written under `theory`: the theory's name and dot taken
 /// off a namespace in it, and `..` before one outside it.
-fn written_constraint(
-    constraint: &NamedConstraint,
-    theory: Option<&str>,
-) -> Result<String, PrintError> {
-    let named = |name: &NamespaceName| -> Result<String, PrintError> {
+fn written_constraint(constraint: &NamedConstraint, theory: Option<&str>) -> String {
+    let named = |name: &NamespaceName| {
         let name = name.as_str();
-        namespace_name(name)?;
-        Ok(match theory {
+        match theory {
             None => name.to_owned(),
             Some(theory) => match name
                 .strip_prefix(theory)
@@ -154,102 +104,103 @@ fn written_constraint(
                 Some(rest) => rest.to_owned(),
                 None => format!("{OUTSIDE}{name}"),
             },
-        })
+        }
     };
-    Ok(match constraint {
+    match constraint {
         Constraint::Identity => IDENTITY.to_owned(),
-        Constraint::Resource(name) => named(name)?,
-        Constraint::Subjectset(name, relation) => {
-            format!("{}#{}", named(name)?, printable(relation)?)
-        }
-    })
-}
-
-/// Writes `rewrite`, `level` levels deep, the root being 1. A rewrite past
-/// the default depth limit is refused before it's walked further, so one
-/// built in code, however deep, can't overflow the stack. Grouping
-/// parentheses are written only around an operand with an operator, so
-/// they never nest deeper than the levels.
-fn expression(
-    text: &mut String,
-    rewrite: &Rewrite<RelationName>,
-    level: usize,
-) -> Result<(), PrintError> {
-    if level > DEFAULT_REWRITE_DEPTH {
-        return Err(PrintError::TooDeep);
+        Constraint::Resource(name) => named(name),
+        Constraint::Subjectset(name, relation) => format!("{}#{relation}", named(name)),
     }
-    let next = level + 1;
-    match rewrite {
-        Rewrite::This => text.push_str("this"),
-        Rewrite::Computed(relation) => text.push_str(printable(relation)?),
-        Rewrite::FactTo { factset, computed } => {
-            let _ = write!(text, "({}, {})", printable(factset)?, printable(computed)?);
+}
+
+/// What is left to write of a rewrite: a node, in parentheses or not, or
+/// text that follows one. A node is pushed as what it prints as, so its
+/// parentheses are decided by that.
+enum Step<'r> {
+    Node(&'r Rewrite<RelationName>, bool),
+    Text(&'static str),
+}
+
+/// Writes `rewrite`, walking it with a stack of its own rather than
+/// recursion, so a tree of any depth prints without overflowing the stack.
+/// Grouping parentheses are written only where the grammar needs them: a
+/// union inside a union, a union or intersection inside an intersection or
+/// on the left of `!`, and any operator on the right of `!`.
+fn expression(text: &mut String, rewrite: &Rewrite<RelationName>) {
+    let mut steps = vec![Step::Node(alone(rewrite), false)];
+    while let Some(step) = steps.pop() {
+        let (rewrite, parenthesize) = match step {
+            Step::Text(written) => {
+                text.push_str(written);
+                continue;
+            }
+            Step::Node(rewrite, parenthesize) => (rewrite, parenthesize),
+        };
+        if parenthesize {
+            text.push('(');
+            steps.push(Step::Text(")"));
         }
-        Rewrite::Union(operands) | Rewrite::Intersection(operands) if operands.len() < 2 => {
-            return Err(PrintError::OneOperand);
-        }
-        Rewrite::Union(operands) => operator(text, operands, " | ", next, |operand| {
-            matches!(operand, Rewrite::Union(_))
-        })?,
-        Rewrite::Intersection(operands) => operator(text, operands, " & ", next, |operand| {
-            matches!(operand, Rewrite::Union(_) | Rewrite::Intersection(_))
-        })?,
-        Rewrite::Exclusion(base, excluded) => {
-            grouped(
-                text,
-                base,
-                next,
-                matches!(**base, Rewrite::Union(_) | Rewrite::Intersection(_)),
-            )?;
-            text.push_str(" ! ");
-            grouped(
-                text,
-                excluded,
-                next,
-                matches!(
-                    **excluded,
-                    Rewrite::Union(_) | Rewrite::Intersection(_) | Rewrite::Exclusion(..)
-                ),
-            )?;
+        match rewrite {
+            Rewrite::This => text.push_str("this"),
+            Rewrite::Computed(relation) => text.push_str(relation.as_str()),
+            Rewrite::FactTo { factset, computed } => {
+                let _ = write!(text, "({factset}, {computed})");
+            }
+            Rewrite::Union(operands) => {
+                operator(&mut steps, operands.iter(), " | ", |operand| {
+                    matches!(operand, Rewrite::Union(_))
+                });
+            }
+            Rewrite::Intersection(operands) => {
+                operator(&mut steps, operands.iter(), " & ", |operand| {
+                    matches!(operand, Rewrite::Union(_) | Rewrite::Intersection(_))
+                });
+            }
+            Rewrite::Exclusion(base, excluded) => {
+                // Pushed last first, so the base is written first.
+                let excluded = alone(excluded);
+                steps.push(Step::Node(
+                    excluded,
+                    matches!(
+                        excluded,
+                        Rewrite::Union(_) | Rewrite::Intersection(_) | Rewrite::Exclusion(..)
+                    ),
+                ));
+                steps.push(Step::Text(" ! "));
+                let base = alone(base);
+                steps.push(Step::Node(
+                    base,
+                    matches!(base, Rewrite::Union(_) | Rewrite::Intersection(_)),
+                ));
+            }
         }
     }
-    Ok(())
 }
 
-/// `name`, if a document can declare a relation by it.
-fn printable(name: &RelationName) -> Result<&str, NameError> {
-    name.as_str().parse::<RelationName>()?;
-    Ok(name.as_str())
-}
-
-fn operator(
-    text: &mut String,
-    operands: &[Rewrite<RelationName>],
-    symbol: &str,
-    level: usize,
+/// Pushes `operands` joined by `symbol`, last first, so the first is
+/// written first.
+fn operator<'r>(
+    steps: &mut Vec<Step<'r>>,
+    operands: impl DoubleEndedIterator<Item = &'r Rewrite<RelationName>>,
+    symbol: &'static str,
     needs_parentheses: fn(&Rewrite<RelationName>) -> bool,
-) -> Result<(), PrintError> {
-    for (i, operand) in operands.iter().enumerate() {
+) {
+    for (i, operand) in operands.rev().enumerate() {
         if i > 0 {
-            text.push_str(symbol);
+            steps.push(Step::Text(symbol));
         }
-        grouped(text, operand, level, needs_parentheses(operand))?;
+        let operand = alone(operand);
+        steps.push(Step::Node(operand, needs_parentheses(operand)));
     }
-    Ok(())
 }
 
-fn grouped(
-    text: &mut String,
-    rewrite: &Rewrite<RelationName>,
-    level: usize,
-    parenthesize: bool,
-) -> Result<(), PrintError> {
-    if parenthesize {
-        text.push('(');
-        expression(text, rewrite, level)?;
-        text.push(')');
-    } else {
-        expression(text, rewrite, level)?;
+/// What `rewrite` prints as: past any union or intersection of one operand,
+/// which prints as its operand.
+fn alone(mut rewrite: &Rewrite<RelationName>) -> &Rewrite<RelationName> {
+    while let Rewrite::Union(operands) | Rewrite::Intersection(operands) = rewrite
+        && let [operand] = &operands[..]
+    {
+        rewrite = operand;
     }
-    Ok(())
+    rewrite
 }

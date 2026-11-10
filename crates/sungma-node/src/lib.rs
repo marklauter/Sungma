@@ -50,7 +50,7 @@ fn print(
     name: &NamespaceName,
     relations: &Namespace<RelationName, NamespaceName>,
 ) -> Result<String, String> {
-    tdl::print(&[(name, relations)]).map_err(|error| error.to_string())
+    Ok(tdl::print(&[(name, relations)]))
 }
 
 /// A stored version's document, which declares one namespace.
