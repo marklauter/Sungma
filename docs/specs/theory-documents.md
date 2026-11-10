@@ -34,14 +34,13 @@ In logic, a theory is a set of sentences closed under deduction. Here the senten
 A relation reads like a signature: its name, a colon and its constraints, then `=` and its rewrite. With no `=`, it reads `this`. With no constraints, it's computed.
 
 ```ebnf
-⟨document⟩    ::= [ 'theory' ':' ⟨namespace name⟩ ] ⟨namespace⟩ { ⟨namespace⟩ }
-⟨namespace⟩   ::= 'namespace' ':' ⟨namespace name⟩ { ⟨relation⟩ }
-⟨relation⟩    ::= ⟨relation name⟩ ':' ⟨constraints⟩ [ '=' ⟨rewrite⟩ ]
-                | ⟨relation name⟩ '=' ⟨rewrite⟩
-⟨constraints⟩ ::= ⟨constraint⟩ { ',' ⟨constraint⟩ }
+document    = [ 'theory', ':', theory name ], namespace, { namespace } ;
+namespace   = 'namespace', ':', namespace name, { relation } ;
+relation    = relation name, ( ':', constraints, [ '=', rewrite ] | '=', rewrite ) ;
+constraints = constraint, { ',', constraint } ;
 ```
 
-Grammars here are EBNF: `{ }` repeats, `[ ]` is optional, and `'x'…'y'` is a character range.
+The grammars are ISO EBNF: `=` defines, `;` ends a rule, `,` joins in sequence, `|` separates alternatives, `( )` groups, `[ ]` is optional, `{ }` repeats, `-` excludes, and `? ?` describes in words.
 
 - Whitespace, line breaks included, only separates tokens. A rewrite may start on the next line and wrap.
 - A rewrite runs until the next signature (a name followed by `:` or `=`), the next `namespace:`, or the end. A constraint list ends where no comma follows.
@@ -52,24 +51,33 @@ Grammars here are EBNF: `{ }` repeats, `[ ]` is optional, and `'x'…'y'` is a c
 
 ## Names
 
-A namespace name is one or more names joined by dots, such as `drive.file`. A relation name is one name. Names are case-sensitive.
+A name starts with a letter or an underscore, followed by letters, digits and underscores. Names are case-sensitive.
 
 ```ebnf
-⟨namespace name⟩ ::= ⟨name⟩ { '.' ⟨name⟩ }
-⟨relation name⟩  ::= ⟨name⟩     excluding 'this', 'namespace' and 'theory' in any casing
-⟨name⟩           ::= ( ⟨letter⟩ | '_' ) { ⟨letter⟩ | ⟨digit⟩ | '_' }
-⟨letter⟩         ::= 'a'…'z' | 'A'…'Z'
-⟨digit⟩          ::= '0'…'9'
+letter = ? an ASCII letter, 'a' to 'z' or 'A' to 'Z' ? ;
+digit  = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' ;
+name   = ( letter | '_' ), { letter | digit | '_' } ;
 ```
 
-Reserved:
+A namespace name is one or more names joined by dots, such as `file` or `drive.file`. No namespace may be named `identity`, and a first segment of `sungma` is reserved for Sungma's own namespaces, so `sungma.audit` is reserved and `sungmax` isn't.
 
-- `this` is the rewrite keyword, in lowercase. No relation may be named `this` in any casing, so `This | owner` is refused.
-- `namespace` and `theory` are TDL keywords, so no relation may be named either, in any casing. They may still name namespaces and appear in constraints.
-- No namespace may be named `identity`.
-- A first segment of `sungma` is reserved for Sungma's own namespaces, so `sungma.audit` is reserved and `sungmax` isn't.
+```ebnf
+namespace name = name, { '.', name } ;
+```
 
-Names are checked once, where they enter. Past that, only checked names exist.
+A theory name has the same form as a namespace name. It's the optional prefix at the top of a document, as [The theory name](#the-theory-name) says.
+
+```ebnf
+theory name = namespace name ;
+```
+
+A relation name is one name. `this` is the rewrite keyword, and `namespace` and `theory` are TDL keywords, so no relation may be named any of them, in any casing: `This | owner` is refused. `namespace` and `theory` may still name namespaces and appear in constraints.
+
+```ebnf
+relation name = name - ? 'this', 'namespace' or 'theory', in any casing ? ;
+```
+
+Names are parsed at the edge.
 
 ## Constraints
 
@@ -80,7 +88,7 @@ A relation whose rewrite reads `this` declares its constraints. A fact whose sub
 - `namespace#relation`, such as `group#member`: a subjectset of that relation.
 
 ```ebnf
-⟨constraint⟩ ::= 'identity' | ⟨namespace name⟩ [ '#' ⟨relation name⟩ ]
+constraint = 'identity' | namespace name, [ '#', relation name ] ;
 ```
 
 A relation declares at least one constraint, none twice, in any order. No constraint admits every subject, so every link can be checked.
@@ -90,14 +98,14 @@ A relation whose rewrite doesn't read `this` is computed, and declares none.
 ## Rewrite grammar
 
 ```ebnf
-⟨rewrite⟩             ::= ⟨union⟩
-⟨union⟩               ::= ⟨intersection⟩ { '|' ⟨intersection⟩ }
-⟨intersection⟩        ::= ⟨exclusion⟩ { '&' ⟨exclusion⟩ }
-⟨exclusion⟩           ::= ⟨term⟩ { '!' ⟨term⟩ }
-⟨term⟩                ::= 'this' | ⟨computed-subjectset⟩ | ⟨fact-to-subjectset⟩ | '(' ⟨rewrite⟩ ')'
-⟨computed-subjectset⟩ ::= ⟨relation name⟩
-⟨fact-to-subjectset⟩  ::= '(' ⟨factset⟩ ',' ⟨computed-subjectset⟩ ')'
-⟨factset⟩             ::= ⟨relation name⟩
+rewrite             = union ;
+union               = intersection, { '|', intersection } ;
+intersection        = exclusion, { '&', exclusion } ;
+exclusion           = term, { '!', term } ;
+term                = 'this' | computed subjectset | fact to subjectset | '(', rewrite, ')' ;
+computed subjectset = relation name ;
+fact to subjectset  = '(', factset, ',', computed subjectset, ')' ;
+factset             = relation name ;
 ```
 
 `!` (exclusion) binds tightest, then `&` (intersection), then `|` (union), each reading left to right: `a | b & c` is `a | (b & c)`, and `a ! b ! c` is `(a ! b) ! c`.
@@ -123,7 +131,6 @@ The theory name is a prefix. The parser adds it and a dot to each unqualified na
 - A name that already starts with the theory name and a dot gets no prefix: under `theory: t`, `a` and `t.a` both name `t.a`.
 - `identity` is never prefixed, and rewrites name only relations, so the prefix never touches them.
 - Without a theory name, a document holds full names.
-- A theory name follows the namespace name grammar.
 
 Once parsed, the prefix is gone. Everything sees full names, and nothing records which document a namespace came from. A theory shows only in the shared first segment of its namespaces' names.
 
