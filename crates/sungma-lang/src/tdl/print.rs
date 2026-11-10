@@ -12,9 +12,7 @@ use sungma::{
     rewrite::Rewrite,
 };
 
-use super::{
-    DEFAULT_REWRITE_DEPTH, IDENTITY, MAX_DOCUMENT_BYTES, Named, NamedConstraint, namespace_name,
-};
+use super::{DEFAULT_REWRITE_DEPTH, IDENTITY, Named, NamedConstraint, namespace_name};
 
 /// Why [`print()`] refused namespaces: no document can declare them.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -33,8 +31,6 @@ pub enum PrintError {
     /// [`parse`](super::parse) reads.
     #[error("a rewrite nests more than {DEFAULT_REWRITE_DEPTH} deep")]
     TooDeep,
-    #[error("the printed document would be more than {MAX_DOCUMENT_BYTES} bytes")]
-    TooLarge,
 }
 
 /// Writes namespaces as a document that [`parse`](super::parse) reads back
@@ -51,6 +47,10 @@ pub enum PrintError {
 /// namespace whose constraints name a namespace without a dot, which a
 /// theory's name would prefix, is written with those without a theory, in
 /// full, its constraints too.
+///
+/// The printed document has no size limit: namespaces spaced out canonically
+/// can print longer than [`MAX_DOCUMENT_BYTES`](super::MAX_DOCUMENT_BYTES),
+/// which [`parse`](super::parse) then refuses.
 pub fn print(namespaces: &[(&NamespaceName, &Named)]) -> Result<String, PrintError> {
     if namespaces.is_empty() {
         return Err(PrintError::NoNamespace);
@@ -94,11 +94,6 @@ pub fn print(namespaces: &[(&NamespaceName, &Named)]) -> Result<String, PrintErr
         }
         let _ = writeln!(text, "namespace: {}", written(name.as_str(), theory));
         namespace(&mut text, theory, relations)?;
-        // Checked as it grows, so a caller's oversized input is refused
-        // without being printed whole.
-        if text.len() > MAX_DOCUMENT_BYTES {
-            return Err(PrintError::TooLarge);
-        }
     }
     Ok(text)
 }

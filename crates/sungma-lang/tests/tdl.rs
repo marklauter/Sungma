@@ -1667,11 +1667,11 @@ fn printed_at(bytes: usize) -> String {
 }
 
 #[test]
-fn the_printer_writes_a_document_exactly_at_the_limit() {
+fn the_printer_has_no_size_limit() {
     let text = printed_at(MAX_DOCUMENT_BYTES);
     let documents = parsed(&text);
     assert_eq!(print(&documents), Ok(text));
-    // One relation more is past it.
+    // One relation more is past the document limit, and still printed.
     let mut relations: Vec<_> = documents[0]
         .relations
         .relations()
@@ -1682,7 +1682,14 @@ fn the_printer_writes_a_document_exactly_at_the_limit() {
         namespace: namespace_name("t"),
         relations: Namespace::new(relations).expect("a valid namespace"),
     };
-    assert_eq!(print(&[past]), Err(PrintError::TooLarge));
+    let printed = print(&[past]).expect("no size limit");
+    assert_eq!(
+        printed.len(),
+        MAX_DOCUMENT_BYTES
+            + "  a<@identity>
+"
+            .len()
+    );
 }
 
 // Round trips.
@@ -2022,7 +2029,8 @@ fn a_namespace_built_past_the_document_limit_is_checked_without_a_crash() {
         namespace: namespace_name("t"),
         relations: chain,
     };
-    assert_eq!(print(&[document]), Err(PrintError::TooLarge));
+    let printed = print(&[document]).expect("no size limit");
+    assert!(printed.len() > MAX_DOCUMENT_BYTES);
     let ring: Vec<_> = (0..count)
         .map(|i| {
             (
