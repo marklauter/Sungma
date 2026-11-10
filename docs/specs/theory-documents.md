@@ -185,7 +185,7 @@ A document is refused, and declares nothing, if it breaks a rule of TDL, declare
 A namespace is refused if:
 
 - a relation is declared twice;
-- a rewrite nests more than 100 levels (a leaf or a run of `|` or `&` is one level, and each `!` adds one), or groups more than 100 parentheses deep;
+- a rewrite nests deeper than the depth limit (a leaf or a run of `|` or `&` is one level, and each `!` adds one), or groups parentheses deeper than it;
 - a computed subjectset or a factset names an undeclared relation;
 - a rewrite reads `this` without constraints, or a relation declares constraints without reading `this`;
 - a constraint `namespace#relation` names a relation that namespace doesn't declare;
@@ -196,12 +196,10 @@ A reference to another namespace in the same document is checked against the doc
 
 ## Limits
 
-- A document: 4 MiB. That bounds its namespaces too.
-- A namespace: 500 relations.
-- A relation: 32 constraints.
+- A document: 2 MiB.
+- Rewrite depth: a parser setting, 100 by default.
 - A full namespace name: 256 bytes.
 - A relation name: 64 bytes.
-- A rewrite: 4 KiB as written, comments included, measured before parsing.
 
 ## Errors
 
@@ -226,7 +224,7 @@ The printer writes namespaces as a document that parses back as equal namespaces
 - Each relation is one line, indented two spaces, with one space after each colon and comma and around `=` and each operator. `= this` is left out.
 - Parentheses print only where the grammar needs them: a union inside a union, a union or intersection inside an intersection or on the left of `!`, and any operator on the right of `!`.
 - Lines end in `\n`.
-- It refuses, with a `PrintError`, what the parser would refuse: a rewrite printing past 4 KiB (a dense one can, once spaced out), a document past 4 MiB, an invalid or reserved name, and a union or intersection with one operand.
+- It refuses, with a `PrintError`, what the parser would refuse: a document past 2 MiB, an invalid or reserved name, and a union or intersection with one operand.
 
 Author, Sungma's UI, shows and edits namespaces in TDL.
 
@@ -286,13 +284,13 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 
 #### Limits
 
-1. Each limit at its value and one past it, including 100 levels and 100 parentheses, a rewrite counting its comments, and a 256-byte dotted name.
+1. Each limit at its value and one past it, including the depth limit for levels and for parentheses, a setting other than the default, and a 256-byte dotted name.
 
 #### Printing
 
 1. The canonical form, `= this` left out, sorted constraints, and only needed parentheses.
 2. The theory name is written once and taken off; a namespace without it is refused; a name that would still start with it prints in full.
-3. Each refusal, and a document of exactly 4 MiB is written.
+3. Each refusal, and a document of exactly 2 MiB is written.
 
 #### Round trips
 
@@ -301,7 +299,7 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 
 #### Hostile input
 
-1. A chain of 500 computed subjectsets is accepted and a longer one refused; a large set of mutually reaching relations and far more relations than the limit are refused. Each finishes without a crash, within a bound that catches quadratic work.
-2. A namespace built in code, past the document limits, passes the same checks without a crash.
+1. The longest chain of computed subjectsets that fits in a document is accepted, and the largest set of mutually reaching relations is refused. Each finishes without a crash, within a bound that catches quadratic work.
+2. A namespace built in code, past the document limit, passes the same checks without a crash.
 3. A fuzz target and a CI property test run the parser on arbitrary input without a panic, stack overflow or abort.
 4. Mutation testing leaves no surviving mutant in the parser, the printer or the checks.
