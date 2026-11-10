@@ -402,9 +402,8 @@ pub(crate) fn quoted(problem: NamespaceError) -> NamespaceError {
                 target: quote(&target),
             }
         }
-        NamespaceError::RewriteCycle { path, omitted } => NamespaceError::RewriteCycle {
+        NamespaceError::RewriteCycle { path } => NamespaceError::RewriteCycle {
             path: path.iter().map(|relation| quote(relation)).collect(),
-            omitted,
         },
         NamespaceError::Unconstrained(relation) => NamespaceError::Unconstrained(quote(&relation)),
         NamespaceError::ConstrainedComputed(relation) => {

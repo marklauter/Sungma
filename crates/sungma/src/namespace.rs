@@ -47,9 +47,6 @@ use crate::{
 /// leaf is one level.
 pub const DEFAULT_REWRITE_DEPTH: usize = 100;
 
-/// How many relations a cycle error names before it says how many more.
-pub const MAX_CYCLE_NAMES: usize = 8;
-
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum NamespaceError {
     /// A rewrite tree deeper than the limit it carries.
@@ -59,10 +56,10 @@ pub enum NamespaceError {
     DuplicateRelation(String),
     #[error("relation '{relation}' references '{target}', which the namespace doesn't declare")]
     DanglingReference { relation: String, target: String },
-    /// A path from a relation back to itself, naming at most
-    /// [`MAX_CYCLE_NAMES`] relations on the way and counting the rest.
-    #[error("rewrite cycle: {}", cycle(.path, *.omitted))]
-    RewriteCycle { path: Vec<String>, omitted: usize },
+    /// A path from a relation back to itself, naming every relation on
+    /// the way.
+    #[error("rewrite cycle: {}", .path.join(" -> "))]
+    RewriteCycle { path: Vec<String> },
     #[error("relation '{0}' reads 'this' and declares no constraints")]
     Unconstrained(String),
     #[error("relation '{0}' declares constraints and doesn't read 'this'")]
@@ -91,15 +88,6 @@ pub enum NamespaceError {
         namespace: String,
         followed: String,
     },
-}
-
-fn cycle(path: &[String], omitted: usize) -> String {
-    match path.split_last() {
-        Some((root, way)) if omitted > 0 => {
-            format!("{} -> ... {omitted} more -> {root}", way.join(" -> "))
-        }
-        _ => path.join(" -> "),
-    }
 }
 
 /// A problem with a namespace, at the position of the relation it was found
@@ -541,20 +529,11 @@ fn problems<R: Eq + Hash + Display, N: Eq + Hash + Display>(
         components.visit(at);
     }
     for cycle in components.cycles {
-        let named = cycle.len() - 1;
-        let shown = named.min(MAX_CYCLE_NAMES);
-        let mut path: Vec<_> = cycle[..shown]
+        let path = cycle
             .iter()
             .map(|&at| relations[at].0.to_string())
             .collect();
-        path.push(relations[cycle[0]].0.to_string());
-        problem(
-            cycle[0],
-            NamespaceError::RewriteCycle {
-                path,
-                omitted: named - shown,
-            },
-        );
+        problem(cycle[0], NamespaceError::RewriteCycle { path });
     }
     problems.sort_by_key(|problem| problem.at);
     problems

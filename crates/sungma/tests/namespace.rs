@@ -2,10 +2,7 @@
 
 use sungma::{
     id::{NamespaceId, RelationId},
-    namespace::{
-        Constraint, DEFAULT_REWRITE_DEPTH, Declared, MAX_CYCLE_NAMES, Namespace, NamespaceError,
-        Problem,
-    },
+    namespace::{Constraint, DEFAULT_REWRITE_DEPTH, Declared, Namespace, NamespaceError, Problem},
     nonempty,
     rewrite::Rewrite::{self, Computed, Exclusion, This, Union},
 };
@@ -43,7 +40,6 @@ fn computed<R>(relation: R, rewrite: Rewrite<R>) -> Declared<R, &'static str> {
 fn names(cycle: &[&str]) -> NamespaceError {
     NamespaceError::RewriteCycle {
         path: cycle.iter().map(|name| (*name).to_owned()).collect(),
-        omitted: 0,
     }
 }
 
@@ -262,7 +258,7 @@ fn a_long_chain_built_in_code_is_checked_without_a_crash() {
 }
 
 #[test]
-fn a_large_cycle_built_in_code_is_one_problem() {
+fn a_large_cycle_built_in_code_is_one_problem_naming_every_relation() {
     let count = 100_000;
     let ring: Vec<_> = (0..count)
         .map(|i| computed(i, Computed((i + 1) % count)))
@@ -271,15 +267,14 @@ fn a_large_cycle_built_in_code_is_one_problem() {
     let [
         Problem {
             at: 0,
-            error: NamespaceError::RewriteCycle { path, omitted },
+            error: NamespaceError::RewriteCycle { path },
         },
     ] = problems.as_slice()
     else {
         panic!("expected one cycle, got {} problems", problems.len());
     };
-    assert_eq!(path.len(), MAX_CYCLE_NAMES + 1);
-    assert_eq!(*omitted, count - MAX_CYCLE_NAMES);
-    assert_eq!(path.first(), path.last());
+    let every: Vec<_> = (0..count).chain([0]).map(|i| i.to_string()).collect();
+    assert_eq!(*path, every);
 }
 
 #[test]
@@ -297,14 +292,11 @@ fn every_problem_is_returned_in_declaration_order() {
 }
 
 #[test]
-fn a_cycle_error_names_a_bounded_path() {
-    let error = NamespaceError::RewriteCycle {
-        path: vec!["a".to_owned(), "b".to_owned(), "a".to_owned()],
-        omitted: 3,
-    };
+fn a_cycle_error_names_its_whole_path() {
+    let error = names(&["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "a"]);
     assert_eq!(
         error.to_string(),
-        "rewrite cycle: a -> b -> ... 3 more -> a"
+        "rewrite cycle: a -> b -> c -> d -> e -> f -> g -> h -> i -> j -> a"
     );
 }
 

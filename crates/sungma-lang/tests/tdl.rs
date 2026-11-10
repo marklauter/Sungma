@@ -1073,6 +1073,20 @@ fn relations_that_reach_each_other_are_one_cycle() {
 }
 
 #[test]
+fn a_long_cycle_names_every_relation_on_its_path() {
+    let count = 20;
+    let ring: String = (0..count)
+        .map(|i| format!("  r{i}: r{}\n", (i + 1) % count))
+        .collect();
+    let error = only(&format!("namespace: t\n{ring}"));
+    let ErrorKind::Namespace(NamespaceError::RewriteCycle { path }) = error.kind else {
+        panic!("expected a cycle, got {error}");
+    };
+    let every: Vec<_> = (0..count).chain([0]).map(|i| format!("r{i}")).collect();
+    assert_eq!(path, every);
+}
+
+#[test]
 fn a_constraint_list_can_wrap_and_holds_any_number_of_constraints() {
     let wrapped = one("namespace: t\n  owner<@identity,\n    group#member,\n    folder>\n");
     assert_eq!(
