@@ -12,7 +12,7 @@ cites:
 
 # The clock
 
-A clock reads the [[revision-clock]]. It never knows true time, only a reading that brackets it, and a [[revision]] is taken from that reading. [[one-timeline]] orders facts and namespaces on these revisions.
+A clock reads the revision clock. It never knows true time, only a reading that brackets it, and a revision is taken from that reading. [One timeline for facts and namespaces](one-timeline.md) orders facts and namespaces on these revisions.
 
 ## The port
 
@@ -20,14 +20,14 @@ A clock reads the [[revision-clock]]. It never knows true time, only a reading t
 
 - `now()` returns a `Reading { settled, revision }`, or a `ClockFault` when the clock can't be trusted. True time is certainly past `settled` and not yet past `revision`.
 - `wait(stamped)` takes the reading a write was stamped with, and resolves once the clock's `settled` time is past `stamped.revision`, or with the fault that stopped the wait. The caller hands back the reading whole, so it can't compare the wrong fields.
-- `observe(seen)` checks a revision another node stamped, such as one a [[revision-token]] carries. A revision past this clock's `revision` is one true time can't have reached yet, so one of the two clocks is wrong.
+- `observe(seen)` checks a revision another node stamped, such as one a revision token carries. A revision past this clock's `revision` is one true time can't have reached yet, so one of the two clocks is wrong.
 
 A write follows commit-wait:
 
 1. Take `stamped = now()`.
 2. Write at `stamped.revision`.
 3. `wait(stamped)`.
-4. Acknowledge, returning the [[revision-token]] for `stamped.revision`.
+4. Acknowledge, returning the revision token for `stamped.revision`.
 
 True time is not yet past the stamp, so a stamp is never in the past. After the wait, true time is past the stamp. A write that starts after the acknowledgement therefore stamps a later revision, on any node. Writes that overlap are ordered by their revisions, but a read can run before an earlier-stamped write is stored; see [Overlapping writes](#overlapping-writes).
 

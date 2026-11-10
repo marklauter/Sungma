@@ -19,7 +19,7 @@ cites:
 
 # The table
 
-Sungma keeps everything in one key-value table: every [[fact]] [[span]], every [[namespace]] version, the interned names, and the head, all on one [[revision]] timeline, as [One timeline](one-timeline.md) specifies. In production the table is a DynamoDB table. Tests run it against DynamoDB Local. Local reads consistently whatever a read asks for, and runs one transaction at a time, so tests can't reach the paths for stale reads and transaction conflicts.
+Sungma keeps everything in one key-value table: every fact span, every namespace version, the interned names, and the head, all on one revision timeline, as [One timeline](one-timeline.md) specifies. In production the table is a DynamoDB table. Tests run it against DynamoDB Local. Local reads consistently whatever a read asks for, and runs one transaction at a time, so tests can't reach the paths for stale reads and transaction conflicts.
 
 ## The table and the contexts
 
@@ -43,7 +43,7 @@ Each item has a partition key and a sort key. Within a partition, items are kept
 Keys compare symbol by symbol, so each key is written so that it sorts in the order reads need:
 
 - An id and a revision are written at a fixed width, most significant digit first, so they sort as numbers do.
-- A resource id or an [[identity]] is followed by an end mark that sorts below every character either may hold, so a prefix read never picks up a longer id.
+- A resource id or an identity is followed by an end mark that sorts below every character either may hold, so a prefix read never picks up a longer id.
 - Each key starts with a tag that names the kind of item.
 
 | Item | Partition | Sort key | Holds |
@@ -57,13 +57,13 @@ Keys compare symbol by symbol, so each key is written so that it sorts in the or
 | Id to name | the pool | the id | its name |
 | Head | the head | fixed | the latest write's revision |
 
-Interned ids keep keys small. The longest key, a span of a [[subjectset]] subject with the longest resource id, fits within DynamoDB's key limit.
+Interned ids keep keys small. The longest key, a span of a subjectset subject with the longest resource id, fits within DynamoDB's key limit.
 
 Every key reads back as its parts: its kind, ids, resource id or identity, and revision. A key Sungma didn't write, or an item without an attribute Sungma writes, is refused with a store error that names the key.
 
 ## Facts
 
-Each span of a fact is one item. Its partition key is the fact's subjectset: the namespace id, the [[relation]] id, then the resource id. Its sort key is the [[subject]], then the revision that wrote the span. A subject's key sorts as the kernel sorts subjects: identities, then subjectsets, then [[resource]] members.
+Each span of a fact is one item. Its partition key is the fact's subjectset: the namespace id, the relation id, then the resource id. Its sort key is the subject, then the revision that wrote the span. A subject's key sorts as the kernel sorts subjects: identities, then subjectsets, then resource members.
 
 A span records the revision that wrote it, and the revision that retired it once it closes. A span is never removed.
 
@@ -81,10 +81,10 @@ The reader keeps spans after the table reads them, so a read pays for every span
 
 A namespace's entries are items keyed by the revision the entry opens at:
 
-- A version holds its revision, its namespace document, and the [[epoch]] of each relation it declares, keyed by relation id.
+- A version holds its revision, its namespace document, and the epoch of each relation it declares, keyed by relation id.
 - A retirement holds its revision and is marked retired.
 
-A version is stored as its document. A write prints the version with names in place of ids, through the printer in [Namespace documents](namespace-documents.md#printing), so every stored document has the printer's one form. A version whose namespace or relations have no interned name is refused. A read parses the document, maps its names to ids, and rebuilds the version from its stored epochs. The read refuses a version where a declared relation has no epoch, an undeclared relation has one, or an epoch is later than the version's revision.
+A version is stored as its document. A write prints the version with names in place of ids, through the printer in [Theory documents](theory-documents.md#printing), so every stored document has the printer's one form. A version whose namespace or relations have no interned name is refused. A read parses the document, maps its names to ids, and rebuilds the version from its stored epochs. The read refuses a version where a declared relation has no epoch, an undeclared relation has one, or an epoch is later than the version's revision.
 
 Each namespace has one more item, its latest item, which sorts before its entries: a copy of its newest entry. A read of it can be stale; it isn't a promise that no newer write is on its way.
 
@@ -106,7 +106,7 @@ Every fact write and every namespace write is one unit of work whose first step 
 
 ## Writes
 
-A writer stamps its writes from its [[revision-clock]] and waits out commit-wait before it acknowledges, as [The clock](clock.md) specifies. A writer handles one write at a time, so its revisions follow the order its writes land in. A writer takes any clock. A development writer reads the head and counts revisions on from it, so a restarted writer doesn't reuse a revision already committed.
+A writer stamps its writes from its revision clock and waits out commit-wait before it acknowledges, as [The clock](clock.md) specifies. A writer handles one write at a time, so its revisions follow the order its writes land in. A writer takes any clock. A development writer reads the head and counts revisions on from it, so a restarted writer doesn't reuse a revision already committed.
 
 A write reads what it depends on consistently. A write that loses a race is tried again, a bounded number of times, and sees what beat it. When the writer's clock is at or below the head it read, it moves its clock past the head and tries again. When the head's condition refused the write, the writer reads the head and moves its clock past it before the next try, so each race it loses costs it one try.
 

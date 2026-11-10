@@ -17,15 +17,15 @@ cites:
 
 # One timeline for facts and namespaces
 
-Proposed. Every [[fact]] and every [[namespace]] version holds over a [[span]] of one [[revision]] sequence, so one revision selects both the [[graph]] and the [[catalog]].
+Proposed. Every fact and every namespace version holds over a span of one revision sequence, so one revision selects both the graph and the catalog.
 
 ## Revisions and revision tokens
 
 - A revision is a commit timestamp. Clocks are synchronized by NTP, and each write absorbs the clock uncertainty by commit-wait: it takes timestamp t and acknowledges only once every clock has passed t. A reader therefore never needs the uncertainty bound.
-- Callers never hold a bare revision. They hold a [[revision-token]], an opaque token naming a [[snapshot]] by its revision.
+- Callers never hold a bare revision. They hold a revision token, an opaque token naming a snapshot by its revision.
 - A caller gets a revision token from Sungma. A write returns the revision token of its revision, and a check, read or expand returns the revision token it was evaluated at. A client stores the revision token from a content-change check alongside that version of its content.
 - On a request, a revision token is a floor: the read is at that revision or later. A request without a revision token reads the latest snapshot. There is no staleness tolerance between the two.
-- On a [[decision]], the revision token names the revision judged, and replay reads that revision.
+- On a decision, the revision token names the revision judged, and replay reads that revision.
 
 ## Spans
 
@@ -35,9 +35,9 @@ Proposed. Every [[fact]] and every [[namespace]] version holds over a [[span]] o
 
 ## Epochs and orphaned facts
 
-- Each namespace version records an [[epoch]] for each relation it declares: the revision at which the relation was last declared. A version that keeps a relation keeps its epoch. A version that adds a relation, or declares a dropped one again, sets its epoch to the version's revision.
+- Each namespace version records an epoch for each relation it declares: the revision at which the relation was last declared. A version that keeps a relation keeps its epoch. A version that adds a relation, or declares a dropped one again, sets its epoch to the version's revision.
 - At revision R, a fact counts only when its namespace version at R declares its relation and the fact's span opened at or after that relation's epoch.
-- A fact under a relation its namespace dropped is an [[orphaned-fact]]. It counts as nonexistent. Nothing retires it, and replays before the drop still see it.
+- A fact under a relation its namespace dropped is an orphaned fact. It counts as nonexistent. Nothing retires it, and replays before the drop still see it.
 - Declaring the relation again moves its epoch, so orphaned facts stay dead and old facts don't count again.
 - A write of a fact whose current span opened before its relation's epoch opens a new span. Otherwise a fact written again after the relation returns would stay dead.
 - Every reader applies the same rule: decide, expand, read, watch and dumps.
@@ -88,5 +88,5 @@ A fact write is checked against the namespace version at the write's revision: t
 
 ## Related
 
-- [[ideas-from-kingo]], ideas 1, 4 and 5.
-- [[namespace-writes-wait-on-namespace-versioning]].
+- [Ideas from Kingo](../notes/ideas-from-kingo.md), ideas 1, 4 and 5.
+- [Namespace writes wait on namespace versioning](../notes/namespace-writes-wait-on-namespace-versioning.md).

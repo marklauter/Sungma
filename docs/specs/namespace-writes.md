@@ -18,7 +18,7 @@ cites:
 
 # Namespace writes
 
-A namespace write changes one [[namespace]] in the [[catalog]] at a [[revision]]. It never edits a stored version. It stores a new version, closes the latest version's [[span]], or both. [One timeline](one-timeline.md) says what a read at any revision sees, and [Namespace documents](namespace-documents.md) says what a version may contain.
+A namespace write changes one namespace in the catalog at a revision. It never edits a stored version. It stores a new version, closes the latest version's span, or both. [One timeline](one-timeline.md) says what a read at any revision sees, and [Theory documents](theory-documents.md) says what a version may contain.
 
 ## Writes
 
@@ -26,13 +26,13 @@ There are three:
 
 - **Create** stores the first version of a namespace that has no latest version. Creating a namespace that has one is refused.
 - **Write a new version** stores the next version of a namespace that has a latest version. The latest version's span closes at the new version's revision.
-- **Retire** closes the latest version's span and stores no new version. From then on the namespace declares no relations, so every fact under it is an [[orphaned-fact]]. A retired namespace can be created again.
+- **Retire** closes the latest version's span and stores no new version. From then on the namespace declares no relations, so every fact under it is an orphaned fact. A retired namespace can be created again.
 
-Each version keeps an [[epoch]] for each [[relation]] it declares. A relation that carries over to a new version keeps its epoch. A relation the new version adds or brings back gets the new version's revision as its epoch. Creating a namespace again after it was retired brings every relation back. [One timeline](one-timeline.md#retiring-a-namespace) walks through a sample.
+Each version keeps an epoch for each relation it declares. A relation that carries over to a new version keeps its epoch. A relation the new version adds or brings back gets the new version's revision as its epoch. Creating a namespace again after it was retired brings every relation back. [One timeline](one-timeline.md#retiring-a-namespace) walks through a sample.
 
 ## What a write carries
 
-A create or a new version carries one whole namespace document. The document becomes the whole version, so `Namespace::new` checks it whole. A write carrying only some relations would have to be merged into the latest version before it could be checked. A document that fails any check is refused, and nothing is stored.
+A create or a new version carries one whole namespace, written in TDL. It becomes the whole version, so `Namespace::new` checks it whole. A write carrying only some relations would have to be merged into the latest version before it could be checked. A namespace that fails any check is refused, and nothing is stored.
 
 A namespace may declare no relations. Its resources are then only ever subjects of facts in other namespaces.
 
@@ -40,7 +40,7 @@ A namespace may declare no relations. Its resources are then only ever subjects 
 
 A write names the version it was based on, like an etag:
 
-- Writing a new version, or retiring, carries the [[revision-token]] of the version the caller read.
+- Writing a new version, or retiring, carries the revision token of the version the caller read.
 - Creating carries none, since there is no version to have read.
 
 The write is refused when the namespace's latest version isn't the one named. The caller then reads the latest version and tries again. Two writers that read the same version can't both succeed, so neither silently undoes the other.
@@ -57,7 +57,7 @@ Dropping a relation empties it everywhere, including in other namespaces that re
 
 - A version is stored as the printer's form of the checked namespace, never as the text the caller sent. The printer sorts relations by name, so a version prints the same document every time. It's stored as that printed document, with names, and a read parses it and maps the names to ids. A name keeps its id for good, so the document reads back the same version.
 - Namespace and relation names are interned when a namespace is written, and only then. Checks look names up and never intern them. See [Interner](../interner.md).
-- A namespace write takes its revision from the [[revision-clock]] and waits out commit-wait before acknowledging, as a fact write does. See [Clock](clock.md).
+- A namespace write takes its revision from the revision clock and waits out commit-wait before acknowledging, as a fact write does. See [Clock](clock.md).
 - A namespace write names the version it expects. A namespace read finds the version whose span covers a revision.
 
 ## Answered elsewhere

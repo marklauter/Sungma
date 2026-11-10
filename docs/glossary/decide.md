@@ -11,7 +11,3 @@ issues: "[[decision]]"
 ---
 
 To judge whether a subject is in a closure.
-
-## Rationale
-
-Replaces Kingo's contains.

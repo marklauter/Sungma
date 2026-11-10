@@ -15,7 +15,7 @@ cites:
 
 # Fact documents
 
-A fact document is the JSON form of a list of [[fact]]s. Each fact binds a [[subject]] to a [[subjectset]]. Facts record memberships outright, and a [[namespace]]'s rewrites derive further memberships from them. A fact is a value built from typed parts; a document is notation for it.
+A fact document is the JSON form of a list of facts. Each fact binds a subject to a subjectset. Facts record memberships outright, and a namespace's rewrites derive further memberships from them. A fact is a value built from typed parts; a document is notation for it.
 
 Every part of a fact has its own JSON key, so Sungma splits no string to read one. Resources and identities are opaque, and an email or a URI is a valid one.
 
@@ -37,8 +37,8 @@ Every part of a fact has its own JSON key, so Sungma splits no string to read on
 - A document is one JSON array of facts. An empty array holds no facts.
 - A fact is an object with four keys: `namespace`, `resource` and `relation` name its subjectset, and `subject` holds its subject.
 - A subject is an object, and its keys say which kind it is:
-  - `identity` alone is an [[identity]].
-  - `namespace` and `resource` are a [[resource]], called a resource member as a subject.
+  - `identity` alone is an identity.
+  - `namespace` and `resource` are a resource, called a resource member as a subject.
   - `namespace`, `resource` and `relation` are a subjectset.
 - A subject with any other set of keys is refused, such as `identity` with `namespace`, or `namespace` without `resource`.
 - A fact missing a key, a key written twice, and a key the document doesn't define are refused.
@@ -69,7 +69,7 @@ A fact is never changed. A write adds facts and retires facts, and a retired fac
 
 ## Names
 
-A namespace name and a [[relation]] name follow the grammar in [Namespace documents](namespace-documents.md#names).
+A namespace name and a relation name follow the grammar in [Theory documents](theory-documents.md#names).
 
 Every namespace and relation a fact names, in its subjectset or its subject, must have been interned; a relation must be one the namespace's latest version declares. A fact document never interns a name.
 
@@ -104,7 +104,7 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 
 1. **Document shape.** Each rule in [Document](#document) holds, for valid documents and for each way of breaking it.
 2. **Subjects.** Each kind of subject is read from its keys, and every other set of keys is refused.
-3. **Names.** Namespace and relation names follow the namespace document grammar, including the reserved `this`. A fact may name Sungma's own namespaces, such as `sungma.group`: the reserved first segment `sungma` limits which namespaces can be created, not which names a fact may use.
+3. **Names.** Namespace and relation names follow the theory document grammar, including the reserved `this`. A fact may name Sungma's own namespaces, such as `sungma.group`: the reserved first segment `sungma` limits which namespaces can be created, not which names a fact may use.
 4. **Resources and identities.** Printable ASCII is accepted, any other character and empty text are refused, and case is kept.
 5. **Limits.** Each limit at its value and one past it.
 6. **Errors.** Each error carries the line and column of the value at fault, and quoted text is bounded and escaped.
