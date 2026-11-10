@@ -17,6 +17,7 @@ cites:
   - "[[sungma-authorization]]"
 ---
 
+<!-- final -->
 # Theory documents
 
 A theory document declares one or more namespaces in TDL, Theory Definition Language. Any set of namespaces is a theory. Each relation declares its constraints, the kinds of subject its facts may bind, and its rewrite. Files end in `.theory`.
@@ -25,11 +26,12 @@ A document is applied, like a DDL script: Sungma checks each namespace and store
 
 ## Why a theory
 
-<!-- final -->
 In logic, a theory is a set of sentences closed under deduction. Here the sentences are rewrites. When rewrites are combined with fact tuples, a graph is formed from which each subjectset's closure may be deduced. [Checks](#checks) keep that true.
-<!-- /final -->
 
 ## TDL
+
+> [!NOTE]
+> The grammars are ISO EBNF: `=` defines, `;` ends a rule, `,` joins in sequence, `|` separates alternatives, `( )` groups, `[ ]` is optional, `{ }` repeats, `-` excludes, and `? ?` describes in words.
 
 A relation reads like a signature: its name, a colon and its constraints, then `=` and its rewrite. With no `=`, it reads `this`. With no constraints, it's computed.
 
@@ -39,8 +41,6 @@ namespace   = 'namespace', ':', namespace name, { relation } ;
 relation    = relation name, ( ':', constraints, [ '=', rewrite ] | '=', rewrite ) ;
 constraints = constraint, { ',', constraint } ;
 ```
-
-The grammars are ISO EBNF: `=` defines, `;` ends a rule, `,` joins in sequence, `|` separates alternatives, `( )` groups, `[ ]` is optional, `{ }` repeats, `-` excludes, and `? ?` describes in words.
 
 - Whitespace, line breaks included, only separates tokens. A rewrite may start on the next line and wrap.
 - A rewrite runs until the next signature (a name followed by `:` or `=`), the next `namespace:`, or the end. A constraint list ends where no comma follows.
@@ -78,6 +78,8 @@ relation name = name - ? 'this', 'namespace' or 'theory', in any casing ? ;
 ```
 
 Names are parsed at the edge.
+<!-- /final -->
+
 
 ## Constraints
 
