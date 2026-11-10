@@ -30,7 +30,8 @@
 //! Beyond the statuses every route shares:
 //!
 //! - 409: a namespace write whose `based_on` isn't the latest version.
-//! - 413: a fact write past what one write holds, or a namespace version
+//! - 413: a fact write past what one write holds, a namespace write whose
+//!   body is past [`MAX_NAMESPACE_BODY_BYTES`], or a namespace version
 //!   naming more namespaces than one write checks.
 //! - 422: a refused write. A refused namespace document is 422 whatever
 //!   its problems, names included, so it lists them all in one reply, and
@@ -43,7 +44,7 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
-    extract::{State, rejection::JsonRejection},
+    extract::{DefaultBodyLimit, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
@@ -63,6 +64,10 @@ use crate::{
     },
     store::{FactWriter, NamespaceWrite, NamespaceWriteError, NamespaceWriter},
 };
+
+/// The largest namespace write body, in bytes. The parser has no size
+/// limit, so the edge bounds what a caller can send it.
+pub const MAX_NAMESPACE_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 /// What every write writes through, shared across them: the interner, and
 /// the writer.
@@ -89,7 +94,10 @@ where
 {
     Router::new()
         .route("/facts/write", post(facts::<I, W>))
-        .route("/namespaces/write", post(namespaces::<I, W>))
+        .route(
+            "/namespaces/write",
+            post(namespaces::<I, W>).layer(DefaultBodyLimit::max(MAX_NAMESPACE_BODY_BYTES)),
+        )
         .with_state(state)
 }
 

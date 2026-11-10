@@ -18,7 +18,7 @@ use sungma_table::{
     sequence::Sequence,
     write::{CommitError, ItemWriter, Work},
 };
-use sungma_write::http::{AppState, router};
+use sungma_write::http::{AppState, MAX_NAMESPACE_BODY_BYTES, router};
 
 use common::post;
 
@@ -157,6 +157,27 @@ async fn a_body_past_the_limit_is_too_large() {
         "x".repeat(3 * 1024 * 1024)
     );
     let (status, _) = common::post_raw(&app, "/facts/write", &big, Some("application/json")).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+/// A namespace write body up to the edge's limit reaches the parser, which
+/// has none of its own; one byte more is too large.
+#[tokio::test]
+async fn a_namespace_body_holds_to_the_edges_limit() {
+    let app = memory();
+    let body = |bytes: usize| {
+        let (head, tail) = (r#"{"create":"namespace: file "#, r#""}"#);
+        let pad = " ".repeat(bytes - head.len() - tail.len());
+        format!("{head}{pad}{tail}")
+    };
+    let at = body(MAX_NAMESPACE_BODY_BYTES);
+    assert_eq!(at.len(), MAX_NAMESPACE_BODY_BYTES);
+    let (status, reply) =
+        common::post_raw(&app, "/namespaces/write", &at, Some("application/json")).await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    let past = body(MAX_NAMESPACE_BODY_BYTES + 1);
+    let (status, _) =
+        common::post_raw(&app, "/namespaces/write", &past, Some("application/json")).await;
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
 }
 
