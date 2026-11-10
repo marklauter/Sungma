@@ -1587,6 +1587,67 @@ fn the_printer_refuses_what_no_document_declares() {
     }
 }
 
+#[test]
+fn the_printer_refuses_a_rewrite_the_parser_would() {
+    let at_limit = parsed(&depth_case(&chain(DEFAULT_REWRITE_DEPTH)));
+    let printed = print(&at_limit).expect("a rewrite at the limit");
+    assert!(same(&parsed(&printed), &at_limit));
+    // Grouped on the right, each level past the first adds parentheses.
+    let mut right = This;
+    for _ in 1..DEFAULT_REWRITE_DEPTH {
+        right = exclusion(This, right);
+    }
+    let with = |rewrite: Rewrite<RelationName>| NamespaceDocument {
+        namespace: namespace_name("t"),
+        relations: Namespace::with_depth(
+            vec![(relation("r"), rewrite, vec![Constraint::Identity])],
+            2 * DEFAULT_REWRITE_DEPTH,
+        )
+        .expect("a valid namespace"),
+    };
+    let printed = print(&[with(right.clone())]).expect("a rewrite at the limit");
+    parsed(&printed);
+    assert_eq!(
+        print(&[with(exclusion(This, right))]),
+        Err(PrintError::TooDeep)
+    );
+    let past = tdl::parse_with(
+        &depth_case(&chain(DEFAULT_REWRITE_DEPTH + 1)),
+        Settings {
+            depth: DEFAULT_REWRITE_DEPTH + 1,
+        },
+    )
+    .expect("a rewrite at a deeper limit");
+    assert_eq!(print(&past), Err(PrintError::TooDeep));
+}
+
+#[test]
+fn a_rewrite_built_far_past_the_depth_limit_is_refused_without_a_crash() {
+    // Building, checking and dropping the tree recurses through it, so
+    // they take the larger stack; printing takes a thread's usual one.
+    with_stack(|| {
+        let mut rewrite = This;
+        for _ in 1..100_000 {
+            rewrite = exclusion(rewrite, This);
+        }
+        let document = NamespaceDocument {
+            namespace: namespace_name("t"),
+            relations: Namespace::with_depth(
+                vec![(relation("r"), rewrite, vec![Constraint::Identity])],
+                usize::MAX,
+            )
+            .expect("a valid namespace"),
+        };
+        let printed = std::thread::scope(|scope| {
+            scope
+                .spawn(|| print(std::slice::from_ref(&document)))
+                .join()
+                .expect("printing doesn't crash")
+        });
+        assert_eq!(printed, Err(PrintError::TooDeep));
+    });
+}
+
 /// A namespace `t` printed as exactly `bytes`: relations sorted by name,
 /// each taking identities, the last one's name making up the rest.
 fn printed_at(bytes: usize) -> String {

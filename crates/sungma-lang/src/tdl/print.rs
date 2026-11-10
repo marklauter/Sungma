@@ -12,7 +12,9 @@ use sungma::{
     rewrite::Rewrite,
 };
 
-use super::{IDENTITY, MAX_DOCUMENT_BYTES, Named, NamedConstraint, namespace_name};
+use super::{
+    DEFAULT_REWRITE_DEPTH, IDENTITY, MAX_DOCUMENT_BYTES, Named, NamedConstraint, namespace_name,
+};
 
 /// Why [`print()`] refused namespaces: no document can declare them.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -27,6 +29,10 @@ pub enum PrintError {
     NoNamespace,
     #[error("namespace '{0}' is given twice")]
     DuplicateNamespace(String),
+    /// A rewrite nesting deeper, in levels or in grouping parentheses, than
+    /// [`parse`](super::parse) reads.
+    #[error("a rewrite nests more than {DEFAULT_REWRITE_DEPTH} deep")]
+    TooDeep,
     #[error("the printed document would be more than {MAX_DOCUMENT_BYTES} bytes")]
     TooLarge,
 }
@@ -122,7 +128,7 @@ fn namespace(text: &mut String, theory: Option<&str>, relations: &Named) -> Resu
         constraints.sort();
         let relation = printable(relation)?;
         let mut expression = String::new();
-        self::expression(&mut expression, rewrite)?;
+        self::expression(&mut expression, rewrite, 1)?;
         let _ = match (constraints.is_empty(), expression == "this") {
             (true, _) => writeln!(text, "  {relation}: {expression}"),
             (false, true) => writeln!(text, "  {relation}<{}>", constraints.join(", ")),
@@ -155,7 +161,20 @@ fn written_constraint(
     })
 }
 
-fn expression(text: &mut String, rewrite: &Rewrite<RelationName>) -> Result<(), PrintError> {
+/// Writes `rewrite`, `level` levels deep, the root being 1. A rewrite past
+/// the default depth limit is refused before it's walked further, so one
+/// built in code, however deep, can't overflow the stack. Grouping
+/// parentheses are written only around an operand with an operator, so
+/// they never nest deeper than the levels.
+fn expression(
+    text: &mut String,
+    rewrite: &Rewrite<RelationName>,
+    level: usize,
+) -> Result<(), PrintError> {
+    if level > DEFAULT_REWRITE_DEPTH {
+        return Err(PrintError::TooDeep);
+    }
+    let next = level + 1;
     match rewrite {
         Rewrite::This => text.push_str("this"),
         Rewrite::Computed(relation) => text.push_str(printable(relation)?),
@@ -165,22 +184,24 @@ fn expression(text: &mut String, rewrite: &Rewrite<RelationName>) -> Result<(), 
         Rewrite::Union(operands) | Rewrite::Intersection(operands) if operands.len() < 2 => {
             return Err(PrintError::OneOperand);
         }
-        Rewrite::Union(operands) => operator(text, operands, " | ", |operand| {
+        Rewrite::Union(operands) => operator(text, operands, " | ", next, |operand| {
             matches!(operand, Rewrite::Union(_))
         })?,
-        Rewrite::Intersection(operands) => operator(text, operands, " & ", |operand| {
+        Rewrite::Intersection(operands) => operator(text, operands, " & ", next, |operand| {
             matches!(operand, Rewrite::Union(_) | Rewrite::Intersection(_))
         })?,
         Rewrite::Exclusion(base, excluded) => {
             grouped(
                 text,
                 base,
+                next,
                 matches!(**base, Rewrite::Union(_) | Rewrite::Intersection(_)),
             )?;
             text.push_str(" ! ");
             grouped(
                 text,
                 excluded,
+                next,
                 matches!(
                     **excluded,
                     Rewrite::Union(_) | Rewrite::Intersection(_) | Rewrite::Exclusion(..)
@@ -201,13 +222,14 @@ fn operator(
     text: &mut String,
     operands: &[Rewrite<RelationName>],
     symbol: &str,
+    level: usize,
     needs_parentheses: fn(&Rewrite<RelationName>) -> bool,
 ) -> Result<(), PrintError> {
     for (i, operand) in operands.iter().enumerate() {
         if i > 0 {
             text.push_str(symbol);
         }
-        grouped(text, operand, needs_parentheses(operand))?;
+        grouped(text, operand, level, needs_parentheses(operand))?;
     }
     Ok(())
 }
@@ -215,14 +237,15 @@ fn operator(
 fn grouped(
     text: &mut String,
     rewrite: &Rewrite<RelationName>,
+    level: usize,
     parenthesize: bool,
 ) -> Result<(), PrintError> {
     if parenthesize {
         text.push('(');
-        expression(text, rewrite)?;
+        expression(text, rewrite, level)?;
         text.push(')');
     } else {
-        expression(text, rewrite)?;
+        expression(text, rewrite, level)?;
     }
     Ok(())
 }
