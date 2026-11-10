@@ -14,12 +14,15 @@ use sungma::{
     rewrite::Rewrite::{self, Computed, Exclusion, FactTo, Intersection, This, Union},
 };
 use sungma_lang::tdl::{
-    self, ErrorKind, MAX_DOCUMENT_BYTES, MAX_ERRORS, MAX_NAMESPACE_BYTES, MAX_QUOTE_BYTES,
-    MAX_RELATION_BYTES, Named, NamedConstraint, NamespaceDocument, Place, PrintError, Refusal,
-    Settings, TdlError,
+    self, DEFAULT_MAX_ERRORS, ErrorKind, MAX_NAMESPACE_BYTES, MAX_QUOTE_BYTES, MAX_RELATION_BYTES,
+    Named, NamedConstraint, NamespaceDocument, Place, PrintError, Refusal, Settings, TdlError,
 };
 
 use grammar::DECLARED;
+
+/// The size the hostile documents are built to: far past any written
+/// document. The parser has no size limit of its own.
+const LARGE: usize = 2 * 1024 * 1024;
 
 fn parsed(text: &str) -> Vec<NamespaceDocument> {
     tdl::parse(text).unwrap_or_else(|errors| panic!("refused {text:?}: {errors:?}"))
@@ -432,16 +435,16 @@ const DRIVE: &str = "theory: drive
 namespace: file
   owner<@identity>
   parent<@identity, folder, folder#owner>
-  editor<@identity, group#member>: this | owner
-  viewer<@identity, group#member>: (this | editor | (parent, viewer)) ! banned
+  editor<..group#member, @identity>: this | owner
+  viewer<..group#member, @identity>: (this | editor | (parent, viewer)) ! banned
   auditor<@identity>: this & viewer
   banned<@identity>
 
 namespace: folder
   owner<@identity>
   parent<folder>
-  viewer<@identity, group#member>: (this | (parent, viewer)) ! banned
-  banned<@identity, group#member>
+  viewer<..group#member, @identity>: (this | (parent, viewer)) ! banned
+  banned<..group#member, @identity>
 ";
 
 const FIXTURES: [&str; 3] = [
@@ -463,8 +466,8 @@ fn comments_change_nothing() {
             "  banned<@identity> // é \u{202e} //\n",
         )
         .replace(
-            "editor<@identity, group#member>: this | owner",
-            "editor<@identity, // who\n    group#member>: this // first\n    | owner",
+            "editor<..group#member, @identity>: this | owner",
+            "editor<@identity, // who\n    ..group#member>: this // first\n    | owner",
         );
     let commented = parsed(&format!("// top\n{commented}// last"));
     assert!(same(&plain, &commented));
@@ -583,7 +586,7 @@ fn a_namespace_declared_twice_is_refused() {
     for text in [
         "namespace: a\nnamespace: b\nnamespace: a\n",
         "theory: t\nnamespace: a\nnamespace: a\n",
-        "theory: t\nnamespace: a\nnamespace: t.a\n",
+        "namespace: t.a.b\ntheory: t\nnamespace: a.b\n",
         "namespace: t.a\ntheory: t\nnamespace: a\n",
         "theory: t\nnamespace: a\ntheory: u\nnamespace: b\ntheory: t\nnamespace: a\n",
     ] {
@@ -647,18 +650,120 @@ fn a_reference_between_namespaces_is_checked_against_the_document() {
 // The theory name.
 
 #[test]
-fn the_theory_prefixes_undotted_names_in_headers_and_constraints() {
+fn the_theory_prefixes_every_name_in_headers_and_constraints() {
     let document = one(
         "theory: t\nnamespace: a\n  r<@identity, b, b#s, t.c, t.c#s, u.d, u.d#s>: this | s\n  s<@identity>\n",
     );
     assert_eq!(document.namespace.as_str(), "t.a");
     assert_eq!(
         constraints_of(&document, "r"),
-        ["@identity", "t.b", "t.b#s", "t.c", "t.c#s", "u.d", "u.d#s"]
+        [
+            "@identity",
+            "t.b",
+            "t.b#s",
+            "t.t.c",
+            "t.t.c#s",
+            "t.u.d",
+            "t.u.d#s"
+        ]
     );
     assert_eq!(rewrite_of(&document, "r"), union(vec![This, name("s")]));
     let documents = parsed("theory: t\nnamespace: c.d\nnamespace: e\nnamespace: t.f\n");
-    assert_eq!(names(&documents), ["c.d", "t.e", "t.f"]);
+    assert_eq!(names(&documents), ["t.c.d", "t.e", "t.t.f"]);
+}
+
+#[test]
+fn a_document_of_plain_namespaces_and_theories_resolves_each_name() {
+    let text = "namespace: a
+  r<@identity>
+namespace: b
+  r<@identity>
+
+theory: c
+
+namespace: d
+  r<@identity>
+
+theory: x
+
+namespace: y.z
+  r<@identity>
+";
+    let documents = parsed(text);
+    assert_eq!(names(&documents), ["a", "b", "c.d", "x.y.z"]);
+    // Printed in any order, they print as written.
+    let mut shuffled = parsed(text);
+    shuffled.reverse();
+    shuffled.swap(2, 3);
+    assert_eq!(names(&shuffled), ["x.y.z", "c.d", "a", "b"]);
+    assert_eq!(print(&shuffled), Ok(text.to_owned()));
+}
+
+#[test]
+fn dots_before_a_constraint_name_it_outside_the_theory() {
+    let document = one(
+        "theory: drive\nnamespace: folder\n  r<file, ..file, ..io.file#owner, ..drive.x#owner, file#owner, drive.file>\n",
+    );
+    assert_eq!(document.namespace.as_str(), "drive.folder");
+    assert_eq!(
+        constraints_of(&document, "r"),
+        [
+            "drive.drive.file",
+            "drive.file",
+            "drive.file#owner",
+            "drive.x#owner",
+            "file",
+            "io.file#owner",
+        ]
+    );
+    // Outside any theory, `..` changes nothing.
+    let document = one("namespace: a\n  r<..file, ..io.file#owner>\n");
+    assert_eq!(constraints_of(&document, "r"), ["file", "io.file#owner"]);
+    assert_eq!(
+        tdl::constraint("..io.file#owner"),
+        tdl::constraint("io.file#owner")
+    );
+    // `..` reads only at the start of a constraint, never in a header or
+    // inside a name.
+    for (text, quoted) in [
+        ("theory: t\nnamespace: a\n  r<a..b>\n", "a..b"),
+        ("theory: t\nnamespace: a\n  r<...b>\n", "...b"),
+        ("theory: t\nnamespace: a\n  r<..b.>\n", "..b."),
+        ("theory: t\nnamespace: a\n  r<..>\n", ".."),
+        ("theory: t\nnamespace: a\n  r<..@identity>\n", "..@identity"),
+        ("theory: t\nnamespace: a\n  r<b#..c>\n", "b#..c"),
+        ("theory: t\nnamespace: a\n  r<.. b>\n", ".."),
+    ] {
+        let error = only(text);
+        assert_eq!(error.place, place(3, 5), "{text:?}: {error}");
+        assert!(error.to_string().contains(quoted), "{text:?}: {error}");
+    }
+    for text in ["namespace: ..a\n", "theory: t\nnamespace: ..a\n"] {
+        let error = only(text);
+        assert!(
+            matches!(error.kind, ErrorKind::Name(NameError::Invalid(_))),
+            "{text:?}: {error}"
+        );
+        assert_eq!(error.place, place(text.lines().count(), 12), "{text:?}");
+    }
+    assert!(matches!(
+        only("theory: ..t\nnamespace: a\n").kind,
+        ErrorKind::DottedTheory(_)
+    ));
+}
+
+#[test]
+fn a_rewrite_ends_at_the_next_theory_line() {
+    let documents = parsed(
+        "namespace: a\n  r<@identity>: this |\n    s\n  s<@identity>\ntheory: t\nnamespace: b\n  s<@identity>: this\ntheory: u\nnamespace: c\n",
+    );
+    assert_eq!(names(&documents), ["a", "t.b", "u.c"]);
+    assert_eq!(rewrite_of(&documents[0], "r"), union(vec![This, name("s")]));
+    assert_eq!(rewrite_of(&documents[1], "s"), This);
+    // A rewrite left open stops at `theory:`, which reads on as a header.
+    let error = only("namespace: a\n  r<@identity>: this |\ntheory: t\nnamespace: b\n");
+    assert_eq!(error.place, place(3, 1));
+    assert!(error.to_string().contains("found the end"), "{error}");
 }
 
 #[test]
@@ -1088,38 +1193,92 @@ fn every_problem_is_reported_in_document_order_once() {
     }
 }
 
+/// `text`'s errors, with the error cap set to `cap`.
+fn capped(text: &str, cap: usize) -> Vec<TdlError> {
+    let settings = Settings {
+        errors: cap,
+        ..Settings::default()
+    };
+    tdl::parse_with(text, settings).expect_err("a refused document")
+}
+
+/// `count` relations naming an undeclared one, an error each.
+fn undeclared(count: usize) -> String {
+    (0..count)
+        .map(|i| format!("  r{i}: undeclared\n"))
+        .collect()
+}
+
+fn too_many(error: &TdlError, cap: usize) -> bool {
+    matches!(error.kind, ErrorKind::TooManyErrors(at) if at == cap) && error.place.is_none()
+}
+
 #[test]
 fn errors_stop_at_the_cap() {
-    let relations: String = (0..MAX_ERRORS + 5)
-        .map(|i| format!("  r{i}: undeclared\n"))
-        .collect();
-    let errors = refused(&format!("namespace: t\n{relations}"));
-    assert_eq!(errors.len(), MAX_ERRORS + 1);
-    assert!(matches!(errors[MAX_ERRORS].kind, ErrorKind::TooManyErrors));
-    assert_eq!(errors[MAX_ERRORS - 1].relation.as_deref(), Some("r49"));
-    let relations: String = (0..MAX_ERRORS)
-        .map(|i| format!("  r{i}: undeclared\n"))
-        .collect();
-    let errors = refused(&format!("namespace: t\n{relations}"));
-    assert_eq!(errors.len(), MAX_ERRORS);
-    assert!(
-        errors
-            .iter()
-            .all(|error| !matches!(error.kind, ErrorKind::TooManyErrors))
+    assert_eq!(Settings::default().errors, DEFAULT_MAX_ERRORS);
+    assert_eq!(DEFAULT_MAX_ERRORS, 50);
+    let errors = refused(&format!("namespace: t\n{}", undeclared(55)));
+    assert_eq!(errors.len(), DEFAULT_MAX_ERRORS + 1);
+    assert!(too_many(&errors[DEFAULT_MAX_ERRORS], DEFAULT_MAX_ERRORS));
+    assert_eq!(
+        errors[DEFAULT_MAX_ERRORS - 1].relation.as_deref(),
+        Some("r49")
     );
+    assert_eq!(
+        errors[DEFAULT_MAX_ERRORS].to_string(),
+        "too many errors; the first 50 are reported"
+    );
+    // With the cap at 1, two errors report the first and that there were
+    // more.
+    let errors = capped("namespace: t\n  a: x\n  b: y\n", 1);
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    assert_eq!(errors[0].relation.as_deref(), Some("a"));
+    assert!(too_many(&errors[1], 1), "{errors:?}");
+    // As many errors as the cap are all reported, with nothing more.
+    for cap in [1, 3, 7] {
+        let errors = capped(&format!("namespace: t\n{}", undeclared(cap)), cap);
+        assert_eq!(errors.len(), cap);
+        assert!(
+            errors
+                .iter()
+                .all(|error| !matches!(error.kind, ErrorKind::TooManyErrors(_)))
+        );
+    }
     // Errors from a later namespace count toward the cap.
-    let first: String = (0..MAX_ERRORS)
-        .map(|i| format!("  r{i}: undeclared\n"))
-        .collect();
-    let text = format!("namespace: a\n{first}namespace: b\n  r: undeclared\n");
-    let errors = refused(&text);
-    assert_eq!(errors.len(), MAX_ERRORS + 1);
-    assert!(matches!(errors[MAX_ERRORS].kind, ErrorKind::TooManyErrors));
+    let text = format!(
+        "namespace: a\n{}namespace: b\n  r: undeclared\n",
+        undeclared(3)
+    );
+    let errors = capped(&text, 3);
+    assert_eq!(errors.len(), 4);
+    assert!(too_many(&errors[3], 3));
     // Reading stops once past the cap.
-    let many: String = (0..10 * MAX_ERRORS)
+    let many: String = (0..10 * DEFAULT_MAX_ERRORS)
         .map(|i| format!("namespace: n{i}\n  r: undeclared\n"))
         .collect();
-    assert_eq!(refused(&many).len(), MAX_ERRORS + 1);
+    assert_eq!(refused(&many).len(), DEFAULT_MAX_ERRORS + 1);
+}
+
+#[test]
+fn errors_past_the_cap_keep_the_earliest_in_document_order() {
+    // Each line is a relation whose constraint list fails, and declares the
+    // relation again: two errors a line, the syntax error found first and
+    // the duplicate found later by the namespace's checks, so errors arrive
+    // out of document order.
+    let text = format!("namespace: t\n{}", "  a<\n".repeat(1000));
+    for cap in [1, 2, 5, 50] {
+        let errors = capped(&text, cap);
+        assert_eq!(errors.len(), cap + 1, "{cap}");
+        assert!(too_many(&errors[cap], cap));
+        for (at, error) in errors[..cap].iter().enumerate() {
+            assert_eq!(error.place, place(3 + at / 2, 3), "{cap}: {error}");
+            if at % 2 == 0 {
+                assert!(matches!(error.kind, ErrorKind::Syntax { .. }), "{error}");
+            } else {
+                assert!(matches!(error.kind, ErrorKind::Namespace(_)), "{error}");
+            }
+        }
+    }
 }
 
 #[test]
@@ -1259,15 +1418,17 @@ fn a_constraint_reads_as_written_outside_a_theory() {
 // Limits.
 
 #[test]
-fn the_document_limit_holds_at_its_value() {
-    assert_eq!(MAX_DOCUMENT_BYTES, 2 * 1024 * 1024);
-    let text = format!("{}namespace: t", " ".repeat(MAX_DOCUMENT_BYTES - 12));
-    assert_eq!(text.len(), MAX_DOCUMENT_BYTES);
-    one(&text);
-    let text = format!("{}namespace: t", " ".repeat(MAX_DOCUMENT_BYTES - 11));
-    let error = only(&text);
-    assert!(matches!(error.kind, ErrorKind::TooLarge), "{error}");
-    assert_eq!(error.place, None);
+fn a_document_has_no_size_limit() {
+    // Request size is the edge's to limit; a stored version is read back
+    // whatever its size.
+    let text = format!("{}namespace: t", " ".repeat(2 * LARGE));
+    assert_eq!(
+        tdl::parse_one(&text)
+            .expect("no size limit")
+            .namespace
+            .as_str(),
+        "t"
+    );
 }
 
 #[test]
@@ -1289,6 +1450,26 @@ fn names_hold_at_their_limits() {
         matches!(error.kind, ErrorKind::Name(NameError::TooLong(..))),
         "{error}"
     );
+    // Under a theory, the limit is on the full name, prefix and all.
+    let rest = format!("b.{}", "n".repeat(MAX_NAMESPACE_BYTES - 4));
+    assert_eq!(
+        one(&format!("theory: a\nnamespace: {rest}"))
+            .namespace
+            .as_str()
+            .len(),
+        MAX_NAMESPACE_BYTES
+    );
+    let error = only(&format!("theory: a\nnamespace: {rest}n"));
+    assert!(
+        matches!(error.kind, ErrorKind::Name(NameError::TooLong(..))),
+        "{error}"
+    );
+    let error = only(&format!("theory: a\nnamespace: b\n  r<{rest}n>\n"));
+    assert!(
+        matches!(error.kind, ErrorKind::Name(NameError::TooLong(..))),
+        "{error}"
+    );
+    one(&format!("theory: a\nnamespace: b\n  r<..{dotted}>\n"));
     let name = "n".repeat(MAX_RELATION_BYTES);
     one(&format!("namespace: t\n  {name}<@identity>"));
     let error = only(&format!("namespace: t\n  {name}n<@identity>"));
@@ -1333,9 +1514,13 @@ fn depth_limits() {
     const AT: usize = "  r<@identity>: ".len();
     for settings in [
         Settings::default(),
-        Settings { depth: 7 },
+        Settings {
+            depth: 7,
+            ..Settings::default()
+        },
         Settings {
             depth: 3 * DEFAULT_REWRITE_DEPTH,
+            ..Settings::default()
         },
     ] {
         let depth = settings.depth;
@@ -1394,6 +1579,7 @@ fn the_depth_limit_counts_every_kind_of_level() {
     );
     let settings = Settings {
         depth: DEFAULT_REWRITE_DEPTH + 10,
+        ..Settings::default()
     };
     let errors = tdl::parse_with(&depth_case(&nested(DEFAULT_REWRITE_DEPTH + 2)), settings)
         .map(|_| ())
@@ -1422,16 +1608,15 @@ fn the_printer_writes_the_canonical_form() {
 namespace: file
   auditor<@identity>: this & viewer
   banned<@identity>
-  editor<@identity, group#member>: this | owner
+  editor<..group#member, @identity>: this | owner
   owner<@identity>
   parent<@identity, folder, folder#owner>
-  viewer<@identity, group#member>: (this | editor | (parent, viewer)) ! banned
-
+  viewer<..group#member, @identity>: (this | editor | (parent, viewer)) ! banned
 namespace: folder
-  banned<@identity, group#member>
+  banned<..group#member, @identity>
   owner<@identity>
   parent<folder>
-  viewer<@identity, group#member>: (this | (parent, viewer)) ! banned
+  viewer<..group#member, @identity>: (this | (parent, viewer)) ! banned
 ";
     assert_eq!(print(&documents), Ok(expected.to_owned()));
     assert_eq!(print(&reversed), Ok(expected.to_owned()));
@@ -1458,12 +1643,17 @@ namespace: a
 theory: x
 namespace: b
          namespace: c.d
-namespace: x.e.f
-namespace: g
+namespace: e.f
+namespace: x.g
+theory: c
+namespace: d
 ",
     );
+    assert_eq!(
+        names(&documents),
+        ["b", "a", "y.a", "x.b", "x.c.d", "x.e.f", "x.x.g", "c.d"]
+    );
     let expected = "namespace: a
-
 namespace: b
 
 theory: c
@@ -1473,10 +1663,9 @@ namespace: d
 theory: x
 
 namespace: b
-
-namespace: x.e.f
-
-namespace: g
+namespace: c.d
+namespace: e.f
+namespace: x.g
 
 theory: y
 
@@ -1486,14 +1675,55 @@ namespace: a
     assert_eq!(printed, expected);
     let again = parsed(&printed);
     assert!(same(&documents, &again), "{printed}");
+    // A theory alone, and plain namespaces alone, have no blank line
+    // before them.
+    assert_eq!(
+        print(&parsed("theory: x\nnamespace: a\nnamespace: b\n")),
+        Ok("theory: x\n\nnamespace: a\nnamespace: b\n".to_owned())
+    );
+    assert_eq!(
+        print(&parsed("namespace: b\nnamespace: a\n")),
+        Ok("namespace: a\nnamespace: b\n".to_owned())
+    );
 }
 
 #[test]
-fn a_dotted_namespace_naming_an_undotted_one_prints_before_every_theory() {
+fn a_constraint_outside_its_namespaces_theory_prints_with_dots() {
     let documents = parsed(
-        "namespace: drive.folder\n  parent<file>\n  owner<drive.user, file#owner>\nnamespace: a\ntheory: drive\nnamespace: user\n",
+        "namespace: file
+  owner<@identity, drive.folder#owner>
+theory: drive
+namespace: folder
+  owner<@identity, ..file#owner, ..io.pipe, folder, ..sungma.group#member, x.y#r>
+namespace: x.y
+  r<..drive, ..drive.folder>
+",
     );
-    let expected = "namespace: a\n\nnamespace: drive.folder\n  owner<drive.user, file#owner>\n  parent<file>\n\ntheory: drive\n\nnamespace: user\n";
+    assert_eq!(
+        constraints_of(&documents[1], "owner"),
+        [
+            "@identity",
+            "drive.folder",
+            "drive.x.y#r",
+            "file#owner",
+            "io.pipe",
+            "sungma.group#member",
+        ]
+    );
+    assert_eq!(
+        constraints_of(&documents[2], "r"),
+        ["drive", "drive.folder"]
+    );
+    let expected = "namespace: file
+  owner<@identity, drive.folder#owner>
+
+theory: drive
+
+namespace: folder
+  owner<..file#owner, ..io.pipe, ..sungma.group#member, @identity, folder, x.y#r>
+namespace: x.y
+  r<..drive, folder>
+";
     let printed = print(&documents).expect("printable namespaces");
     assert_eq!(printed, expected);
     let again = parsed(&printed);
@@ -1504,7 +1734,7 @@ fn a_dotted_namespace_naming_an_undotted_one_prints_before_every_theory() {
 #[test]
 fn constraints_print_sorted_with_the_prefix_taken_off() {
     let documents = parsed(
-        "theory: t\nnamespace: a\n  r<t.t.b, @identity, c#s, t.identity, u.v.w>: this | s\n  s<@identity>\n",
+        "theory: t\nnamespace: a\n  r<..t.t.b, @identity, c#s, ..t.identity, ..u.v.w>: this | s\n  s<@identity>\n",
     );
     assert_eq!(
         constraints_of(&documents[0], "r"),
@@ -1513,12 +1743,12 @@ fn constraints_print_sorted_with_the_prefix_taken_off() {
     let printed = print(&documents).expect("a printable namespace");
     assert_eq!(
         printed,
-        "theory: t\n\nnamespace: a\n  r<@identity, c#s, identity, t.t.b, u.v.w>: this | s\n  s<@identity>\n"
+        "theory: t\n\nnamespace: a\n  r<..u.v.w, @identity, c#s, identity, t.b>: this | s\n  s<@identity>\n"
     );
     let again = parsed(&printed);
     assert!(same(&documents, &again));
-    // Outside a theory, names print as they are.
-    let documents = parsed("namespace: a\n  r<b, x.y, b#r>\n");
+    // Outside a theory, names print as they are, with no dots.
+    let documents = parsed("namespace: a\n  r<b, ..x.y, b#r>\n");
     assert_eq!(
         print(&documents),
         Ok("namespace: a\n  r<b, b#r, x.y>\n".to_owned())
@@ -1646,6 +1876,7 @@ fn the_printer_refuses_a_rewrite_the_parser_would() {
         &depth_case(&chain(DEFAULT_REWRITE_DEPTH + 1)),
         Settings {
             depth: DEFAULT_REWRITE_DEPTH + 1,
+            ..Settings::default()
         },
     )
     .expect("a rewrite at a deeper limit");
@@ -1699,28 +1930,13 @@ fn printed_at(bytes: usize) -> String {
 
 #[test]
 fn the_printer_has_no_size_limit() {
-    let text = printed_at(MAX_DOCUMENT_BYTES);
+    // Past 2 MiB, printed, and read back as a stored version is.
+    let text = printed_at(LARGE + 1);
     let documents = parsed(&text);
-    assert_eq!(print(&documents), Ok(text));
-    // One relation more is past the document limit, and still printed.
-    let mut relations: Vec<_> = documents[0]
-        .relations
-        .relations()
-        .map(|(name, rewrite)| (name.clone(), rewrite.clone(), vec![Constraint::Identity]))
-        .collect();
-    relations.push((relation("a"), This, vec![Constraint::Identity]));
-    let past = NamespaceDocument {
-        namespace: namespace_name("t"),
-        relations: Namespace::new(relations).expect("a valid namespace"),
-    };
-    let printed = print(&[past]).expect("no size limit");
-    assert_eq!(
-        printed.len(),
-        MAX_DOCUMENT_BYTES
-            + "  a<@identity>
-"
-            .len()
-    );
+    let printed = print(&documents).expect("no size limit");
+    assert_eq!(printed, text);
+    let again = tdl::parse_one(&printed).expect("no size limit");
+    assert!(same(&documents, &[again]));
 }
 
 // Round trips.
@@ -1791,35 +2007,28 @@ fn tree(at: usize) -> BoxedStrategy<Rewrite<RelationName>> {
     prop_oneof![small(at), deep(at), wide(at)].boxed()
 }
 
-/// Constraints of every kind, by what may be written in a namespace
-/// without a dot and in one with a dot: identities, resources of a plain
-/// or dotted namespace, subjectsets of another namespace, and of the
-/// namespace itself, `SELF`.
-const UNDOTTED_KINDS: [&str; 6] = [
+/// Constraints of every kind: identities, resources of a plain namespace,
+/// of one in the `drive` theory and of one in `io`, subjectsets of another
+/// namespace in and outside a theory, and of the namespace itself, `SELF`.
+/// Whatever theory the namespace is in, some are in it and some outside,
+/// so the printer writes some with `..`. `..` outside a theory changes
+/// nothing.
+const KINDS: [&str; 10] = [
     "@identity",
     "folder",
     "drive.file",
-    "group#member",
-    "SELF#r1",
-    "SELF#r3",
-];
-const DOTTED_KINDS: [&str; 6] = [
-    "@identity",
-    "io.folder",
     "drive.x.file",
+    "..io.folder",
     "drive.group#member",
+    "group#member",
+    "t.group#member",
     "SELF#r1",
     "SELF#r3",
 ];
 
 /// One to four distinct constraints of namespace `own`, in any order.
 fn constraints(own: &'static str) -> impl Strategy<Value = Vec<NamedConstraint>> {
-    let kinds = if own.contains('.') {
-        DOTTED_KINDS
-    } else {
-        UNDOTTED_KINDS
-    };
-    proptest::sample::subsequence(kinds.to_vec(), 1..5)
+    proptest::sample::subsequence(KINDS.to_vec(), 1..5)
         .prop_shuffle()
         .prop_map(move |kinds| {
             kinds
@@ -1939,7 +2148,7 @@ proptest! {
     /// and parses back.
     #[test]
     fn any_near_tdl_text_is_parsed_or_refused(
-        text in r"(theory|namespace|this|@identity|[:<>.,()|&!/ \n#rt0-9])*",
+        text in r"(theory|namespace|this|@identity|\.\.|[:<>.,()|&!/ \n#rt0-9])*",
     ) {
         if let Ok(documents) = tdl::parse(&text) {
             let printed = print(&documents)
@@ -1964,14 +2173,14 @@ fn the_longest_chain_of_computed_subjectsets_is_accepted() {
     loop {
         let line = format!("  r{count}: r{}\n", count + 1);
         // Room for the last relation, which takes identities.
-        if relations.len() + line.len() + 32 > MAX_DOCUMENT_BYTES {
+        if relations.len() + line.len() + 32 > LARGE {
             break;
         }
         relations.push_str(&line);
         count += 1;
     }
     relations.push_str(&format!("  r{count}<@identity>\n"));
-    assert!(relations.len() <= MAX_DOCUMENT_BYTES);
+    assert!(relations.len() <= LARGE);
     let start = Instant::now();
     let document = one(&relations);
     assert!(start.elapsed() < BOUND);
@@ -1989,14 +2198,14 @@ fn the_largest_set_of_relations_reaching_each_other_is_one_cycle() {
             + (0..count + 1000)
                 .map(|i| line(i, count + 1000).len())
                 .sum::<usize>();
-        if size > MAX_DOCUMENT_BYTES {
+        if size > LARGE {
             break;
         }
         count += 1000;
     }
     let ring: String = (0..count).map(|i| line(i, count)).collect();
     let text = format!("namespace: t\n{ring}");
-    assert!(text.len() <= MAX_DOCUMENT_BYTES);
+    assert!(text.len() <= LARGE);
     let start = Instant::now();
     let error = only(&text);
     assert!(start.elapsed() < BOUND);
@@ -2011,7 +2220,7 @@ fn the_largest_set_of_relations_reaching_each_other_is_one_cycle() {
 fn a_long_chain_of_operators_is_refused_without_a_crash() {
     let chain = vec!["b"; 900_000].join("!");
     let text = format!("namespace: t\n  b<@identity>\n  a: {chain}");
-    assert!(text.len() <= MAX_DOCUMENT_BYTES);
+    assert!(text.len() <= LARGE);
     let start = Instant::now();
     let error = only(&text);
     assert!(start.elapsed() < BOUND);
@@ -2029,7 +2238,7 @@ fn a_long_chain_of_operators_is_refused_without_a_crash() {
         matches!(error.kind, ErrorKind::TooManyParentheses(_)),
         "{error}"
     );
-    let opens = "(".repeat(MAX_DOCUMENT_BYTES - 100);
+    let opens = "(".repeat(LARGE - 100);
     let error = only(&format!("namespace: t\n  a<@identity>: {opens}"));
     assert!(
         matches!(error.kind, ErrorKind::TooManyParentheses(_)),
@@ -2038,7 +2247,7 @@ fn a_long_chain_of_operators_is_refused_without_a_crash() {
 }
 
 #[test]
-fn a_namespace_built_past_the_document_limit_is_checked_without_a_crash() {
+fn a_namespace_built_far_larger_than_a_document_is_checked_without_a_crash() {
     let count = 300_000;
     let mut relations: Vec<_> = (0..count)
         .map(|i| {
@@ -2061,7 +2270,7 @@ fn a_namespace_built_past_the_document_limit_is_checked_without_a_crash() {
         relations: chain,
     };
     let printed = print(&[document]).expect("no size limit");
-    assert!(printed.len() > MAX_DOCUMENT_BYTES);
+    assert!(printed.len() > LARGE);
     let ring: Vec<_> = (0..count)
         .map(|i| {
             (

@@ -11,14 +11,10 @@ use sungma::{
     rewrite::Rewrite,
 };
 
-use super::{MAX_DOCUMENT_BYTES, MAX_ERRORS};
-
 #[derive(Debug, Error)]
 pub enum ErrorKind {
     #[error("a document doesn't start with a byte-order mark")]
     ByteOrderMark,
-    #[error("a document is at most {MAX_DOCUMENT_BYTES} bytes")]
-    TooLarge,
     #[error("a document declares no namespace")]
     NoNamespace,
     /// A document given where one namespace is expected, such as a
@@ -41,8 +37,8 @@ pub enum ErrorKind {
     TooManyParentheses(usize),
     #[error(transparent)]
     Namespace(NamespaceError),
-    #[error("too many errors; the first {MAX_ERRORS} are reported")]
-    TooManyErrors,
+    #[error("too many errors; the first {0} are reported")]
+    TooManyErrors(usize),
     #[error("namespace '{0}' is declared twice")]
     DuplicateNamespace(String),
 }

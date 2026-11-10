@@ -7,7 +7,7 @@
 //! namespace: file
 //!   owner<@identity>
 //!   parent<folder>
-//!   editor<@identity, group#member>: this | owner
+//!   editor<@identity, ..group#member>: this | owner
 //!   viewer: editor | (parent, viewer)
 //! ```
 //!
@@ -20,10 +20,11 @@
 //! end. `namespace` and `theory` are reserved relation names, so a header
 //! is never read as a relation.
 //!
-//! A `theory:` line opens a section: its name, a dot, then each namespace
-//! name without a dot in a header or a constraint, until the next `theory:`
-//! line. A dotted name is already full, and namespaces before the first
-//! `theory:` line take no prefix.
+//! A `theory:` line opens a section: its name and a dot go before each
+//! namespace name in a header or a constraint, until the next `theory:`
+//! line. In a constraint, `..` before a namespace name marks a full name
+//! outside the theory. Namespaces before the first `theory:` line take no
+//! prefix, and there `..` changes nothing.
 //!
 //! A reference from one namespace to another in the document, through a
 //! constraint or a fact-to-subjectset, is checked against the document. A
@@ -50,14 +51,16 @@ use sungma::{
 
 use rewrite::{Failure, Lexeme, Parser, Token, lex, quoted, reads_this, syntax};
 
-/// The longest document.
-pub const MAX_DOCUMENT_BYTES: usize = 2 * 1024 * 1024;
-/// How many errors a refused document reports before [`ErrorKind::TooManyErrors`].
-pub const MAX_ERRORS: usize = 50;
+/// How many errors a refused document reports, by default, before
+/// [`ErrorKind::TooManyErrors`].
+pub const DEFAULT_MAX_ERRORS: usize = 50;
 
 /// The identity constraint. A name can't start with `@`, so it can never
 /// be a namespace.
 pub const IDENTITY: &str = "@identity";
+
+/// What marks a constraint's namespace name as full, outside the theory.
+pub const OUTSIDE: &str = "..";
 
 /// A namespace whose relations and namespaces are named.
 pub type Named = Namespace<RelationName, NamespaceName>;
@@ -72,12 +75,16 @@ pub struct Settings {
     /// The parser recurses once for each group, so a depth past the
     /// default needs a stack to match.
     pub depth: usize,
+    /// How many errors a refused document reports before
+    /// [`ErrorKind::TooManyErrors`].
+    pub errors: usize,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             depth: DEFAULT_REWRITE_DEPTH,
+            errors: DEFAULT_MAX_ERRORS,
         }
     }
 }
@@ -142,12 +149,8 @@ pub fn parse(text: &str) -> Result<Vec<NamespaceDocument>, Vec<TdlError>> {
 /// Linear in the document's length: one pass to lex it, one to parse it, and
 /// [`Namespace::with_depth`]'s linear check of each namespace.
 pub fn parse_with(text: &str, settings: Settings) -> Result<Vec<NamespaceDocument>, Vec<TdlError>> {
-    let fail = |kind| Err(vec![unplaced(kind)]);
-    if text.len() > MAX_DOCUMENT_BYTES {
-        return fail(ErrorKind::TooLarge);
-    }
     if text.starts_with('\u{feff}') {
-        return fail(ErrorKind::ByteOrderMark);
+        return Err(vec![unplaced(ErrorKind::ByteOrderMark)]);
     }
     let lexemes = lex(text);
     let mut reader = Reader {
@@ -155,6 +158,7 @@ pub fn parse_with(text: &str, settings: Settings) -> Result<Vec<NamespaceDocumen
         lexemes: &lexemes,
         at: 0,
         depth: settings.depth,
+        cap: settings.errors,
         errors: Vec::new(),
     };
     let namespaces = reader.document();
@@ -196,7 +200,8 @@ pub(crate) fn namespace_name(text: &str) -> Result<NamespaceName, NameError> {
 
 /// A constraint as a document writes it outside any theory: `@identity`,
 /// a namespace name, or a namespace name and a relation name joined by
-/// `#`. A malformed one is refused whole, quoting all of it.
+/// `#`, the namespace name optionally after `..`, which changes nothing
+/// there. A malformed one is refused whole, quoting all of it.
 pub fn constraint(text: &str) -> Result<NamedConstraint, NameError> {
     Theory::None.constraint(text)
 }
@@ -218,9 +223,6 @@ impl Theory {
     fn qualify(&self, written: &str) -> Result<NamespaceName, (NameError, NamespaceName)> {
         let unchecked = |name: String| NamespaceName::new_unchecked(name);
         match self {
-            _ if written.contains('.') => {
-                namespace_name(written).map_err(|error| (error, unchecked(written.to_owned())))
-            }
             Theory::None => {
                 namespace_name(written).map_err(|error| (error, unchecked(written.to_owned())))
             }
@@ -247,7 +249,13 @@ impl Theory {
             NameError::Invalid(_) => NameError::Invalid(quote(text)),
             other => other,
         };
-        let namespace = |written| self.qualify(written).map_err(|(error, _)| whole(error));
+        let namespace = |written: &str| {
+            match written.strip_prefix(OUTSIDE) {
+                Some(full) => namespace_name(full),
+                None => self.qualify(written).map_err(|(error, _)| error),
+            }
+            .map_err(whole)
+        };
         Ok(match text.split_once('#') {
             None => Constraint::Resource(namespace(text)?),
             Some((written, relation)) => {
@@ -262,6 +270,8 @@ struct Reader<'l, 'a> {
     lexemes: &'l [Lexeme<'a>],
     at: usize,
     depth: usize,
+    /// How many errors are reported.
+    cap: usize,
     errors: Vec<TdlError>,
 }
 
@@ -335,9 +345,9 @@ impl<'a> Reader<'_, 'a> {
         // one more than the cap to show it was passed. A stable sort keeps
         // errors at the same place in the order found, so those kept are
         // the first that [`finish`](Self::finish) would sort them all into.
-        if self.errors.len() > 2 * MAX_ERRORS {
+        if self.errors.len() > 2 * self.cap {
             self.errors.sort_by_key(|error| error.place);
-            self.errors.truncate(MAX_ERRORS + 1);
+            self.errors.truncate(self.cap + 1);
         }
     }
 
@@ -408,7 +418,7 @@ impl<'a> Reader<'_, 'a> {
             // Every error from here on comes later in the document than
             // those already found, so once they pass the cap, reading on
             // would find none that are reported.
-            if self.errors.len() > MAX_ERRORS {
+            if self.errors.len() > self.cap {
                 break;
             }
             if self.at_keyword("theory") {
@@ -646,8 +656,8 @@ impl<'a> Reader<'_, 'a> {
         (constraints, true)
     }
 
-    /// One constraint, its theory's name before a namespace name without a
-    /// dot.
+    /// One constraint, its theory's name before its namespace name unless
+    /// `..` comes first.
     fn constraint(&mut self, theory: &Theory) -> Result<NamedConstraint, Failure> {
         let Some((first, written)) = self.joined() else {
             return Err(syntax(self.peek(), CONSTRAINT));
@@ -674,16 +684,16 @@ impl<'a> Reader<'_, 'a> {
             .ok()
     }
 
-    /// Every error in document order, capped at [`MAX_ERRORS`], or `None`.
+    /// Every error in document order, capped at the setting, or `None`.
     fn finish(&mut self) -> Option<Vec<TdlError>> {
         if self.errors.is_empty() {
             return None;
         }
         let mut errors = std::mem::take(&mut self.errors);
         errors.sort_by_key(|error| error.place);
-        if errors.len() > MAX_ERRORS {
-            errors.truncate(MAX_ERRORS);
-            errors.push(unplaced(ErrorKind::TooManyErrors));
+        if errors.len() > self.cap {
+            errors.truncate(self.cap);
+            errors.push(unplaced(ErrorKind::TooManyErrors(self.cap)));
         }
         Some(errors)
     }

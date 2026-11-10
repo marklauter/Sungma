@@ -12,7 +12,7 @@ use sungma::{
     rewrite::Rewrite,
 };
 
-use super::{DEFAULT_REWRITE_DEPTH, IDENTITY, Named, NamedConstraint, namespace_name};
+use super::{DEFAULT_REWRITE_DEPTH, IDENTITY, Named, NamedConstraint, OUTSIDE, namespace_name};
 
 /// Why [`print()`] refused namespaces: no document can declare them.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -37,20 +37,16 @@ pub enum PrintError {
 /// as equal namespaces, as `docs/specs/theory-documents.md` says: namespaces
 /// without a dot first, with no `theory:` line, then each theory, the first
 /// segment of its namespaces' names, with its namespaces under it and the
-/// prefix taken off; namespaces, relations and constraints sorted, comparing
-/// bytes; one relation to a line, indented two spaces; `: this` left out;
-/// only the parentheses the grammar needs; lines ending in `\n`.
+/// theory's name and dot taken off; namespaces, relations and constraints
+/// sorted, comparing bytes; one relation to a line, indented two spaces;
+/// `: this` left out; only the parentheses the grammar needs; lines ending
+/// in `\n`. A blank line comes after each `theory:` line, and before each
+/// one after the start; namespaces follow one another with none between.
 ///
-/// A namespace whose name still has a dot once its theory's name is taken
-/// off is written in full, as is every dotted constraint outside its
-/// namespace's theory, since a dotted name is never prefixed. A dotted
-/// namespace whose constraints name a namespace without a dot, which a
-/// theory's name would prefix, is written with those without a theory, in
-/// full, its constraints too.
+/// A constraint naming a namespace outside its own namespace's theory,
+/// including one without a dot, is written in full after `..`.
 ///
-/// The printed document has no size limit: namespaces spaced out canonically
-/// can print longer than [`MAX_DOCUMENT_BYTES`](super::MAX_DOCUMENT_BYTES),
-/// which [`parse`](super::parse) then refuses.
+/// The printed document has no size limit.
 pub fn print(namespaces: &[(&NamespaceName, &Named)]) -> Result<String, PrintError> {
     if namespaces.is_empty() {
         return Err(PrintError::NoNamespace);
@@ -58,24 +54,19 @@ pub fn print(namespaces: &[(&NamespaceName, &Named)]) -> Result<String, PrintErr
     let mut sorted = Vec::new();
     for &(name, relations) in namespaces {
         namespace_name(name.as_str())?;
-        let undotted = relations
-            .namespaces()
-            .iter()
-            .any(|namespace| !namespace.as_str().contains('.'));
-        let theory = name
-            .as_str()
-            .split_once('.')
-            .filter(|_| !undotted)
-            .map(|(theory, _)| theory);
-        sorted.push((theory, name, relations));
+        let (theory, written) = match name.as_str().split_once('.') {
+            Some((theory, rest)) => (Some(theory), rest),
+            None => (None, name.as_str()),
+        };
+        sorted.push((theory, name, written, relations));
     }
     // `None` sorts first, so namespaces without a dot come before every
     // theory.
-    sorted.sort_by(|(one, a, _), (other, b, _)| (one, a).cmp(&(other, b)));
+    sorted.sort_by(|(one, a, ..), (other, b, ..)| (one, a).cmp(&(other, b)));
     let mut text = String::new();
     let mut section = None;
     let mut previous: Option<&NamespaceName> = None;
-    for (theory, name, relations) in sorted {
+    for (theory, name, written, relations) in sorted {
         if previous == Some(name) {
             return Err(PrintError::DuplicateNamespace(quote(name.as_str())));
         }
@@ -86,28 +77,13 @@ pub fn print(namespaces: &[(&NamespaceName, &Named)]) -> Result<String, PrintErr
             if !text.is_empty() {
                 text.push('\n');
             }
-            let _ = writeln!(text, "theory: {theory}");
+            let _ = writeln!(text, "theory: {theory}\n");
             section = Some(theory);
         }
-        if !text.is_empty() {
-            text.push('\n');
-        }
-        let _ = writeln!(text, "namespace: {}", written(name.as_str(), theory));
+        let _ = writeln!(text, "namespace: {written}");
         namespace(&mut text, theory, relations)?;
     }
     Ok(text)
-}
-
-/// A namespace's name as written under `theory`: without the theory's
-/// name and its dot, unless what's left still has a dot.
-fn written<'a>(name: &'a str, theory: Option<&str>) -> &'a str {
-    let rest = theory
-        .and_then(|theory| name.strip_prefix(theory))
-        .and_then(|rest| rest.strip_prefix('.'));
-    match rest {
-        Some(rest) if !rest.contains('.') => rest,
-        _ => name,
-    }
 }
 
 /// Writes the relations of a namespace in `theory`, sorted by name.
@@ -137,15 +113,25 @@ fn namespace(text: &mut String, theory: Option<&str>, relations: &Named) -> Resu
     Ok(())
 }
 
-/// A constraint as written under `theory`, the prefix taken off a
-/// namespace in that theory.
+/// A constraint as written under `theory`: the theory's name and dot taken
+/// off a namespace in it, and `..` before one outside it.
 fn written_constraint(
     constraint: &NamedConstraint,
     theory: Option<&str>,
 ) -> Result<String, PrintError> {
     let named = |name: &NamespaceName| -> Result<String, PrintError> {
-        namespace_name(name.as_str())?;
-        Ok(written(name.as_str(), theory).to_owned())
+        let name = name.as_str();
+        namespace_name(name)?;
+        Ok(match theory {
+            None => name.to_owned(),
+            Some(theory) => match name
+                .strip_prefix(theory)
+                .and_then(|rest| rest.strip_prefix('.'))
+            {
+                Some(rest) => rest.to_owned(),
+                None => format!("{OUTSIDE}{name}"),
+            },
+        })
     };
     Ok(match constraint {
         Constraint::Identity => IDENTITY.to_owned(),
