@@ -13,7 +13,7 @@ Done means built, tested to the coverage floor and merged. It doesn't mean produ
 9. Expand service.
 10. Listing a subject's resources: return the ids of the resources in one namespace whose subjectset under a relation holds the subject in its closure, a page at a time at one snapshot, by walking the model back from the subject. And check a set of candidate ids in one call, returning the ones whose subjectset holds the subject in its closure. Applications use the ids to load their own objects.
 11. Watch service: a changelog stream with heartbeat revision tokens.
-12. Namespace documents: the JSON form of a namespace, with its rewrite grammar, parser and printer (done).
+12. Theory documents: namespaces written in TDL, with its grammar, parser and printer (done).
 13. Constraints: each relation declares the kinds of subject its facts may bind, and namespace writes and fact writes check against them.
 14. Conditions: a relation may declare a condition, an expression over named parameters, and a fact may carry it with some parameters filled in. A check supplies the rest as context, and answers allowed, denied, or conditional when context is missing. Uses include time windows such as building access from 7am to 8pm, elevation by requiring a recent `auth_time` for privileged relations, and facts that expire at a set time.
 15. Versioned namespaces (done) and a namespace write service.

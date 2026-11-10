@@ -17,7 +17,7 @@ Not a source: the `rewrite-interpreters` branch (checkout at `D:\projects\kingo\
 Both were reproduced with throwaway tests on 2026-10-04.
 
 - Fixed: `namespace::validate` overflowed the stack on a chain of 20,000 computed relations (`r0: r1`, `r1: r2`, …), recursing once per relation. `Namespace::new` now walks with its own stack and is tested on a 100,000-relation chain (`crates/sungma/tests/namespace.rs`).
-- `MAX_REWRITE_DEPTH` (100) was unreachable through the nested JSON fixture form, whose levels hit serde_json's recursion limit first. Namespace documents write rewrites as expression strings, so a 101-level rewrite now reaches `NamespaceError::TooDeep` (`crates/sungma-lang/tests/namespace.rs`, `a_rewrite_nests_at_most_max_depth`).
+- Fixed: the rewrite depth limit (`DEFAULT_REWRITE_DEPTH`, 100) was unreachable, since nesting hit a parser's recursion limit first. TDL writes rewrites as expressions, so a rewrite one level past the limit reaches `NamespaceError::TooDeep` (`crates/sungma-lang/tests/tdl.rs`, `the_depth_limit_holds_for_levels_and_for_parentheses`).
 
 ## Sungma status at a glance
 

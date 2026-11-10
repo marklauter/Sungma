@@ -34,7 +34,7 @@ Duplicate namespaces are therefore gated on the write side. A reader never sees 
 
 ## Storage
 
-Namespace documents are JSON and carry no grammar version; the REST endpoint that takes them is versioned instead. A version is stored as its printed document, as [The table](../specs/table.md#namespace-versions) specifies.
+Theory documents carry no grammar version; the REST endpoint that takes them is versioned instead. A version is stored as its printed document, as [The table](../specs/table.md#namespace-versions) specifies.
 
 ## Settled
 
