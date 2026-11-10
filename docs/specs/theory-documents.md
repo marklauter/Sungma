@@ -61,7 +61,7 @@ digit  = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' ;
 name   = ( letter | '_' ), { letter | digit | '_' } ;
 ```
 
-A namespace name is one or more names joined by dots, such as `file` or `drive.file`. No namespace may be named `identity`, and a first segment of `sungma` is reserved for Sungma's own namespaces, so `sungma.audit` is reserved and `sungmax` isn't.
+A namespace name is one or more names joined by dots, such as `file` or `drive.file`. A first segment of `sungma` is reserved for Sungma's own namespaces, so `sungma.audit` is reserved and `sungmax` isn't.
 
 ```ebnf
 namespace name = name, { '.', name } ;
@@ -126,9 +126,13 @@ A relation's rewrite defines the closure of each of its subjectsets. Each kind o
 - A computed subjectset adds the closure of the named relation on the same resource.
 - A fact-to-subjectset reads the facts on the same resource under the factset relation. For each subject they bind, it adds the closure of the followed relation on that subject's resource. An identity has no resource, so it adds nothing.
 
-Each term produces a set of subjects, and the operators combine those sets: `|` is union, `&` is intersection, and `!` is difference. Evaluating a rewrite applies the set of facts to the relation's definition, and the result is the closure.
+Each term produces a set of subjects, and operators combine those sets: 
 
-A subjectset whose relation isn't declared has an empty closure.
+- `|` : union
+- `&` : intersection
+- `!` : difference.
+
+Evaluating a rewrite applies the set of facts to the relation's definition, and the result is the closure. A subjectset whose relation isn't declared has an empty closure.
 
 ## The theory name
 
