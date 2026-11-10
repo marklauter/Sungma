@@ -25,7 +25,9 @@ A document is applied, like a DDL script: Sungma checks each namespace and store
 
 ## Why a theory
 
-In the logician's sense, a theory is a set of sentences that, with the facts, settles every question asked of it. Here the sentences are rewrites, and each question asks whether a subject is in the closure of a subjectset. [Checks](#checks) keep that true.
+<!-- final -->
+In logic, a theory is a set of sentences closed under deduction. Here the sentences are rewrites. When rewrites are combined with fact tuples, a graph is formed from which each subjectset's closure may be deduced. [Checks](#checks) keep that true.
+<!-- /final -->
 
 ## Sample
 
