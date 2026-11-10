@@ -622,32 +622,117 @@ fn namespace_checks_apply_to_each_namespace() {
 }
 
 #[test]
-fn a_reference_between_namespaces_is_checked_against_the_document() {
-    // Either order, by constraint or by a fact-to-subjectset.
+fn a_reference_to_another_namespace_isnt_checked() {
+    // In the document or not, either order, by constraint or by a
+    // fact-to-subjectset, whether the other namespace declares the relation
+    // or not.
     for text in [
-        "namespace: a\n  r<b#m>\nnamespace: b\n  m<@identity>\n",
-        "namespace: b\n  m<@identity>\nnamespace: a\n  r<b#m>\n",
-        "namespace: a\n  p<b>\n  v: (p, m)\nnamespace: b\n  m<@identity>\n",
-        "theory: t\nnamespace: a\n  r<b#m>\nnamespace: b\n  m<@identity>\n",
+        "namespace: a
+  r<b#m>
+namespace: b
+  m<@identity>
+",
+        "namespace: b
+  m<@identity>
+namespace: a
+  r<b#m>
+",
+        "namespace: a
+  p<b>
+  v: (p, m)
+namespace: b
+  m<@identity>
+",
+        "theory: t
+namespace: a
+  r<b#m>
+namespace: b
+  m<@identity>
+",
+        "namespace: a
+  r<b#x>
+namespace: b
+  m<@identity>
+",
+        "namespace: b
+  m<@identity>
+namespace: a
+  p<b, @identity>
+  v: (p, x)
+",
+        "theory: t
+namespace: a
+  r<b#x>
+  p<b>
+  v: (p, x)
+namespace: b
+",
+        "namespace: a
+  r<elsewhere#x>
+  p<elsewhere>
+  v: (p, x)
+",
     ] {
         parsed(text);
     }
-    let error = only("namespace: a\n  r<b#x>\nnamespace: b\n  m<@identity>\n");
+    // A namespace of the same name in another theory is another namespace.
+    parsed(
+        "theory: t
+namespace: a
+  r<..a#x>
+",
+    );
+}
+
+#[test]
+fn a_reference_to_its_own_namespace_is_checked() {
+    let error = only(
+        "namespace: a
+  r<a#x>
+namespace: b
+  x<@identity>
+",
+    );
     assert_eq!(error.namespace.as_deref(), Some("a"));
+    assert_eq!(error.relation.as_deref(), Some("r"));
     assert_eq!(error.place, place(2, 3));
     assert_eq!(
         error.kind.to_string(),
-        "relation 'r' has constraint 'b#x', whose namespace doesn't declare its relation"
+        "relation 'r' has constraint 'a#x', whose namespace doesn't declare its relation"
     );
-    let error =
-        only("namespace: b\n  m<@identity>\nnamespace: a\n  p<b, @identity>\n  v: (p, x)\n");
+    // Under a theory, its own namespace is named without the prefix.
+    let error = only(
+        "theory: t
+namespace: folder
+  parent<folder>
+  v: (parent, viewer)
+",
+    );
+    assert_eq!(error.namespace.as_deref(), Some("t.folder"));
     assert_eq!(error.relation.as_deref(), Some("v"));
+    assert_eq!(error.place, place(4, 3));
     assert_eq!(
         error.kind.to_string(),
-        "relation 'v' follows 'x', which namespace 'b' doesn't declare"
+        "relation 'v' follows 'viewer', which namespace 't.folder' doesn't declare"
     );
-    // A namespace outside the document is left to the namespace write.
-    parsed("namespace: a\n  r<elsewhere#x>\n  p<elsewhere>\n  v: (p, x)\n");
+    // A factset naming its own namespace and another checks only its own.
+    let error = only(
+        "namespace: a
+  p<a, b>
+  v: (p, x)
+",
+    );
+    assert_eq!(
+        error.kind.to_string(),
+        "relation 'v' follows 'x', which namespace 'a' doesn't declare"
+    );
+    parsed(
+        "namespace: a
+  p<a, b>
+  x<@identity>
+  v: (p, x)
+",
+    );
 }
 
 // The theory name.
@@ -1945,7 +2030,8 @@ fn the_printer_prints_references_it_doesnt_check() {
         print(&[a, b()]),
         "namespace: a\n  p<a, b>\n  v: (p, x)\nnamespace: b\n  m<@identity>\n"
     );
-    // What the parser accepts prints as a document it reads back.
+    // What the parser accepts prints as a document it reads back: references
+    // to other namespaces, whether given or not, and to its own that hold.
     let a = built(
         "a",
         vec![
@@ -1953,7 +2039,7 @@ fn the_printer_prints_references_it_doesnt_check() {
                 "r",
                 This,
                 vec![
-                    subjectset("b", "m"),
+                    subjectset("b", "x"),
                     subjectset("elsewhere", "x"),
                     subjectset("a", "p"),
                 ],
@@ -1970,7 +2056,7 @@ fn the_printer_prints_references_it_doesnt_check() {
                 "v",
                 FactTo {
                     factset: "p",
-                    computed: "m",
+                    computed: "x",
                 },
                 vec![],
             ),

@@ -26,14 +26,14 @@
 //! outside the theory. Namespaces before the first `theory:` line take no
 //! prefix, and there `..` changes nothing.
 //!
-//! A reference from one namespace to another in the document, through a
-//! constraint or a fact-to-subjectset, is checked against the document. A
-//! reference to a namespace outside it is left to the namespace write.
+//! Each namespace is checked on its own. A reference to another namespace,
+//! through a constraint or a fact-to-subjectset, isn't checked, whether that
+//! namespace is in the document or not; it's left to the namespace write.
 
 mod print;
 mod rewrite;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use thiserror::Error;
 
@@ -196,28 +196,6 @@ fn unplaced(kind: ErrorKind) -> TdlError {
 /// A namespace name of the grammar.
 pub(crate) fn namespace_name(text: &str) -> Result<NamespaceName, NameError> {
     text.parse()
-}
-
-/// The problems with each reference, through a constraint or a
-/// fact-to-subjectset, from one of `namespaces` to one of them, itself
-/// included: one list for each namespace, in the order given. A namespace
-/// not among them is left to the namespace write. A name given twice is
-/// checked against the first.
-pub(crate) fn reference_problems(namespaces: &[(&NamespaceName, &Named)]) -> Vec<Vec<Problem>> {
-    let mut declared = HashMap::new();
-    for &(name, relations) in namespaces {
-        declared.entry(name).or_insert(relations);
-    }
-    namespaces
-        .iter()
-        .map(|&(own, relations)| {
-            relations.references(own, |namespace, relation| {
-                declared
-                    .get(namespace)
-                    .map(|relations| relations.rewrite(relation).is_some())
-            })
-        })
-        .collect()
 }
 
 /// A constraint as a document writes it outside any theory: `@identity`,
@@ -534,17 +512,15 @@ impl<'a> Reader<'_, 'a> {
         })
     }
 
-    /// Checks each reference from one namespace to another against the
-    /// document. A namespace outside it is left to the namespace write.
+    /// Checks each namespace's references to itself: a constraint naming
+    /// it, and a fact-to-subjectset whose factset names it in a constraint.
+    /// A reference to another namespace, in the document or not, is left to
+    /// the namespace write.
     fn references(&mut self, namespaces: &[(NamespaceDocument, Vec<Place>)]) {
-        let given: Vec<_> = namespaces
-            .iter()
-            .map(|(document, _)| (&document.namespace, &document.relations))
-            .collect();
-        for ((document, places), problems) in namespaces.iter().zip(reference_problems(&given)) {
+        for (document, places) in namespaces {
             let (own, relations) = (&document.namespace, &document.relations);
             let names: Vec<_> = relations.relations().map(|(name, _)| name).collect();
-            for Problem { at, error } in problems {
+            for Problem { at, error } in relations.references(own, |_, _| None) {
                 let kind = ErrorKind::Namespace(quoted(error));
                 let failure = (Some(places[at]), kind);
                 self.push(Some(own), Some(names[at].as_str()), failure);
