@@ -37,6 +37,7 @@ sungma-write = { version = "0.1.0", path = "crates/sungma-write" }
 thiserror = "2.0.21"
 tokio = "1.53.2"
 tower = "0.5.3"
+uuid = { version = "1.28.0", features = ["v4"] }
 webpki-roots = "1.0.9"
 
 # cargo-mutants builds every mutant; debug info only slows those builds.

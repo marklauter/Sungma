@@ -2,13 +2,10 @@
 //! `SUNGMA_DYNAMODB_URL`, `http://localhost:8000` by default.
 //! `scripts/dynamodb.sh` starts it.
 
-use std::{
-    sync::atomic::{AtomicU64, Ordering},
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aws_sdk_dynamodb::Client;
-use sungma_dynamodb::{Table, local};
+use sungma_dynamodb::{Table, local, testkit};
 use tokio::sync::OnceCell;
 
 /// Tables older than this, from earlier runs, are deleted. Younger ones
@@ -47,23 +44,16 @@ async fn sweep(client: &Client) {
     }
 }
 
-/// A new table, named for this process and a counter so parallel tests
-/// and runs don't share one.
+/// A new table of the test's own, deleted once the test is done with it.
 pub async fn table() -> Table {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
     static SWEPT: OnceCell<()> = OnceCell::const_new();
     let endpoint =
         std::env::var("SUNGMA_DYNAMODB_URL").unwrap_or_else(|_| "http://localhost:8000".to_owned());
     let client = local(&endpoint);
     SWEPT.get_or_init(|| sweep(&client)).await;
-    let name = format!(
-        "sungma-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    );
-    let table = Table::new(client, name);
-    table.create().await.unwrap_or_else(|error| {
-        panic!("DynamoDB Local at {endpoint} refused a table; run scripts/dynamodb.sh: {error}")
-    });
-    table
+    testkit::table(&endpoint, "sungma-dynamodb")
+        .await
+        .unwrap_or_else(|error| {
+            panic!("DynamoDB Local at {endpoint} refused a table; run scripts/dynamodb.sh: {error}")
+        })
 }

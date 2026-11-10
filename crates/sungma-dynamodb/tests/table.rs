@@ -61,3 +61,49 @@ async fn a_query_past_one_page_reads_on_and_keeps_its_limit() {
     let some = table.query(&query, Consistency::Strong).await.unwrap();
     assert_eq!(sorts(some), [0, 1, 2, 3]);
 }
+
+/// A test's table is named with a UUID and deleted once the last clone of
+/// it is dropped.
+#[tokio::test]
+async fn a_tests_table_is_deleted_once_dropped() {
+    let table = common::table().await;
+    let name = table.name().to_owned();
+    let uuid = name.strip_prefix("sungma-dynamodb-").unwrap();
+    assert_eq!(uuid.len(), 36, "{name}");
+    let probe = sungma_dynamodb::Table::new(table.client().clone(), name);
+    let clone = table.clone();
+    drop(table);
+    assert!(probe.exists().await.unwrap());
+    drop(clone);
+    assert!(!probe.exists().await.unwrap());
+}
+
+/// A test that panics still deletes its table.
+#[tokio::test]
+async fn a_tests_table_is_deleted_when_the_test_panics() {
+    let table = common::table().await;
+    let probe = sungma_dynamodb::Table::new(table.client().clone(), table.name());
+    let failed = tokio::spawn(async move {
+        let _held = table;
+        panic!("the test failed");
+    })
+    .await;
+    assert!(failed.is_err());
+    assert!(!probe.exists().await.unwrap());
+}
+
+/// A guard for a table that was never made, or is gone, does nothing.
+#[tokio::test]
+async fn a_guard_for_no_table_does_nothing() {
+    let endpoint =
+        std::env::var("SUNGMA_DYNAMODB_URL").unwrap_or_else(|_| "http://localhost:8000".to_owned());
+    let name = sungma_dynamodb::testkit::name("sungma-dynamodb");
+    drop(sungma_dynamodb::testkit::Scratch::new(&endpoint, &name));
+    drop(sungma_dynamodb::testkit::Scratch::new(
+        "http://127.0.0.1:9",
+        &name,
+    ));
+    let table = sungma_dynamodb::Table::new(sungma_dynamodb::local(&endpoint), name);
+    assert!(!table.exists().await.unwrap());
+    assert!(table.delete().await.is_err());
+}

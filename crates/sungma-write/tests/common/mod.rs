@@ -4,10 +4,7 @@
 // Each test file compiles this module separately and uses only part of it.
 #![allow(dead_code)]
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::Arc;
 
 use axum::{
     Router,
@@ -17,7 +14,7 @@ use axum::{
 use http_body_util::BodyExt;
 use serde_json::Value;
 use sungma_clock::DevClock;
-use sungma_dynamodb::{Table, items::DynamoTable, local};
+use sungma_dynamodb::{items::DynamoTable, testkit};
 use sungma_table::{
     memory::{MemorySequence, MemoryTable},
     read::ItemReader,
@@ -65,18 +62,14 @@ pub fn dynamodb_url() -> Option<String> {
         .filter(|url| !url.is_empty())
 }
 
+/// The routes on a table of their own, deleted once the routes are
+/// dropped.
 async fn dynamodb(url: &str) -> Router {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let name = format!(
-        "{}-{}-{}",
-        env!("CARGO_PKG_NAME"),
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    );
-    let table = Table::new(local(url), name);
-    table.create().await.unwrap_or_else(|error| {
-        panic!("DynamoDB Local at {url} refused a table; run scripts/dynamodb.sh: {error}")
-    });
+    let table = testkit::table(url, env!("CARGO_PKG_NAME"))
+        .await
+        .unwrap_or_else(|error| {
+            panic!("DynamoDB Local at {url} refused a table; run scripts/dynamodb.sh: {error}")
+        });
     let table = DynamoTable::new(table);
     app(table.clone(), table)
 }

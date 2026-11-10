@@ -34,6 +34,7 @@ proptest.workspace = true
 serde_json.workspace = true
 sungma-check = { path = ".", features = ["server"] }
 sungma-clock.workspace = true
+sungma-dynamodb = { workspace = true, features = ["testkit"] }
 sungma-lang.workspace = true
 sungma-names.workspace = true
 sungma-node = { workspace = true, features = ["testkit"] }

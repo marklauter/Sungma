@@ -23,6 +23,9 @@ fn failed(error: impl std::error::Error) -> TableError {
 pub struct Table {
     client: Client,
     name: Arc<str>,
+    /// Deletes the table once the last clone is dropped.
+    #[cfg(feature = "testkit")]
+    scratch: Option<Arc<crate::testkit::Scratch>>,
 }
 
 impl Table {
@@ -30,7 +33,16 @@ impl Table {
         Self {
             client,
             name: name.into(),
+            #[cfg(feature = "testkit")]
+            scratch: None,
         }
+    }
+
+    /// The table, deleted once it and every clone of it are dropped.
+    #[cfg(feature = "testkit")]
+    pub(crate) fn scratch(mut self, scratch: crate::testkit::Scratch) -> Self {
+        self.scratch = Some(Arc::new(scratch));
+        self
     }
 
     /// Creates the table: binary hash and range keys, billed per request.
@@ -57,6 +69,17 @@ impl Table {
             .key_schema(key(PK, KeyType::Hash)?)
             .key_schema(key(SK, KeyType::Range)?)
             .billing_mode(BillingMode::PayPerRequest)
+            .send()
+            .await
+            .map_err(failed)?;
+        Ok(())
+    }
+
+    /// Deletes the table and every item in it.
+    pub async fn delete(&self) -> Result<(), TableError> {
+        self.client
+            .delete_table()
+            .table_name(&*self.name)
             .send()
             .await
             .map_err(failed)?;

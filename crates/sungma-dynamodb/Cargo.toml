@@ -3,12 +3,19 @@ name = "sungma-dynamodb"
 version.workspace = true
 edition.workspace = true
 
+[features]
+# Tables named for one test and deleted after it: see `testkit`.
+testkit = ["dep:tokio", "dep:uuid"]
+
 [dependencies]
 aws-sdk-dynamodb.workspace = true
 sungma-table.workspace = true
+tokio = { workspace = true, optional = true, features = ["rt"] }
+uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest.workspace = true
+sungma-dynamodb = { path = ".", features = ["testkit"] }
 sungma-write = { workspace = true, features = ["testkit"] }
 sungma-table = { workspace = true, features = ["testkit"] }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

@@ -6,6 +6,8 @@
 
 pub mod items;
 mod table;
+#[cfg(feature = "testkit")]
+pub mod testkit;
 
 use aws_sdk_dynamodb::{
     Client, Config,

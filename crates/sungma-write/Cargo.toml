@@ -37,7 +37,7 @@ tokio = { workspace = true, features = ["sync"] }
 http-body-util.workspace = true
 serde_json.workspace = true
 sungma-clock = { workspace = true, features = ["test-util"] }
-sungma-dynamodb.workspace = true
+sungma-dynamodb = { workspace = true, features = ["testkit"] }
 sungma-write = { path = ".", features = ["testkit", "server"] }
 sungma-node = { workspace = true, features = ["testkit"] }
 sungma-read = { workspace = true, features = ["http"] }

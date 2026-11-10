@@ -8,7 +8,7 @@ use std::{
     process::{Command, Output},
 };
 
-use sungma_dynamodb::{Table, items::DynamoTable, local};
+use sungma_dynamodb::{Table, items::DynamoTable, local, testkit};
 use sungma_read::namespaces::NamespaceReadService;
 
 use common::dynamodb_url;
@@ -109,7 +109,8 @@ fn a_seed_that_breaks_the_grammar_stops_the_server() {
 #[tokio::test]
 async fn the_server_runs_on_dynamodb_when_given_a_url() {
     let Some(url) = dynamodb_url() else { return };
-    let name = format!("sungma-write-{}", std::process::id());
+    let name = testkit::name("sungma-write");
+    let _deleted = testkit::Scratch::new(&url, &name);
     let env = [
         ("SUNGMA_DYNAMODB_URL", url.as_str()),
         ("SUNGMA_DYNAMODB_TABLE", name.as_str()),
