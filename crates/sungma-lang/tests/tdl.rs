@@ -735,6 +735,103 @@ namespace: folder
     );
 }
 
+// References.
+
+fn references_of(document: &NamespaceDocument) -> Vec<String> {
+    document
+        .references
+        .iter()
+        .map(ToString::to_string)
+        .collect()
+}
+
+#[test]
+fn each_namespace_lists_its_references_to_others_once() {
+    let documents = parsed(
+        "theory: drive
+namespace: file
+  owner<@identity, ..group#member, file#owner>
+  parent<folder, file, ..io.dir>
+  editor<..group#member, ..group, @identity>: this | owner
+  viewer: editor | (parent, viewer) | (parent, owner) ! (parent, viewer)
+namespace: folder
+  parent<folder>
+  viewer<@identity>: this | (parent, viewer)
+",
+    );
+    assert_eq!(
+        references_of(&documents[0]),
+        [
+            "group#member",
+            "drive.folder",
+            "io.dir",
+            "group",
+            "drive.folder#viewer",
+            "io.dir#viewer",
+            "drive.folder#owner",
+            "io.dir#owner",
+        ]
+    );
+    // A reference to the namespace itself isn't listed.
+    assert!(documents[1].references.is_empty());
+    let document = one("namespace: user
+");
+    assert!(document.references.is_empty());
+    // Each reference holds its parts, by full name.
+    let document = one("theory: t
+namespace: a
+  r<b#m>
+  p<b>
+");
+    assert_eq!(
+        document.references,
+        [
+            tdl::Reference {
+                namespace: namespace_name("t.b"),
+                relation: Some(relation("m")),
+            },
+            tdl::Reference {
+                namespace: namespace_name("t.b"),
+                relation: None,
+            },
+        ]
+    );
+}
+
+#[test]
+fn references_are_found_in_a_rewrite_of_any_depth() {
+    let mut rewrite = FactTo {
+        factset: relation("p"),
+        computed: relation("v"),
+    };
+    for _ in 1..100_000 {
+        rewrite = exclusion(This, rewrite);
+    }
+    let parent = Constraint::Resource(namespace_name("folder"));
+    // Building, checking and dropping the tree recurses through it, so
+    // they take the larger stack; finding references takes a thread's
+    // usual one.
+    with_stack(move || {
+        let relations = Namespace::with_depth(
+            vec![
+                (relation("p"), This, vec![parent]),
+                (relation("r"), rewrite, vec![Constraint::Identity]),
+            ],
+            usize::MAX,
+        )
+        .expect("a valid namespace");
+        let own = namespace_name("file");
+        let found = std::thread::scope(|scope| {
+            scope
+                .spawn(|| tdl::references(&own, &relations))
+                .join()
+                .expect("finding references doesn't crash")
+        });
+        let found: Vec<_> = found.iter().map(ToString::to_string).collect();
+        assert_eq!(found, ["folder", "folder#v"]);
+    });
+}
+
 // The theory name.
 
 #[test]
@@ -1977,6 +2074,7 @@ fn built(
         })
         .collect();
     NamespaceDocument {
+        references: Vec::new(),
         namespace: namespace_name(namespace),
         relations: Namespace::new(relations).expect("a valid namespace"),
     }
@@ -2168,6 +2266,7 @@ fn the_printer_prints_a_rewrite_past_the_depth_limit() {
         right = exclusion(This, right);
     }
     let with = |rewrite: Rewrite<RelationName>| NamespaceDocument {
+        references: Vec::new(),
         namespace: namespace_name("t"),
         relations: Namespace::with_depth(
             vec![(relation("r"), rewrite, vec![Constraint::Identity])],
@@ -2216,6 +2315,7 @@ fn a_rewrite_a_million_deep_prints_without_a_crash() {
                 rewrite = exclusion(This, rewrite);
             }
             let document = NamespaceDocument {
+                references: Vec::new(),
                 namespace: namespace_name("t"),
                 relations: Namespace::with_depth(
                     vec![(relation("r"), rewrite, vec![Constraint::Identity])],
@@ -2436,6 +2536,7 @@ proptest! {
         let documents: Vec<_> = namespaces
             .into_iter()
             .map(|(name, relations)| NamespaceDocument {
+                references: Vec::new(),
                 namespace: namespace_name(name),
                 relations: Namespace::new(relations).expect("a valid namespace"),
             })
@@ -2596,6 +2697,7 @@ fn a_namespace_built_far_larger_than_a_document_is_checked_without_a_crash() {
     let start = Instant::now();
     let chain = Namespace::new(relations).expect("a chain is valid");
     let document = NamespaceDocument {
+        references: Vec::new(),
         namespace: namespace_name("t"),
         relations: chain,
     };

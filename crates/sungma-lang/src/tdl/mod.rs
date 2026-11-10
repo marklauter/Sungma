@@ -33,7 +33,10 @@
 mod print;
 mod rewrite;
 
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    fmt::{self, Display},
+};
 
 use thiserror::Error;
 
@@ -95,6 +98,83 @@ impl Default for Settings {
 pub struct NamespaceDocument {
     pub namespace: NamespaceName,
     pub relations: Named,
+    /// Its references to other namespaces, unchecked, as [`references`]
+    /// finds them.
+    pub references: Vec<Reference>,
+}
+
+/// A reference from one namespace to another, by full name: a namespace a
+/// constraint names, or one a fact-to-subjectset follows into, with the
+/// relation where one is named.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Reference {
+    pub namespace: NamespaceName,
+    pub relation: Option<RelationName>,
+}
+
+/// As a constraint writes it: `namespace` or `namespace#relation`.
+impl Display for Reference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.relation {
+            None => self.namespace.fmt(f),
+            Some(relation) => write!(f, "{}#{relation}", self.namespace),
+        }
+    }
+}
+
+/// The references of namespace `own`, declaring `relations`, to other
+/// namespaces, each once, in the order first met: each namespace a
+/// constraint names, with its relation when it names one, and, for each
+/// fact-to-subjectset, each namespace its factset's constraints name, with
+/// the relation it follows. A reference to `own` isn't one; the parser has
+/// checked it.
+///
+/// Walks each rewrite with a stack of its own, so a tree of any depth
+/// can't overflow the stack.
+pub fn references(own: &NamespaceName, relations: &Named) -> Vec<Reference> {
+    let mut seen = HashSet::new();
+    let mut found = Vec::new();
+    let mut refer = |namespace: &NamespaceName, relation: Option<&RelationName>| {
+        if namespace == own {
+            return;
+        }
+        let reference = Reference {
+            namespace: namespace.clone(),
+            relation: relation.cloned(),
+        };
+        if seen.insert(reference.clone()) {
+            found.push(reference);
+        }
+    };
+    for (relation, rewrite) in relations.relations() {
+        for constraint in relations.constraints(relation) {
+            match constraint {
+                Constraint::Identity => {}
+                Constraint::Resource(namespace) => refer(namespace, None),
+                Constraint::Subjectset(namespace, set) => refer(namespace, Some(set)),
+            }
+        }
+        let mut stack = vec![rewrite];
+        while let Some(rewrite) = stack.pop() {
+            match rewrite {
+                Rewrite::This | Rewrite::Computed(_) => {}
+                Rewrite::FactTo { factset, computed } => {
+                    let factsets = relations.constraints(factset).iter();
+                    for namespace in factsets.filter_map(Constraint::namespace) {
+                        refer(namespace, Some(computed));
+                    }
+                }
+                Rewrite::Union(operands) | Rewrite::Intersection(operands) => {
+                    stack.extend(operands.iter().rev());
+                }
+                Rewrite::Exclusion(base, excluded) => {
+                    stack.push(excluded);
+                    stack.push(base);
+                }
+            }
+        }
+    }
+    found
 }
 
 /// A problem in a document, with the full name of the namespace and the
@@ -440,6 +520,7 @@ impl<'a> Reader<'_, 'a> {
                 };
                 if let Some((relations, places)) = self.relations(&name, &theory) {
                     let document = NamespaceDocument {
+                        references: references(&name, &relations),
                         namespace: name,
                         relations,
                     };
