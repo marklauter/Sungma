@@ -64,16 +64,17 @@ digit  = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' ;
 name   = ( letter | '_' ), { letter | digit | '_' } ;
 ```
 
-A namespace name is one or more names joined by dots, such as `file` or `drive.file`. A first segment of `sungma` is reserved for Sungma's own namespaces, so `sungma.audit` is reserved and `sungmax` isn't.
+A namespace name is one or more segments joined by dots, such as `file` or `drive.file`. A segment is a name other than `this`, in any casing, since `this` is the rewrite keyword. A first segment of `sungma` is reserved for Sungma's own namespaces, so `sungma.audit` is reserved and `sungmax` isn't.
 
 ```ebnf
-namespace name = name, { '.', name } ;
+segment        = name - ? 'this', in any casing ? ;
+namespace name = segment, { '.', segment } ;
 ```
 
-A theory name is one name: the first segment of its namespaces' names. A `theory:` line opens a section of the document, as [The theory name](#the-theory-name) says.
+A theory name is one segment: the first segment of its namespaces' names. A `theory:` line opens a section of the document, as [The theory name](#the-theory-name) says.
 
 ```ebnf
-theory name = name ;
+theory name = segment ;
 ```
 
 A relation name is one name. `this` is the rewrite keyword, and `namespace` and `theory` are TDL keywords, so no relation may be named any of them, in any casing: `This | owner` is refused. `namespace` and `theory` may still name namespaces and appear in constraints.
@@ -295,7 +296,7 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 #### Names
 
 1. Names follow the grammar. `.a`, `a.`, `a..b` and `a.1b` are refused.
-2. `this`, `namespace` and `theory` in any casing are refused as relation names; `namespace` and `theory` are allowed as namespace names and in constraints.
+2. `this` in any casing is refused as a relation name, a namespace segment and a theory name, so `namespace: this`, `namespace: a.this` and the constraint `<this>` are refused. `this`, `namespace` and `theory` in any casing are refused as relation names; `namespace` and `theory` are allowed as namespace names and in constraints.
 3. The `sungma` first segment is enforced at write time, as [Sungma's own authorization](sungma-authorization.md#protected-namespaces) says, so the parser reads Sungma's own namespaces.
 4. Checked names refuse `"`, `:`, `#`, whitespace and control characters.
 
