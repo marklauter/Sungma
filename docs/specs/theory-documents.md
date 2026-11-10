@@ -45,7 +45,7 @@ constraints    = constraint, { ',', constraint } ;
 ```
 
 - Whitespace, line breaks included, only separates tokens. A rewrite may start on the next line and wrap.
-- A rewrite runs until the next relation (a name followed by `<` or `:`), the next `namespace:`, or the end.
+- A rewrite runs until the next relation (a name followed by `<` or `:`), the next `namespace:` or `theory:`, or the end.
 - `//` starts a comment to the end of the line. Comments aren't kept.
 - There are no quotes, escapes, numbers or booleans, so every token is a name, a keyword or punctuation.
 - A document is UTF-8 without a byte-order mark. Outside comments, a character the grammar doesn't use is refused.
@@ -208,14 +208,13 @@ A reference to another namespace in the same document is checked against the doc
 
 ## Limits
 
-- A document: 2 MiB.
 - Rewrite depth: a parser setting, 100 by default.
 - A full namespace name: 256 bytes.
 - A relation name: 64 bytes.
 
 ## Errors
 
-Errors are reported as they are encountered in the document, up to 50, then one that says there were more. Each carries a line, a column counted in characters from 1, and the namespace's full name. A whole-namespace problem, such as a cycle, is reported at its relation:
+Errors are reported as they are encountered in the document, up to 50, then one that says there were more. Each carries a line, a column counted in characters from 1, and the namespace's full name, where it has them. A whole-namespace problem, such as a cycle, is reported at its relation:
 
 - A syntax error stops its rewrite, and parsing goes on with the next relation.
 - A relation whose rewrite fails is still declared, so references to it don't dangle.
@@ -234,8 +233,10 @@ The printer writes namespaces as a document that parses back as equal namespaces
 - Within a namespace, relations print sorted by name, and constraints sorted, each comparing bytes. An author's order, comments and line breaks are lost.
 - Each relation is one line, indented two spaces, with one space after each colon and comma and around each operator. `: this` is left out, since `this` is implicit when no rewrite is provided.
 - Parentheses print only where the grammar needs them: a union inside a union, a union or intersection inside an intersection or on the left of `!`, and any operator on the right of `!`.
+- A blank line follows each `theory:` line, and one comes before each `theory:` line after the start of the document. Namespaces follow one another with no blank line between them.
 - Lines end in `\n`.
-- It refuses, with a `PrintError`, what the parser would refuse: a document past 2 MiB, an invalid or reserved name, and a union or intersection with one operand.
+- The printer has no size limit.
+- It refuses, with a `PrintError`, what the parser would refuse: an empty set of namespaces, a namespace given twice, a rewrite deeper than the default depth limit, an invalid name, and a union or intersection with one operand.
 
 Author, Sungma's UI, shows and edits namespaces in TDL.
 <!-- /final -->
@@ -303,7 +304,7 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 
 1. The canonical form, `: this` left out, sorted constraints, and only needed parentheses.
 2. Undotted namespaces print first with no `theory:` line, then each theory once, sorted, with its namespaces under it and the prefix taken off.
-3. Each refusal, and a document of exactly 2 MiB is written.
+3. Each refusal, and a document past 2 MiB is written.
 
 #### Round trips
 
@@ -312,7 +313,7 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 
 #### Hostile input
 
-1. The longest chain of computed subjectsets that fits in a document is accepted, and the largest set of mutually reaching relations is refused. Each finishes without a crash, within a bound that catches quadratic work.
-2. A namespace built in code, past the document limit, passes the same checks without a crash.
+1. A chain of 100,000 computed subjectsets is accepted, and the largest set of mutually reaching relations is refused. Each finishes without a crash, within a bound that catches quadratic work.
+2. A namespace built in code, far larger than any written document, passes the same checks without a crash.
 3. A fuzz target and a CI property test run the parser on arbitrary input without a panic, stack overflow or abort.
 4. Mutation testing leaves no surviving mutant in the parser, the printer or the checks.
