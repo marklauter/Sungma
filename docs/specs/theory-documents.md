@@ -94,7 +94,7 @@ There are three kinds of constraint, one for each kind of subject:
 - `namespace#relation`, such as `group#member`: a subjectset of that relation.
 
 ```ebnf
-constraint = '@identity' | namespace name, [ '#', relation name ] ;
+constraint = '@identity' | [ '..' ], namespace name, [ '#', relation name ] ;
 ```
 
 Constraints can be listed in any order, but no constraint may appear twice.
@@ -136,11 +136,12 @@ Evaluating a rewrite applies the set of facts to the relation's definition, and 
 
 ## The theory name
 
-The theory name is a namespace prefix. The parser prepends it and a dot to each unqualified namespace name in headers and constraints, to form a fully qualified name. Under `theory: sungma`, `namespace: root` means `namespace: sungma.root`, and `group#member` means `sungma.group#member`.
+The theory name is a namespace prefix. The parser prepends it and a dot to each namespace name in headers and constraints, to form a fully qualified name. Under `theory: sungma`, `namespace: root` means `namespace: sungma.root`, and `group#member` means `sungma.group#member`.
 
-- An unqualified name has no dot. A dotted name is already fully qualified, so under `theory: sungma`, `drive.file` stays `drive.file`.
-- A `theory:` line applies until the next `theory:` line or the end of the document, so one document can hold several theories.
-- Namespaces before the first `theory:` line get no prefix.
+- A `theory:` line applies to every namespace name below it until the next `theory:` line or the end of the document, so one document can hold several theories. Under `theory: x`, `y.z` means `x.y.z`.
+- Namespaces before the first `theory:` line get no prefix. Their names are written fully qualified.
+- Dotted and undotted always describe the fully qualified name: `a` is undotted, and `c.d` is dotted, even when it's written `d` under `theory: c`.
+- In a constraint, `..` before a namespace name means the name is a fully qualified namespace outside the theory. Under `theory: drive`, `<file>` means `drive.file`, `<..file>` means `file`, and `<..io.file#owner>` means `io.file#owner`.
 - Rewrites name only relations, so the prefix never touches them.
 
 Once parsed, every namespace name is fully qualified.
@@ -228,8 +229,8 @@ An error quotes at most 64 bytes, cut at a character boundary and marked as cut,
 
 The printer writes namespaces as a document that parses back as equal namespaces, and the same namespaces always print as the same text.
 
-- Namespaces without a dot print first, sorted, with no `theory:` line above them. They must come first, or they would read as part of the theory above them.
-- Then each theory prints, sorted by name: its `theory:` line, then its namespaces, sorted, with the prefix taken off. Every dotted namespace prints under its theory.
+- Undotted namespaces print first, sorted, with no `theory:` line above them. They must come first, or they would read as part of the theory above them.
+- Then each theory prints, sorted by name: its `theory:` line, then its namespaces, sorted, with the theory name and its dot taken off. `x.y.z` prints as `y.z` under `theory: x`. A constraint that names a namespace outside its own namespace's theory prints with `..`.
 - Within a namespace, relations print sorted by name, and constraints sorted, each comparing bytes. An author's order, comments and line breaks are lost.
 - Each relation is one line, indented two spaces, with one space after each colon and comma and around each operator. `: this` is left out, since `this` is implicit when no rewrite is provided.
 - Parentheses print only where the grammar needs them: a union inside a union, a union or intersection inside an intersection or on the left of `!`, and any operator on the right of `!`.
@@ -262,9 +263,10 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 
 #### Theory name
 
-1. The prefix applies to undotted names in headers and namespace constraints, never to dotted names, `@identity` or rewrites.
-2. Each `theory:` line applies until the next one, and namespaces before the first get no prefix.
-3. A theory name with a dot is refused.
+1. The prefix applies to every namespace name in a section's headers and constraints, never to `@identity` or rewrites.
+2. Under a theory, `..` before a constraint's namespace name means a fully qualified namespace outside the theory, and the printer writes `..` where a constraint points outside its namespace's theory.
+3. Each `theory:` line applies until the next one, and namespaces before the first get no prefix.
+4. A theory name with a dot is refused.
 
 #### Names
 
