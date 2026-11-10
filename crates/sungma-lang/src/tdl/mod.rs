@@ -48,7 +48,7 @@ use sungma::{
     rewrite::Rewrite,
 };
 
-use rewrite::{Failure, Lexeme, Parser, Token, lex, quoted, reads_this, relation, syntax};
+use rewrite::{Failure, Lexeme, Parser, Token, lex, quoted, reads_this, syntax};
 
 /// The longest document.
 pub const MAX_DOCUMENT_BYTES: usize = 2 * 1024 * 1024;
@@ -174,6 +174,12 @@ pub fn parse_one(text: &str) -> Result<NamespaceDocument, Vec<TdlError>> {
     }
 }
 
+/// Whether a lexeme of `token` joins those written against it into one
+/// name.
+fn joins(token: Token) -> bool {
+    matches!(token, Token::Name | Token::This | Token::Unknown)
+}
+
 fn unplaced(kind: ErrorKind) -> TdlError {
     TdlError {
         namespace: None,
@@ -291,11 +297,19 @@ impl<'a> Reader<'_, 'a> {
         self.at_keyword("namespace") || self.at_keyword("theory")
     }
 
-    /// Whether a relation starts next: a name, then `<` or `:`. A header
-    /// reads as one too, which only a relation named as a keyword could be.
+    /// Whether a relation starts next: a name, read whole, then `<` or `:`.
+    /// A header reads as one too, which only a relation named as a keyword
+    /// could be. None starts inside a name, as at `rel` in `my-rel<`.
     fn at_relation(&self) -> bool {
-        matches!(self.peek().token, Token::Name | Token::This)
-            && matches!(self.token(self.at + 1), Token::Less | Token::Colon)
+        let first = self.peek();
+        let inside = self
+            .at
+            .checked_sub(1)
+            .map(|at| self.lexemes[at])
+            .is_some_and(|before| joins(before.token) && before.end == first.start);
+        matches!(first.token, Token::Name | Token::This)
+            && !inside
+            && matches!(self.token(self.run_end()), Token::Less | Token::Colon)
     }
 
     /// Whether what comes next ends a relation: another relation, a
@@ -342,20 +356,37 @@ impl<'a> Reader<'_, 'a> {
     /// when a relation does, so a missing name leaves the next relation or
     /// header alone.
     fn joined(&mut self) -> Option<(Lexeme<'a>, &'a str)> {
-        let first = self.peek();
-        let joins = |token| matches!(token, Token::Name | Token::This | Token::Unknown);
-        if !joins(first.token) || self.at_relation() {
+        if !joins(self.peek().token) || self.at_relation() {
             return None;
         }
-        let mut end = first.start;
+        Some(self.run())
+    }
+
+    /// The lexemes written with no space between them from here, which
+    /// start with one that [`joins`], read as one name: the first lexeme
+    /// and the text.
+    fn run(&mut self) -> (Lexeme<'a>, &'a str) {
+        let first = self.peek();
+        let end = self.run_end();
+        self.at = end;
+        (first, &self.text[first.start..self.lexemes[end - 1].end])
+    }
+
+    /// Where the lexemes written with no space between them from here end:
+    /// the first lexeme past them. Each of them is read only from the first,
+    /// as [`at_relation`](Self::at_relation) reads, so finding where every
+    /// relation starts is linear.
+    fn run_end(&self) -> usize {
+        let mut end = self.peek().start;
+        let mut next = self.at;
         for lexeme in &self.lexemes[self.at..] {
             if !joins(lexeme.token) || lexeme.start != end {
                 break;
             }
             end = lexeme.end;
-            self.at += 1;
+            next += 1;
         }
-        Some((first, &self.text[first.start..end]))
+        next
     }
 
     fn document(&mut self) -> Vec<NamespaceDocument> {
@@ -509,10 +540,13 @@ impl<'a> Reader<'_, 'a> {
                 self.recover();
                 continue;
             }
-            let lexeme = self.next();
-            let name = relation(lexeme).unwrap_or_else(|failure| {
-                self.push(Some(namespace), Some(lexeme.text), failure);
-                RelationName::new_unchecked(lexeme.text)
+            // Read whole, so a malformed name is refused as one, not as the
+            // relation its last part would name.
+            let (lexeme, written) = self.run();
+            let name = written.parse().unwrap_or_else(|error| {
+                let failure = (Some(lexeme.place), ErrorKind::Name(error));
+                self.push(Some(namespace), Some(written), failure);
+                RelationName::new_unchecked(written)
             });
             let (mut constraints, mut failed) = if self.peek().token == Token::Less {
                 self.next();

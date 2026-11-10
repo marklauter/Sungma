@@ -795,6 +795,37 @@ fn names_follow_the_grammar() {
 }
 
 #[test]
+fn a_malformed_relation_name_is_refused_whole() {
+    for (written, tail) in [
+        ("my-rel", "rel"),
+        ("owner#x", "x"),
+        ("a.b", "b"),
+        ("x@y", "y"),
+    ] {
+        // The name's tail declared again would be a duplicate, were it
+        // declared from the malformed name.
+        for text in [
+            format!("namespace: t\n  {written}<@identity>\n"),
+            format!("namespace: t\n  {written}<@identity>\n  {tail}<@identity>\n"),
+            format!("namespace: t\n  v<@identity>: this\n  {written}: v\n  {tail}: v\n"),
+        ] {
+            let error = only(&text);
+            assert_eq!(
+                error.place,
+                place(2 + text.matches("v<").count(), 3),
+                "{text:?}"
+            );
+            assert_eq!(
+                error.kind.to_string(),
+                format!("'{written}' is not a valid name"),
+                "{text:?}"
+            );
+            assert_eq!(error.relation.as_deref(), Some(written), "{text:?}");
+        }
+    }
+}
+
+#[test]
 fn names_are_case_sensitive() {
     let document = one("namespace: t\n  a<@identity>\n  A<@identity>\n  r: a | A\n");
     assert_eq!(document.relations.relations().count(), 3);
