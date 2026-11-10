@@ -8,11 +8,14 @@ use thiserror::Error;
 
 use sungma::{
     name::{NameError, NamespaceName, RelationName, quote},
-    namespace::Constraint,
+    namespace::{Constraint, NamespaceError, Problem},
     rewrite::Rewrite,
 };
 
-use super::{DEFAULT_REWRITE_DEPTH, IDENTITY, Named, NamedConstraint, OUTSIDE, namespace_name};
+use super::{
+    DEFAULT_REWRITE_DEPTH, IDENTITY, Named, NamedConstraint, OUTSIDE, namespace_name,
+    reference_problems, rewrite::quoted,
+};
 
 /// Why [`print()`] refused namespaces: no document can declare them.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -31,6 +34,13 @@ pub enum PrintError {
     /// [`parse`](super::parse) reads.
     #[error("a rewrite nests more than {DEFAULT_REWRITE_DEPTH} deep")]
     TooDeep,
+    /// A reference, through a constraint or a fact-to-subjectset, to a
+    /// relation that a namespace being printed doesn't declare.
+    #[error("namespace '{namespace}': {error}")]
+    Reference {
+        namespace: String,
+        error: NamespaceError,
+    },
 }
 
 /// Writes namespaces as a document that [`parse`](super::parse) reads back
@@ -45,6 +55,10 @@ pub enum PrintError {
 ///
 /// A constraint naming a namespace outside its own namespace's theory,
 /// including one without a dot, is written in full after `..`.
+///
+/// References between the namespaces given, themselves included, are
+/// checked as the parser checks them; one to a namespace not given is left
+/// to the namespace write.
 ///
 /// The printed document has no size limit.
 pub fn print(namespaces: &[(&NamespaceName, &Named)]) -> Result<String, PrintError> {
@@ -82,6 +96,15 @@ pub fn print(namespaces: &[(&NamespaceName, &Named)]) -> Result<String, PrintErr
         }
         let _ = writeln!(text, "namespace: {written}");
         namespace(&mut text, theory, relations)?;
+    }
+    let problems = reference_problems(namespaces).into_iter();
+    for (&(name, _), problems) in namespaces.iter().zip(problems) {
+        if let Some(Problem { error, .. }) = problems.into_iter().next() {
+            return Err(PrintError::Reference {
+                namespace: quote(name.as_str()),
+                error: quoted(error),
+            });
+        }
     }
     Ok(text)
 }

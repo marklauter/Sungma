@@ -198,6 +198,28 @@ pub(crate) fn namespace_name(text: &str) -> Result<NamespaceName, NameError> {
     text.parse()
 }
 
+/// The problems with each reference, through a constraint or a
+/// fact-to-subjectset, from one of `namespaces` to one of them, itself
+/// included: one list for each namespace, in the order given. A namespace
+/// not among them is left to the namespace write. A name given twice is
+/// checked against the first.
+pub(crate) fn reference_problems(namespaces: &[(&NamespaceName, &Named)]) -> Vec<Vec<Problem>> {
+    let mut declared = HashMap::new();
+    for &(name, relations) in namespaces {
+        declared.entry(name).or_insert(relations);
+    }
+    namespaces
+        .iter()
+        .map(|&(own, relations)| {
+            relations.references(own, |namespace, relation| {
+                declared
+                    .get(namespace)
+                    .map(|relations| relations.rewrite(relation).is_some())
+            })
+        })
+        .collect()
+}
+
 /// A constraint as a document writes it outside any theory: `@identity`,
 /// a namespace name, or a namespace name and a relation name joined by
 /// `#`, the namespace name optionally after `..`, which changes nothing
@@ -515,19 +537,12 @@ impl<'a> Reader<'_, 'a> {
     /// Checks each reference from one namespace to another against the
     /// document. A namespace outside it is left to the namespace write.
     fn references(&mut self, namespaces: &[(NamespaceDocument, Vec<Place>)]) {
-        let mut declared = HashMap::new();
-        for (document, _) in namespaces {
-            declared
-                .entry(&document.namespace)
-                .or_insert(&document.relations);
-        }
-        for (document, places) in namespaces {
+        let given: Vec<_> = namespaces
+            .iter()
+            .map(|(document, _)| (&document.namespace, &document.relations))
+            .collect();
+        for ((document, places), problems) in namespaces.iter().zip(reference_problems(&given)) {
             let (own, relations) = (&document.namespace, &document.relations);
-            let problems = relations.references(own, |namespace, relation| {
-                declared
-                    .get(namespace)
-                    .map(|relations| relations.rewrite(relation).is_some())
-            });
             let names: Vec<_> = relations.relations().map(|(name, _)| name).collect();
             for Problem { at, error } in problems {
                 let kind = ErrorKind::Namespace(quoted(error));

@@ -1849,6 +1849,107 @@ fn the_printer_refuses_what_no_document_declares() {
 }
 
 #[test]
+fn the_printer_refuses_a_reference_the_parser_would() {
+    let with = |namespace: &str, relations: Vec<(&str, Rewrite<&str>, Vec<NamedConstraint>)>| {
+        let relations = relations
+            .into_iter()
+            .map(|(name, rewrite, constraints)| {
+                (
+                    relation(name),
+                    rewrite.map(&mut |name| relation(name)),
+                    constraints,
+                )
+            })
+            .collect();
+        NamespaceDocument {
+            namespace: namespace_name(namespace),
+            relations: Namespace::new(relations).expect("a valid namespace"),
+        }
+    };
+    let subjectset = |namespace: &str, name: &str| {
+        Constraint::Subjectset(namespace_name(namespace), relation(name))
+    };
+    let b = || with("b", vec![("m", This, vec![Constraint::Identity])]);
+    // A constraint naming a relation another printed namespace lacks.
+    let a = with("a", vec![("r", This, vec![subjectset("b", "x")])]);
+    let documents = [a, b()];
+    let printed = print(&documents);
+    assert!(
+        matches!(
+            &printed,
+            Err(PrintError::Reference { namespace, error: NamespaceError::UndeclaredConstraint { .. } })
+                if namespace == "a"
+        ),
+        "{printed:?}"
+    );
+    // One naming a relation its own namespace lacks.
+    let s = with("s", vec![("r", This, vec![subjectset("s", "x")])]);
+    assert!(
+        matches!(
+            print(&[s]),
+            Err(PrintError::Reference {
+                error: NamespaceError::UndeclaredConstraint { .. },
+                ..
+            })
+        ),
+        "a self-reference"
+    );
+    // A fact-to-subjectset following a relation another lacks.
+    let a = with(
+        "a",
+        vec![
+            ("p", This, vec![Constraint::Resource(namespace_name("b"))]),
+            (
+                "v",
+                FactTo {
+                    factset: "p",
+                    computed: "x",
+                },
+                vec![],
+            ),
+        ],
+    );
+    assert!(
+        matches!(
+            print(&[a, b()]),
+            Err(PrintError::Reference {
+                error: NamespaceError::UndeclaredFollowed { .. },
+                ..
+            })
+        ),
+        "a followed relation"
+    );
+    // What the parser accepts prints: references that hold, and those to a
+    // namespace outside the printed set.
+    let a = with(
+        "a",
+        vec![
+            (
+                "r",
+                This,
+                vec![subjectset("b", "m"), subjectset("elsewhere", "x")],
+            ),
+            (
+                "p",
+                This,
+                vec![Constraint::Resource(namespace_name("elsewhere"))],
+            ),
+            (
+                "v",
+                FactTo {
+                    factset: "p",
+                    computed: "x",
+                },
+                vec![],
+            ),
+        ],
+    );
+    let documents = [a, b()];
+    let printed = print(&documents).expect("references that hold");
+    assert!(same(&parsed(&printed), &documents));
+}
+
+#[test]
 fn the_printer_refuses_a_rewrite_the_parser_would() {
     let at_limit = parsed(&depth_case(&chain(DEFAULT_REWRITE_DEPTH)));
     let printed = print(&at_limit).expect("a rewrite at the limit");
