@@ -80,6 +80,14 @@ Every page of help is also plain Markdown, so an AI assistant can read and navig
 
 An organization may want tenants of its own: a client with ten major divisions would likely keep each division in a tenant of its own, all within one Sungma deployment.
 
+## The TDL editor
+
+Author edits theories in TDL. Sungma's own TDL parser, compiled to WebAssembly, checks the text in the browser as it's typed. It gives the same errors, lines and columns as the server, and there's no second parser to keep in sync. The parser has no I/O, so `wasm-pack` can build it. The cost is a WASM build in CI and a download of a few hundred KB.
+
+Without WASM, the editor posts its text to the BFF after a pause in typing, and HTMX shows the errors the server returns.
+
+Highlighting needs only a small grammar: a Lezer grammar for CodeMirror 6, or a TextMate grammar, which also lets VS Code highlight `.theory` files.
+
 ## Open
 
 1. **Tenants within one deployment.** [Sungma is single-tenant](../../notes/sungma-is-single-tenant.md) says a deployment serves one organization and no key carries a tenant. Divisions as tenants inside one deployment would bring a tenant back into the keys, the name pools and the timeline. Either the note changes, or a division is something lighter than a tenant, or each division gets its own deployment.
