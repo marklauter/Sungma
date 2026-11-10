@@ -83,19 +83,21 @@ Names are parsed at the edge.
 
 ## Constraints
 
-A relation whose rewrite reads `this` declares its constraints. A fact whose subject satisfies none of them is refused, so bad data can't quietly empty a closure. A constraint is:
+A relation's constraints limit which subjects can be bound to its subjectsets through a fact.
 
-- `identity`: an identity, such as a person's or a client's `sub`;
-- a namespace, such as `folder`: a resource of it, such as `folder:root#...`;
+Only a relation whose rewrite reads `this` has facts, so only those relations declare constraints, at least one each. A relation whose rewrite doesn't read `this` is computed, and declares none.
+
+A constraint is one of:
+
+- `@identity`: an identity, such as a person's or a client's `sub`. A name can't start with `@`, so `@identity` can never be a namespace;
+- a namespace, such as `folder`: a resource member of it, such as `folder:root#...`;
 - `namespace#relation`, such as `group#member`: a subjectset of that relation.
 
 ```ebnf
-constraint = 'identity' | namespace name, [ '#', relation name ] ;
+constraint = '@identity' | namespace name, [ '#', relation name ] ;
 ```
 
-A relation declares at least one constraint, none twice, in any order. No constraint admits every subject, so every link can be checked.
-
-A relation whose rewrite doesn't read `this` is computed, and declares none.
+A relation lists each constraint once, in any order. No constraint admits every subject, so every link can be checked.
 
 ## Rewrite grammar
 
@@ -122,7 +124,7 @@ A rewrite defines the closure of each subjectset formed from its relation:
 
 - `this` is the subjects the facts bind to the subjectset.
 - A computed subjectset is the closure of the named relation on the same resource.
-- A fact-to-subjectset takes the subjects the factset binds on the same resource. For each that is a resource or a subjectset, it takes the closure of the followed relation on that subject's resource. Identities are skipped.
+- A fact-to-subjectset takes the subjects the factset binds on the same resource. For each that is a resource member or a subjectset, it takes the closure of the followed relation on that subject's resource. Identities are skipped.
 
 A subjectset whose relation isn't declared has an empty closure.
 
@@ -131,7 +133,7 @@ A subjectset whose relation isn't declared has an empty closure.
 The theory name is a prefix. The parser adds it and a dot to each unqualified namespace name, in headers and in constraints. Under `theory: sungma`, `root` means `sungma.root`, and `group#member` means `sungma.group#member`.
 
 - A name that already starts with the theory name and a dot gets no prefix: under `theory: t`, `a` and `t.a` both name `t.a`.
-- `identity` is never prefixed, and rewrites name only relations, so the prefix never touches them.
+- Rewrites name only relations, so the prefix never touches them.
 - Without a theory name, a document holds full names.
 
 Once parsed, the prefix is gone. Everything sees full names, and nothing records which document a namespace came from. A theory shows only in the shared first segment of its namespaces' names.
@@ -145,45 +147,45 @@ theory: sungma
 
 // The deployment, one resource: sungma.root:sungma
 namespace: root
-  owner: identity
-  admin: identity = this | owner
-  namespace_creator: identity, group#member = this | admin
-  group_creator: identity, group#member = this | admin
-  operator: identity, group#member = this | admin
-  auditor: identity, group#member = this | admin
-  reader: identity, group#member = this | auditor
-  writer: identity, group#member = this | admin
-  fact_writer: identity, group#member = this | admin
-  fact_reader: identity, group#member
+  owner: @identity
+  admin: @identity = this | owner
+  namespace_creator: @identity, group#member = this | admin
+  group_creator: @identity, group#member = this | admin
+  operator: @identity, group#member = this | admin
+  auditor: @identity, group#member = this | admin
+  reader: @identity, group#member = this | auditor
+  writer: @identity, group#member = this | admin
+  fact_writer: @identity, group#member = this | admin
+  fact_reader: @identity, group#member
     = this | fact_writer | auditor
-  directory_reader: identity, group#member
+  directory_reader: @identity, group#member
     = this | auditor
   access_reader = auditor
 
 namespace: namespace
   parent: root
   protected: root
-  owner: identity, group#member = this | (parent, owner) ! (protected, owner)
-  admin: identity, group#member = this | owner | (parent, admin) ! (protected, admin)
-  writer: identity, group#member = this | admin | (parent, writer) ! (protected, writer)
-  reader: identity, group#member = this | writer | fact_reader | auditor | (parent, reader)
-  fact_writer: identity, group#member
+  owner: @identity, group#member = this | (parent, owner) ! (protected, owner)
+  admin: @identity, group#member = this | owner | (parent, admin) ! (protected, admin)
+  writer: @identity, group#member = this | admin | (parent, writer) ! (protected, writer)
+  reader: @identity, group#member = this | writer | fact_reader | auditor | (parent, reader)
+  fact_writer: @identity, group#member
     = this | admin | (parent, fact_writer) ! (protected, fact_writer)
-  fact_reader: identity, group#member
+  fact_reader: @identity, group#member
     = this | fact_writer | auditor | (parent, fact_reader)
-  auditor: identity, group#member
+  auditor: @identity, group#member
     = this | (parent, auditor)
   access_reader = admin | auditor
 
 namespace: relation
   parent: namespace
-  writer: identity, group#member = this | (parent, fact_writer)
-  reader: identity, group#member = this | writer | (parent, fact_reader)
+  writer: @identity, group#member = this | (parent, fact_writer)
+  reader: @identity, group#member = this | writer | (parent, fact_reader)
 
 namespace: group
   parent: root
-  owner: identity, group#member = this | (parent, admin)
-  member: identity, group#member
+  owner: @identity, group#member = this | (parent, admin)
+  member: @identity, group#member
   access_reader = owner | (parent, auditor)
 ```
 
@@ -261,14 +263,14 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 
 #### Theory name
 
-1. The prefix applies to headers and constraints, never to `identity` or rewrites.
+1. The prefix applies to headers and namespace constraints, never to `@identity` or rewrites.
 2. A name already starting with the theory name keeps it, and a document without one holds full names.
 
 #### Names
 
 1. Names follow the grammar. `.a`, `a.`, `a..b` and `a.1b` are refused.
 2. `this`, `namespace` and `theory` in any casing are refused as relation names; `namespace` and `theory` are allowed as namespace names and in constraints.
-3. `identity` is refused as a namespace name. The `sungma` first segment is enforced at write time, as [Sungma's own authorization](sungma-authorization.md#protected-namespaces) says, so the parser reads Sungma's own namespaces.
+3. The `sungma` first segment is enforced at write time, as [Sungma's own authorization](sungma-authorization.md#protected-namespaces) says, so the parser reads Sungma's own namespaces.
 4. Checked names refuse `"`, `:`, `#`, whitespace and control characters.
 
 #### Grammar

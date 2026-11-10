@@ -57,48 +57,48 @@ theory: sungma
 
 // The root, one resource, sungma.root:sungma: relations across the whole deployment
 namespace: root
-  owner: identity
-  admin: identity = this | owner
-  namespace_creator: identity, group#member = this | admin
-  group_creator: identity, group#member = this | admin
-  operator: identity, group#member = this | admin
-  auditor: identity, group#member = this | admin
-  reader: identity, group#member = this | auditor
-  writer: identity, group#member = this | admin
-  fact_writer: identity, group#member = this | admin
-  fact_reader: identity, group#member = this | fact_writer | auditor
-  directory_reader: identity, group#member = this | auditor
+  owner: @identity
+  admin: @identity = this | owner
+  namespace_creator: @identity, group#member = this | admin
+  group_creator: @identity, group#member = this | admin
+  operator: @identity, group#member = this | admin
+  auditor: @identity, group#member = this | admin
+  reader: @identity, group#member = this | auditor
+  writer: @identity, group#member = this | admin
+  fact_writer: @identity, group#member = this | admin
+  fact_reader: @identity, group#member = this | fact_writer | auditor
+  directory_reader: @identity, group#member = this | auditor
   access_reader = auditor
 
 // Each namespace: who owns it, administers it, reads and writes it and its facts, and audits it
 namespace: namespace
   parent: root
   protected: root
-  owner: identity, group#member = this | (parent, owner) ! (protected, owner)
-  admin: identity, group#member
+  owner: @identity, group#member = this | (parent, owner) ! (protected, owner)
+  admin: @identity, group#member
     = this | owner | (parent, admin) ! (protected, admin)
-  writer: identity, group#member
+  writer: @identity, group#member
     = this | admin | (parent, writer) ! (protected, writer)
-  reader: identity, group#member
+  reader: @identity, group#member
     = this | writer | fact_reader | auditor | (parent, reader)
-  fact_writer: identity, group#member
+  fact_writer: @identity, group#member
     = this | admin | (parent, fact_writer) ! (protected, fact_writer)
-  fact_reader: identity, group#member
+  fact_reader: @identity, group#member
     = this | fact_writer | auditor | (parent, fact_reader)
-  auditor: identity, group#member = this | (parent, auditor)
+  auditor: @identity, group#member = this | (parent, auditor)
   access_reader = admin | auditor
 
 // Each relation: the closures that write and read its facts
 namespace: relation
   parent: namespace
-  writer: identity, group#member = this | (parent, fact_writer)
-  reader: identity, group#member = this | writer | (parent, fact_reader)
+  writer: @identity, group#member = this | (parent, fact_writer)
+  reader: @identity, group#member = this | writer | (parent, fact_reader)
 
 // Each group: the closures of its owners and members
 namespace: group
   parent: root
-  owner: identity, group#member = this | (parent, admin)
-  member: identity, group#member
+  owner: @identity, group#member = this | (parent, admin)
+  member: @identity, group#member
   access_reader = owner | (parent, auditor)
 ```
 
