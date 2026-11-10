@@ -1,0 +1,10 @@
+namespace: t
+  a: b |
+  b: missing
+  c: d
+  d: c
+  e: ((a)
+  This<@identity>
+  f<@identity, , x#>
+theory: a.b
+namespace: identity

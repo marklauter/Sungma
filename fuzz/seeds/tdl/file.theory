@@ -1,0 +1,7 @@
+namespace: file
+  auditor<@identity>: this & viewer
+  banned<@identity>
+  editor<@identity, group#member>: this | owner
+  owner<@identity>
+  parent<@identity, folder, folder#owner>
+  viewer<@identity, group#member>: (this | editor | (parent, viewer)) ! banned

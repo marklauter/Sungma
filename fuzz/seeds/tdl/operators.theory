@@ -1,0 +1,17 @@
+theory: drive
+
+namespace: file
+  owner<@identity>
+  editor<@identity>: this | owner
+  auditor<@identity>: this & editor
+  viewer: (editor | (parent, viewer)) ! banned
+  parent<@identity, folder, folder#owner>
+  banned<@identity, group#member>
+
+namespace: folder
+  viewer<@identity>
+  owner<@identity>
+
+theory: io
+namespace: x.y
+  r<drive.file#owner>

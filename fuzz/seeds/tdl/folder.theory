@@ -1,0 +1,5 @@
+namespace: folder
+  banned<@identity, group#member>
+  owner<@identity>
+  parent<folder>
+  viewer<@identity, group#member>: (this | (parent, viewer)) ! banned

@@ -15,15 +15,8 @@ sungma-lang = { path = "../crates/sungma-lang" }
 sungma-node = { path = "../crates/sungma-node", features = ["testkit"] }
 
 [[bin]]
-name = "document"
-path = "fuzz_targets/document.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "schema"
-path = "fuzz_targets/schema.rs"
+name = "tdl"
+path = "fuzz_targets/tdl.rs"
 test = false
 doc = false
 bench = false

@@ -14,9 +14,9 @@ use libfuzzer_sys::fuzz_target;
 use sungma_node::testkit::World;
 
 const NAMESPACES: [&str; 3] = [
-    include_str!("../../crates/sungma/tests/fixtures/namespaces/group.json"),
-    include_str!("../../crates/sungma/tests/fixtures/namespaces/folder.json"),
-    include_str!("../../crates/sungma/tests/fixtures/namespaces/file.json"),
+    include_str!("../../crates/sungma/tests/fixtures/namespaces/group.theory"),
+    include_str!("../../crates/sungma/tests/fixtures/namespaces/folder.theory"),
+    include_str!("../../crates/sungma/tests/fixtures/namespaces/file.theory"),
 ];
 
 /// Runs `future` to its end. The memory node never waits on anything, so

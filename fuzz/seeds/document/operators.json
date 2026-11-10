@@ -1,1 +1,0 @@
-{ "drive.file": { "owner": { "constraints": ["identity"] }, "editor": { "rewrite": "this | owner", "constraints": ["identity"] }, "auditor": { "rewrite": "this & editor", "constraints": ["identity"] }, "viewer": "(editor | (parent, viewer)) ! banned", "parent": { "constraints": ["identity"] }, "banned": { "constraints": ["identity"] } } }

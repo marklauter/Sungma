@@ -1,0 +1,2 @@
+namespace: group
+  member<@identity, group#member>
