@@ -14,9 +14,9 @@ use sungma_names::resolve;
 pub use sungma_node::testkit::World;
 
 pub const NAMESPACES: [&str; 3] = [
-    include_str!("../../../sungma/tests/fixtures/namespaces/file.json"),
-    include_str!("../../../sungma/tests/fixtures/namespaces/folder.json"),
     include_str!("../../../sungma/tests/fixtures/namespaces/group.json"),
+    include_str!("../../../sungma/tests/fixtures/namespaces/folder.json"),
+    include_str!("../../../sungma/tests/fixtures/namespaces/file.json"),
 ];
 
 pub const FACTS: &str = include_str!("../../../sungma/tests/fixtures/docs.facts.json");

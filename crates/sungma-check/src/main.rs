@@ -50,7 +50,9 @@ async fn main() -> Result<(), Failed> {
     }
 }
 
-fn parse(document: &str) -> Result<(NamespaceName, Namespace<RelationName>), String> {
+fn parse(
+    document: &str,
+) -> Result<(NamespaceName, Namespace<RelationName, NamespaceName>), String> {
     namespace::parse(document)
         .map(|document| (document.namespace, document.relations))
         .map_err(|errors| namespace::Refusal(errors).to_string())

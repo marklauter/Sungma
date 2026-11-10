@@ -147,7 +147,10 @@ async fn replay_reads_the_namespace_versions_of_its_revision() {
     let decision = decide(&world, "file:design.md#viewer", "alice", head(&world).await).await;
 
     // A later version makes `viewer` only the facts stored under it.
-    world.declare("file", "viewer", This).await.unwrap();
+    world
+        .declare("file", "viewer", This, &["identity"])
+        .await
+        .unwrap();
 
     let now = decide(&world, "file:design.md#viewer", "alice", head(&world).await).await;
     assert_eq!(now.outcome, Outcome::Denied);

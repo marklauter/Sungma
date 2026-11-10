@@ -202,13 +202,6 @@ jobs:
         document fuzz/corpus/document fuzz/seeds/document --
         -dict=fuzz/document.dict -max_len=65536 -max_total_time=60
 
-    - name: Fuzz the TOML namespace document parser for a minute
-      run: >
-        mkdir -p fuzz/corpus/document_toml &&
-        cargo +$NIGHTLY fuzz run --target x86_64-unknown-linux-gnu
-        document_toml fuzz/corpus/document_toml fuzz/seeds/document_toml --
-        -dict=fuzz/document_toml.dict -max_len=65536 -max_total_time=60
-
     - name: Fuzz the fact document parser for a minute
       run: >
         mkdir -p fuzz/corpus/fact &&

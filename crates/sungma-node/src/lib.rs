@@ -40,15 +40,22 @@ const LEASE: NonZeroU32 = NonZeroU32::new(64).unwrap();
 /// How many namespace versions Check keeps parsed.
 const VERSIONS: usize = 1024;
 
-pub type Print = fn(&NamespaceName, &Namespace<RelationName>) -> Result<String, String>;
-pub type Parse = fn(&str) -> Result<(NamespaceName, Namespace<RelationName>), String>;
+pub type Print =
+    fn(&NamespaceName, &Namespace<RelationName, NamespaceName>) -> Result<String, String>;
+pub type Parse =
+    fn(&str) -> Result<(NamespaceName, Namespace<RelationName, NamespaceName>), String>;
 
 /// The printer's canonical document.
-fn print(name: &NamespaceName, relations: &Namespace<RelationName>) -> Result<String, String> {
+fn print(
+    name: &NamespaceName,
+    relations: &Namespace<RelationName, NamespaceName>,
+) -> Result<String, String> {
     namespace::print(name, relations).map_err(|error| error.to_string())
 }
 
-fn parse(document: &str) -> Result<(NamespaceName, Namespace<RelationName>), String> {
+fn parse(
+    document: &str,
+) -> Result<(NamespaceName, Namespace<RelationName, NamespaceName>), String> {
     namespace::parse(document)
         .map(|document| (document.namespace, document.relations))
         .map_err(|errors| namespace::Refusal(errors).to_string())

@@ -163,25 +163,37 @@ pub async fn subject_name<D: Dictionary>(
     })
 }
 
-/// The namespace with every relation id replaced by its name.
+/// The namespace with every relation and namespace id replaced by its name.
 pub async fn namespace_names<D: Dictionary>(
     dictionary: &D,
     namespace: &Namespace,
-) -> Result<Namespace<RelationName>, StoreError> {
-    let mut names = std::collections::HashMap::new();
+) -> Result<Namespace<RelationName, NamespaceName>, StoreError> {
+    let mut relations = std::collections::HashMap::new();
     for id in namespace.names() {
-        names.insert(*id, relation_name(dictionary, *id).await?);
+        relations.insert(*id, relation_name(dictionary, *id).await?);
+    }
+    let mut namespaces = std::collections::HashMap::new();
+    for id in namespace.namespaces() {
+        namespaces.insert(*id, namespace_name(dictionary, *id).await?);
     }
     // Every id the namespace names was just named, and distinct ids have
     // distinct names in one pool, so the rename can't fail; a store that
     // broke that is reported as failed.
     namespace
-        .try_map(|id| {
-            names
-                .get(id)
-                .cloned()
-                .ok_or_else(|| Renamed(format!("relation id {id} has no name")))
-        })
+        .try_map(
+            |id| {
+                relations
+                    .get(id)
+                    .cloned()
+                    .ok_or_else(|| Renamed(format!("relation id {id} has no name")))
+            },
+            |id| {
+                namespaces
+                    .get(id)
+                    .cloned()
+                    .ok_or_else(|| Renamed(format!("namespace id {id} has no name")))
+            },
+        )
         .map_err(|Renamed(error)| StoreError(error))
 }
 

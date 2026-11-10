@@ -3230,7 +3230,6 @@ dependencies = [
  "sungma-node",
  "thiserror 2.0.21",
  "tokio",
- "toml_edit",
 ]
 
 [[package]]

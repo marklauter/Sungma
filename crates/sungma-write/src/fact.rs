@@ -6,21 +6,27 @@ use sungma::{
     graph::{Fact, Subject, Subjectset},
     id::NamespaceId,
     revision::Revision,
-    version::Epochs,
+    version::{Constraints, Epochs},
 };
 
 use crate::store::{FactWrite, FactWriteError};
 
 /// Refuses the first insert in `writes` whose relation, or whose
-/// subjectset subject's relation, the latest version doesn't declare.
-/// `latest` gives the epochs of a namespace's latest version, `None` when
+/// subjectset subject's relation, the latest version doesn't declare, or
+/// whose subject none of its relation's constraints admits. `latest` gives
+/// the epochs and constraints of a namespace's latest version, `None` when
 /// it has none.
 pub fn check_inserts<'v>(
     writes: &[FactWrite],
-    latest: impl Fn(NamespaceId) -> Option<&'v Epochs>,
+    latest: impl Fn(NamespaceId) -> Option<(&'v Epochs, &'v Constraints)>,
 ) -> Result<(), FactWriteError> {
     let declares = |set: &Subjectset| {
-        latest(set.resource.namespace).is_some_and(|epochs| epochs.declares(set.relation))
+        latest(set.resource.namespace).is_some_and(|(epochs, _)| epochs.declares(set.relation))
+    };
+    let admits = |fact: &Fact| {
+        let set = &fact.subjectset;
+        latest(set.resource.namespace)
+            .is_some_and(|(_, constraints)| constraints.admits(set.relation, &fact.subject))
     };
     for write in writes {
         let FactWrite::Insert(fact) = write else {
@@ -32,6 +38,9 @@ pub fn check_inserts<'v>(
         };
         if !(declares(&fact.subjectset) && subject) {
             return Err(FactWriteError::Undeclared(fact.clone()));
+        }
+        if !admits(fact) {
+            return Err(FactWriteError::Unsatisfied(fact.clone()));
         }
     }
     Ok(())

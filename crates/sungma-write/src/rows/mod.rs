@@ -32,18 +32,18 @@ pub trait Printer {
     fn print(
         &self,
         namespace: &NamespaceName,
-        relations: &Namespace<RelationName>,
+        relations: &Namespace<RelationName, NamespaceName>,
     ) -> Result<String, String>;
 }
 
 impl<F> Printer for F
 where
-    F: Fn(&NamespaceName, &Namespace<RelationName>) -> Result<String, String>,
+    F: Fn(&NamespaceName, &Namespace<RelationName, NamespaceName>) -> Result<String, String>,
 {
     fn print(
         &self,
         namespace: &NamespaceName,
-        relations: &Namespace<RelationName>,
+        relations: &Namespace<RelationName, NamespaceName>,
     ) -> Result<String, String> {
         self(namespace, relations)
     }

@@ -1,8 +1,17 @@
 {
   "folder": {
-    "banned": "this",
-    "owner": "this",
-    "parent": "this",
-    "viewer": "(this | (parent, viewer)) ! banned"
+    "banned": {
+      "constraints": ["identity"]
+    },
+    "owner": {
+      "constraints": ["identity"]
+    },
+    "parent": {
+      "constraints": ["folder"]
+    },
+    "viewer": {
+      "rewrite": "(this | (parent, viewer)) ! banned",
+      "constraints": ["group#member", "identity"]
+    }
   }
 }

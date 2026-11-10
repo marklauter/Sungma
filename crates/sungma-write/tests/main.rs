@@ -19,10 +19,11 @@ const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../sungma/tests/fix
 /// What a run that got as far as binding reports.
 const UNBOUND: &str = "invalid socket address";
 
+/// Each namespace after those it names: `group`, `folder`, then `file`.
 const NAMESPACES: [&str; 3] = [
     concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../sungma/tests/fixtures/namespaces/file.json"
+        "/../sungma/tests/fixtures/namespaces/group.json"
     ),
     concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -30,7 +31,7 @@ const NAMESPACES: [&str; 3] = [
     ),
     concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../sungma/tests/fixtures/namespaces/group.json"
+        "/../sungma/tests/fixtures/namespaces/file.json"
     ),
 ];
 
@@ -125,7 +126,7 @@ async fn the_server_runs_on_dynamodb_when_given_a_url() {
         .await
         .unwrap();
     let stored: Value = serde_json::from_str(&read.version.unwrap().document).unwrap();
-    let file: Value = serde_json::from_str(&fs::read_to_string(NAMESPACES[0]).unwrap()).unwrap();
+    let file: Value = serde_json::from_str(&fs::read_to_string(NAMESPACES[2]).unwrap()).unwrap();
     assert_eq!(stored, file);
 
     let again = run(&seed(&facts), &env);

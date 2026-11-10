@@ -14,15 +14,19 @@ fuzz_target!(|data: &[u8]| {
     let Ok(parsed) = namespace::parse(text) else {
         return;
     };
-    let printed = namespace::print(&parsed.namespace, &parsed.relations)
-        .expect("a parsed namespace prints");
+    let printed =
+        namespace::print(&parsed.namespace, &parsed.relations).expect("a parsed namespace prints");
     let again = namespace::parse(&printed).expect("a printed namespace parses");
     let sorted = |document: &namespace::NamespaceDocument| {
         let mut relations: Vec<_> = document.relations.relations().collect();
         relations.sort_by_key(|(name, _)| *name);
         relations
             .into_iter()
-            .map(|(name, rewrite)| (name.clone(), rewrite.clone()))
+            .map(|(name, rewrite)| {
+                let mut constraints = document.relations.constraints(name).to_vec();
+                constraints.sort();
+                (name.clone(), rewrite.clone(), constraints)
+            })
             .collect::<Vec<_>>()
     };
     assert_eq!(again.namespace, parsed.namespace);

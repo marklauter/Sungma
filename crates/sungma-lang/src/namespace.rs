@@ -1,38 +1,33 @@
-//! Namespace documents: the JSON and TOML forms of one namespace, as
+//! Namespace documents: the JSON form of one namespace, as
 //! `docs/specs/namespace-documents.md` specifies.
 //!
 //! ```json
 //! {
 //!   "file": {
-//!     "owner": "this",
-//!     "parent": "this",
-//!     "editor": "this | owner",
-//!     "viewer": "(this | editor | (parent, viewer)) ! banned",
-//!     "banned": "this"
+//!     "owner": { "constraints": ["identity"] },
+//!     "parent": { "constraints": ["folder"] },
+//!     "editor": { "rewrite": "this | owner", "constraints": ["group#member", "identity"] },
+//!     "viewer": "editor | (parent, viewer)"
 //!   }
 //! }
 //! ```
 //!
-//! ```toml
-//! [file]
-//! owner = "this"
-//! parent = "this"
-//! editor = "this | owner"
-//! viewer = "(this | editor | (parent, viewer)) ! banned"
-//! banned = "this"
-//! ```
+//! A relation is its expression, or, when its rewrite reads `this`, an
+//! object with its constraints and its expression, `this` when it's left
+//! out. The checks that reach other namespaces, a constraint
+//! `namespace#relation` and the relation a fact-to-subjectset follows, are
+//! made here only where they reach this namespace itself; a namespace write
+//! checks the rest.
 //!
-//! serde_json reads the JSON and toml_edit the TOML, and each refuses a
-//! document that isn't in its form with its own error. Sungma reads each
-//! expression, checks the namespace whole, and reports every problem it finds,
-//! up to [`MAX_ERRORS`]. [`print()`] and [`print_toml`] write a namespace back
-//! as a document that parses as an equal namespace.
+//! serde_json reads the JSON, and refuses a document that isn't JSON with
+//! its own error. Sungma reads each expression, checks the namespace whole,
+//! and reports every problem it finds, up to [`MAX_ERRORS`]. [`print()`]
+//! writes a namespace back as a document that parses as an equal namespace.
 
 use std::{
     collections::HashSet,
     fmt::{self, Write},
     marker::PhantomData,
-    ops::Range,
 };
 
 use serde::{
@@ -40,12 +35,11 @@ use serde::{
     de::{self, IgnoredAny, MapAccess, SeqAccess, Visitor},
 };
 use thiserror::Error;
-use toml_edit::{Item, Table, Value};
 
 pub use sungma::name::{MAX_NAMESPACE_BYTES, MAX_QUOTE_BYTES, MAX_RELATION_BYTES};
 use sungma::{
     name::{NameError, NamespaceName, RelationName, quote},
-    namespace::{MAX_REWRITE_DEPTH, Namespace, NamespaceError, Problem},
+    namespace::{Constraint, MAX_REWRITE_DEPTH, Namespace, NamespaceError, Problem},
     non_empty::NonEmpty,
     rewrite::Rewrite,
 };
@@ -56,11 +50,21 @@ pub const MAX_EXPRESSION_BYTES: usize = 4096;
 /// How many errors a refused document reports before [`ErrorKind::TooManyErrors`].
 pub const MAX_ERRORS: usize = 50;
 
+/// A namespace whose relations and namespaces are named.
+pub type Named = Namespace<RelationName, NamespaceName>;
+
+/// A constraint as a document writes it, with names.
+pub type NamedConstraint = Constraint<NamespaceName, RelationName>;
+
+/// The name that stands for an identity in a constraint, and that no
+/// namespace may take.
+pub const IDENTITY: &str = "identity";
+
 /// One namespace as a document declares it, its relations in document order.
 #[derive(Debug)]
 pub struct NamespaceDocument {
     pub namespace: NamespaceName,
-    pub relations: Namespace<RelationName>,
+    pub relations: Named,
 }
 
 /// A problem in a document, with the relation it was found at and, inside
@@ -87,14 +91,6 @@ impl DocumentError {
 pub enum ErrorKind {
     #[error("{0}")]
     Json(serde_json::Error),
-    /// toml_edit's message, without the line of the document its own error
-    /// quotes. The column counts characters from 1.
-    #[error("{message} at line {line} column {column}")]
-    Toml {
-        message: String,
-        line: usize,
-        column: usize,
-    },
     #[error("a document doesn't start with a byte-order mark")]
     ByteOrderMark,
     #[error("a document is at most {MAX_DOCUMENT_BYTES} bytes")]
@@ -107,18 +103,22 @@ pub enum ErrorKind {
     ManyNamespaces(usize),
     #[error("namespace '{0}' maps to an object of relations")]
     RelationsNotAnObject(String),
-    #[error("'{0}' isn't a namespace's table header, such as [name] or [\"dotted.name\"]")]
-    NotATable(String),
     #[error("a namespace declares at most {MAX_RELATIONS} relations, not {0}")]
     TooManyRelations(usize),
     #[error("'{0}' contains a JSON escape")]
     Escape(String),
-    #[error("'{0}' contains a TOML escape")]
-    TomlEscape(String),
     #[error(transparent)]
     Name(NameError),
-    #[error("a relation maps to a non-empty expression string")]
+    #[error(
+        "a relation maps to a non-empty expression string, or an object of its 'constraints' and 'rewrite'"
+    )]
     NotAnExpression,
+    #[error("'{0}' isn't a key of a relation's object, which has 'constraints' and 'rewrite'")]
+    UnknownKey(String),
+    #[error("'{0}' is written twice in a relation's object")]
+    DuplicateKey(String),
+    #[error("'constraints' is a non-empty array of strings")]
+    NotConstraints,
     #[error("an expression is at most {MAX_EXPRESSION_BYTES} bytes")]
     ExpressionTooLong,
     #[error("expected {expected}, found {found}")]
@@ -162,68 +162,13 @@ pub fn parse(text: &str) -> Result<NamespaceDocument, Vec<DocumentError>> {
         Json::Object(entries) => Ok(entries),
         Json::Other => Err(ErrorKind::RelationsNotAnObject(quote(namespace.text()))),
     };
-    read(Form::Json, namespace, relations)
+    read(namespace, relations)
 }
 
-/// Parses and checks a namespace document in the TOML form, as the
-/// [module](self) describes: one table, its header the namespace's name.
-///
-/// Linear in the document's length, as [`parse`] is.
-pub fn parse_toml(text: &str) -> Result<NamespaceDocument, Vec<DocumentError>> {
-    let fail = |kind| Err(vec![error(None, None, kind)]);
-    if text.len() > MAX_DOCUMENT_BYTES {
-        return fail(ErrorKind::TooLarge);
-    }
-    // TOML allows a byte-order mark, and toml_edit skips one; a document
-    // in either form is refused with one.
-    if text.starts_with('\u{feff}') {
-        return fail(ErrorKind::ByteOrderMark);
-    }
-    let document = match toml_edit::Document::parse(text) {
-        Ok(document) => document,
-        Err(toml) => return fail(toml_error(text, &toml)),
-    };
-    let mut namespaces = entries(text, document.as_table());
-    let (namespace, item) = match namespaces.len() {
-        0 => return fail(ErrorKind::NoNamespace),
-        1 => namespaces.remove(0),
-        count => return fail(ErrorKind::ManyNamespaces(count)),
-    };
-    // Only a header declares a namespace: `[drive.file]` nests `file` in an
-    // implicit `drive`, `t.a = "x"` makes a dotted `t`, and `t = {}` is a value.
-    let relations = match item {
-        Item::Table(table) if !table.is_implicit() && !table.is_dotted() => {
-            Ok(entries(text, table)
-                .into_iter()
-                .map(|(name, item)| (name, leaf(text, item)))
-                .collect())
-        }
-        _ => Err(ErrorKind::NotATable(quote(namespace.text()))),
-    };
-    read(Form::Toml, namespace, relations)
-}
-
-/// The form a document is written in, which names the escapes it refuses.
-#[derive(Clone, Copy)]
-enum Form {
-    Json,
-    Toml,
-}
-
-impl Form {
-    fn escape(self, text: &str) -> ErrorKind {
-        match self {
-            Form::Json => ErrorKind::Escape(quote(text)),
-            Form::Toml => ErrorKind::TomlEscape(quote(text)),
-        }
-    }
-}
-
-/// Reads a namespace from what its form's library read: its name, and its
+/// Reads a namespace from what serde_json read: its name, and its
 /// relations' names and values in document order, or the error that refuses
 /// what the name maps to.
 fn read(
-    form: Form,
     namespace: Text<'_>,
     relations: Result<Vec<(Text<'_>, Leaf<'_>)>, ErrorKind>,
 ) -> Result<NamespaceDocument, Vec<DocumentError>> {
@@ -231,12 +176,12 @@ fn read(
     // A name that fails is still kept, unchecked, for the checks that
     // follow; the document is refused, so it never leaves.
     let namespace = match namespace {
-        Text::Plain(name) => name.parse().unwrap_or_else(|error| {
+        Text::Plain(name) => namespace_name(name).unwrap_or_else(|error| {
             errors.push(None, None, ErrorKind::Name(error));
             NamespaceName::new_unchecked(name)
         }),
         Text::Escaped(name) => {
-            errors.push(None, None, form.escape(&name));
+            errors.push(None, None, ErrorKind::Escape(quote(&name)));
             NamespaceName::new_unchecked(name)
         }
     };
@@ -267,37 +212,65 @@ fn read(
                 RelationName::new_unchecked(name)
             }),
             Text::Escaped(name) => {
-                errors.at(at, &name, None, form.escape(&name));
+                errors.at(at, &name, None, ErrorKind::Escape(quote(&name)));
                 RelationName::new_unchecked(name)
             }
         };
-        // A relation whose expression fails is still declared, as `this`,
-        // so the namespace reports nothing more about it.
-        let rewrite = match value {
-            Leaf::Text(Text::Plain("")) => Err((None, ErrorKind::NotAnExpression)),
-            Leaf::Text(Text::Plain(expression)) if expression.len() > MAX_EXPRESSION_BYTES => {
-                Err((None, ErrorKind::ExpressionTooLong))
-            }
-            Leaf::Text(Text::Plain(expression)) => {
-                Parser::new(&lex(expression, Mode::Expression)).parse()
-            }
-            Leaf::Text(Text::Escaped(expression)) => Err((None, form.escape(&expression))),
-            Leaf::Other => Err((None, ErrorKind::NotAnExpression)),
+        let (expression, written) = match value {
+            Leaf::Text(text) => (Ok(Some(text)), None),
+            Leaf::Object(Ok(Declaration {
+                rewrite,
+                constraints,
+            })) => (Ok(rewrite), constraints),
+            Leaf::Object(Err(kind)) => (Err(kind), None),
+            Leaf::Other => (Err(ErrorKind::NotAnExpression), None),
         };
+        let rewrite = match expression {
+            Ok(None) => Ok(Rewrite::This),
+            Ok(Some(text)) => rewrite(text),
+            Err(kind) => Err((None, kind)),
+        };
+        let mut constraints = Vec::new();
+        let mut failed = false;
+        for text in written.into_iter().flatten() {
+            let parsed = match text {
+                Text::Plain(text) => self::constraint(text).map_err(ErrorKind::Name),
+                Text::Escaped(text) => Err(ErrorKind::Escape(quote(&text))),
+            };
+            match parsed {
+                Ok(constraint) => constraints.push(constraint),
+                Err(kind) => {
+                    errors.at(at, name.as_str(), None, kind);
+                    failed = true;
+                }
+            }
+        }
+        // A relation whose expression or constraints fail is still
+        // declared, as `this` taking identities when nothing else is left,
+        // so the namespace reports nothing more about it.
         let rewrite = rewrite.unwrap_or_else(|(place, kind)| {
             let column = place.map(|place| place.column);
             errors.at(at, name.as_str(), column, kind);
+            failed = true;
             Rewrite::This
         });
-        relations.push((name, rewrite));
+        if failed && constraints.is_empty() {
+            constraints.push(Constraint::Identity);
+        }
+        relations.push((name, rewrite, constraints));
     }
-    let names: Vec<_> = relations.iter().map(|(name, _)| name.clone()).collect();
-    let relations = Namespace::new(relations).map_err(|problems| {
+    let names: Vec<_> = relations.iter().map(|(name, ..)| name.clone()).collect();
+    let mut report = |problems: Vec<Problem>| {
         for Problem { at, error } in problems {
             let kind = ErrorKind::Namespace(quoted(error));
             errors.at(Some(at), names[at].as_str(), None, kind);
         }
-    });
+    };
+    let relations = Namespace::new(relations).map_err(&mut report);
+    if let Ok(relations) = &relations {
+        // Only references to this namespace itself can be checked here.
+        report(relations.references(&namespace, |_, _| None));
+    }
     match (errors.finish(), relations) {
         (None, Ok(relations)) => Ok(NamespaceDocument {
             namespace,
@@ -307,47 +280,46 @@ fn read(
     }
 }
 
-/// toml_edit's error, placed at the line and column where it starts.
-fn toml_error(text: &str, toml: &toml_edit::TomlError) -> ErrorKind {
-    let start = toml.span().map_or(0, |span| span.start);
-    let before = text.get(..start).unwrap_or_default();
-    let line = before.rsplit('\n').next().unwrap_or_default();
-    ErrorKind::Toml {
-        message: toml.message().to_owned(),
-        line: before.matches('\n').count() + 1,
-        column: line.chars().count() + 1,
-    }
-}
-
-/// A TOML table's keys, each read as a [`Text`], and their items, in
-/// document order.
-fn entries<'a>(text: &str, table: &'a Table) -> Vec<(Text<'a>, &'a Item)> {
-    table
-        .iter()
-        .filter_map(|(name, _)| table.get_key_value(name))
-        .map(|(key, item)| (toml_text(text, key.get(), key.span()), item))
-        .collect()
-}
-
-/// A relation's value in the TOML form: a string, or anything else.
-fn leaf<'a>(text: &str, item: &'a Item) -> Leaf<'a> {
-    match item {
-        Item::Value(Value::String(string)) => {
-            Leaf::Text(toml_text(text, string.value(), string.span()))
+/// An expression string as a rewrite, or the failure that refuses it.
+fn rewrite(text: Text<'_>) -> Result<Rewrite<RelationName>, Failure> {
+    match text {
+        Text::Plain("") => Err((None, ErrorKind::NotAnExpression)),
+        Text::Plain(expression) if expression.len() > MAX_EXPRESSION_BYTES => {
+            Err((None, ErrorKind::ExpressionTooLong))
         }
-        _ => Leaf::Other,
+        Text::Plain(expression) => Parser::new(&lex(expression, Mode::Expression)).parse(),
+        Text::Escaped(expression) => Err((None, ErrorKind::Escape(quote(&expression)))),
     }
 }
 
-/// A TOML string, `value` as toml_edit decoded it from the document's text
-/// at `span`. Only a basic string, written in `"`, has escapes; a literal
-/// string's backslash is a character like any other. A string with no text
-/// at `span` to check is taken as escaped, so it is refused.
-fn toml_text<'a>(text: &str, value: &'a str, span: Option<Range<usize>>) -> Text<'a> {
-    match span.and_then(|span| text.get(span)) {
-        Some(raw) if !(raw.starts_with('"') && raw.contains('\\')) => Text::Plain(value),
-        _ => Text::Escaped(value.to_owned()),
+/// A namespace name a namespace may be declared by: any name of the
+/// grammar but `identity`.
+pub(crate) fn namespace_name(text: &str) -> Result<NamespaceName, NameError> {
+    let name: NamespaceName = text.parse()?;
+    if name.as_str() == IDENTITY {
+        return Err(NameError::Reserved(quote(text)));
     }
+    Ok(name)
+}
+
+/// A constraint as a document writes it: `identity`, a namespace name, or
+/// a namespace name and a relation name joined by `#`. A malformed one is
+/// refused whole, quoting all of it.
+pub fn constraint(text: &str) -> Result<NamedConstraint, NameError> {
+    if text == IDENTITY {
+        return Ok(Constraint::Identity);
+    }
+    let whole = |error| match error {
+        NameError::Invalid(_) => NameError::Invalid(quote(text)),
+        other => other,
+    };
+    Ok(match text.split_once('#') {
+        None => Constraint::Resource(namespace_name(text)?),
+        Some((namespace, relation)) => Constraint::Subjectset(
+            namespace_name(namespace).map_err(whole)?,
+            relation.parse().map_err(whole)?,
+        ),
+    })
 }
 
 /// Every problem a refused namespace document was found with.
@@ -407,7 +379,40 @@ pub(crate) fn quoted(problem: NamespaceError) -> NamespaceError {
             path: path.iter().map(|relation| quote(relation)).collect(),
             omitted,
         },
-        other => other,
+        NamespaceError::Unconstrained(relation) => NamespaceError::Unconstrained(quote(&relation)),
+        NamespaceError::ConstrainedComputed(relation) => {
+            NamespaceError::ConstrainedComputed(quote(&relation))
+        }
+        NamespaceError::TooManyConstraints { relation, count } => {
+            NamespaceError::TooManyConstraints {
+                relation: quote(&relation),
+                count,
+            }
+        }
+        NamespaceError::DuplicateConstraint {
+            relation,
+            constraint,
+        } => NamespaceError::DuplicateConstraint {
+            relation: quote(&relation),
+            constraint: quote(&constraint),
+        },
+        NamespaceError::UndeclaredConstraint {
+            relation,
+            constraint,
+        } => NamespaceError::UndeclaredConstraint {
+            relation: quote(&relation),
+            constraint: quote(&constraint),
+        },
+        NamespaceError::UndeclaredFollowed {
+            relation,
+            namespace,
+            followed,
+        } => NamespaceError::UndeclaredFollowed {
+            relation: quote(&relation),
+            namespace: quote(&namespace),
+            followed: quote(&followed),
+        },
+        NamespaceError::TooDeep => NamespaceError::TooDeep,
     }
 }
 
@@ -434,11 +439,28 @@ enum Json<'a, V> {
     Other,
 }
 
-/// A relation's value: its expression, or anything else, read no further.
+/// A relation's value: its expression, its object of constraints and
+/// expression or the error that refuses that object, or anything else, read
+/// no further.
 enum Leaf<'a> {
     Text(Text<'a>),
+    Object(Result<Declaration<'a>, ErrorKind>),
     Other,
 }
+
+/// A relation's object: its expression, `this` when it's left out, and its
+/// constraints, `None` when they're left out.
+struct Declaration<'a> {
+    rewrite: Option<Text<'a>>,
+    constraints: Option<Vec<Text<'a>>>,
+}
+
+/// A string, or `None` for any other value, read no further.
+struct Scalar<'a>(Option<Text<'a>>);
+
+/// An array of strings, `None` for any other value or an array holding
+/// anything but strings.
+struct Strings<'a>(Option<Vec<Text<'a>>>);
 
 /// A document: namespaces, each an object of relations, each a [`Leaf`].
 type Document<'a> = Json<'a, Json<'a, Leaf<'a>>>;
@@ -545,12 +567,139 @@ impl<'de> Visitor<'de> for LeafVisitor {
         Ok(Leaf::Text(Text::Escaped(text.to_owned())))
     }
 
+    /// Reads the whole object, keeping the first problem found in it.
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
-        while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
-        Ok(Leaf::Other)
+        let (mut rewrite, mut constraints) = (None, None);
+        let mut problem = None;
+        let mut fail = |kind| {
+            problem.get_or_insert(kind);
+        };
+        while let Some(key) = map.next_key::<Text<'de>>()? {
+            match key {
+                Text::Plain("rewrite") => match map.next_value::<Scalar<'de>>()?.0 {
+                    _ if rewrite.is_some() => fail(ErrorKind::DuplicateKey("rewrite".to_owned())),
+                    Some(text) => rewrite = Some(text),
+                    None => fail(ErrorKind::NotAnExpression),
+                },
+                Text::Plain("constraints") => match map.next_value::<Strings<'de>>()?.0 {
+                    _ if constraints.is_some() => {
+                        fail(ErrorKind::DuplicateKey("constraints".to_owned()));
+                    }
+                    Some(texts) if !texts.is_empty() => constraints = Some(texts),
+                    _ => fail(ErrorKind::NotConstraints),
+                },
+                Text::Plain(key) => {
+                    map.next_value::<IgnoredAny>()?;
+                    fail(ErrorKind::UnknownKey(quote(key)));
+                }
+                Text::Escaped(key) => {
+                    map.next_value::<IgnoredAny>()?;
+                    fail(ErrorKind::Escape(quote(&key)));
+                }
+            }
+        }
+        if rewrite.is_none() && constraints.is_none() {
+            fail(ErrorKind::NotAnExpression);
+        }
+        Ok(Leaf::Object(match problem {
+            Some(kind) => Err(kind),
+            None => Ok(Declaration {
+                rewrite,
+                constraints,
+            }),
+        }))
     }
 
     any_value!(Leaf<'de>, Leaf::Other);
+}
+
+struct ScalarVisitor;
+
+impl<'de> Visitor<'de> for ScalarVisitor {
+    type Value = Scalar<'de>;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("any JSON value")
+    }
+
+    fn visit_borrowed_str<E: de::Error>(self, text: &'de str) -> Result<Self::Value, E> {
+        Ok(Scalar(Some(Text::Plain(text))))
+    }
+
+    fn visit_str<E: de::Error>(self, text: &str) -> Result<Self::Value, E> {
+        Ok(Scalar(Some(Text::Escaped(text.to_owned()))))
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+        Ok(Scalar(None))
+    }
+
+    any_value!(Scalar<'de>, Scalar(None));
+}
+
+impl<'de> Deserialize<'de> for Scalar<'de> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(ScalarVisitor)
+    }
+}
+
+struct StringsVisitor;
+
+impl<'de> Visitor<'de> for StringsVisitor {
+    type Value = Strings<'de>;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("any JSON value")
+    }
+
+    fn visit_str<E: de::Error>(self, _: &str) -> Result<Self::Value, E> {
+        Ok(Strings(None))
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+        Ok(Strings(None))
+    }
+
+    /// Reads every element, so the array is consumed whole whatever it
+    /// holds.
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        let mut texts = Some(Vec::new());
+        while let Some(Scalar(element)) = seq.next_element::<Scalar<'de>>()? {
+            match (element, &mut texts) {
+                (Some(text), Some(texts)) => texts.push(text),
+                _ => texts = None,
+            }
+        }
+        Ok(Strings(texts))
+    }
+
+    fn visit_bool<E: de::Error>(self, _: bool) -> Result<Self::Value, E> {
+        Ok(Strings(None))
+    }
+
+    fn visit_i64<E: de::Error>(self, _: i64) -> Result<Self::Value, E> {
+        Ok(Strings(None))
+    }
+
+    fn visit_u64<E: de::Error>(self, _: u64) -> Result<Self::Value, E> {
+        Ok(Strings(None))
+    }
+
+    fn visit_f64<E: de::Error>(self, _: f64) -> Result<Self::Value, E> {
+        Ok(Strings(None))
+    }
+
+    fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+        Ok(Strings(None))
+    }
+}
+
+impl<'de> Deserialize<'de> for Strings<'de> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(StringsVisitor)
+    }
 }
 
 impl<'de> Deserialize<'de> for Leaf<'de> {
@@ -604,7 +753,7 @@ impl Lexeme<'_> {
     }
 }
 
-/// What is being lexed: one expression from a JSON or TOML string, or a
+/// What is being lexed: one expression from a JSON string, or a
 /// whole document in Sungma schema language, which has lines and comments.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Mode {
@@ -865,8 +1014,7 @@ pub(crate) fn relation(lexeme: Lexeme<'_>) -> Result<RelationName, Failure> {
         .map_err(|error| (Some(lexeme.place), ErrorKind::Name(error)))
 }
 
-/// Why [`print()`] or [`print_toml`] refused a namespace: no document can
-/// declare it.
+/// Why [`print()`] refused a namespace: no document can declare it.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum PrintError {
     /// A name made with `new_unchecked` that breaks the grammar, such as
@@ -888,16 +1036,36 @@ pub enum PrintError {
 }
 
 /// Writes a namespace as a document that [`parse`] reads back as an equal
-/// namespace: relations sorted by name, two-space indents, `\n` line ends.
-pub fn print(
-    namespace: &NamespaceName,
-    relations: &Namespace<RelationName>,
-) -> Result<String, PrintError> {
+/// namespace: relations sorted by name, two-space indents, `\n` line ends. A
+/// computed relation is its expression; a relation with constraints is an
+/// object of its `rewrite`, left out when it's `this`, and its
+/// `constraints`, sorted, comparing bytes.
+pub fn print(namespace: &NamespaceName, relations: &Named) -> Result<String, PrintError> {
     let relations = printed(namespace, relations)?;
     let mut text = format!("{{\n  \"{namespace}\": {{");
-    for (i, (name, expression)) in relations.iter().enumerate() {
+    for (i, relation) in relations.iter().enumerate() {
         let separator = if i == 0 { "\n" } else { ",\n" };
-        let _ = write!(text, "{separator}    \"{name}\": \"{expression}\"");
+        let (name, expression) = (relation.name, &relation.expression);
+        if relation.constraints.is_empty() {
+            let _ = write!(text, "{separator}    \"{name}\": \"{expression}\"");
+            continue;
+        }
+        let _ = writeln!(text, "{separator}    \"{name}\": {{");
+        if expression != "this" {
+            let _ = writeln!(text, "      \"rewrite\": \"{expression}\",");
+        }
+        let mut constraints: Vec<_> = relation
+            .constraints
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        constraints.sort();
+        let constraints: Vec<_> = constraints.iter().map(|c| format!("\"{c}\"")).collect();
+        let _ = write!(
+            text,
+            "      \"constraints\": [{}]\n    }}",
+            constraints.join(", ")
+        );
     }
     if relations.is_empty() {
         text.push_str("}\n}\n");
@@ -907,43 +1075,53 @@ pub fn print(
     Ok(text)
 }
 
-/// Writes a namespace as a TOML document that [`parse_toml`] reads back as
-/// an equal namespace: a header, quoted if the name is dotted, then one key
-/// per relation, sorted by name, with `\n` line ends.
-pub fn print_toml(
-    namespace: &NamespaceName,
-    relations: &Namespace<RelationName>,
-) -> Result<String, PrintError> {
-    let relations = printed(namespace, relations)?;
-    let mut text = if namespace.as_str().contains('.') {
-        format!("[\"{namespace}\"]\n")
-    } else {
-        format!("[{namespace}]\n")
-    };
-    for (name, expression) in relations {
-        let _ = writeln!(text, "{name} = \"{expression}\"");
-    }
-    Ok(text)
+/// A relation as a printer writes it.
+pub(crate) struct Printed<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) expression: String,
+    /// In declaration order; each printer sorts them as it writes them.
+    pub(crate) constraints: &'a [NamedConstraint],
 }
 
-/// A namespace's relations sorted by name, each with its expression, once
-/// every name is one a document can declare.
+/// A namespace's relations sorted by name, each with its expression and its
+/// constraints, once every name is one a document can declare.
 pub(crate) fn printed<'a>(
     namespace: &NamespaceName,
-    relations: &'a Namespace<RelationName>,
-) -> Result<Vec<(&'a str, String)>, PrintError> {
-    namespace.as_str().parse::<NamespaceName>()?;
-    let mut relations: Vec<_> = relations.relations().collect();
-    relations.sort_by_key(|(name, _)| *name);
-    relations
+    relations: &'a Named,
+) -> Result<Vec<Printed<'a>>, PrintError> {
+    namespace_name(namespace.as_str())?;
+    let mut sorted: Vec<_> = relations.relations().collect();
+    sorted.sort_by_key(|(name, _)| *name);
+    sorted
         .into_iter()
         .map(|(name, rewrite)| {
+            let constraints = relations.constraints(name);
+            for constraint in constraints {
+                printable_constraint(constraint)?;
+            }
             let name = printable(name)?;
             let mut text = String::new();
             expression(&mut text, rewrite)?;
-            Ok((name, text))
+            Ok(Printed {
+                name,
+                expression: text,
+                constraints,
+            })
         })
         .collect()
+}
+
+/// Refuses a constraint a document can't write, one whose names break the
+/// grammar or that names a namespace `identity`.
+fn printable_constraint(constraint: &NamedConstraint) -> Result<(), NameError> {
+    match constraint {
+        Constraint::Identity => Ok(()),
+        Constraint::Resource(namespace) => namespace_name(namespace.as_str()).map(drop),
+        Constraint::Subjectset(namespace, relation) => {
+            namespace_name(namespace.as_str())?;
+            printable(relation).map(drop)
+        }
+    }
 }
 
 fn expression(text: &mut String, rewrite: &Rewrite<RelationName>) -> Result<(), PrintError> {
@@ -1016,29 +1194,4 @@ fn grouped(
         expression(text, rewrite)?;
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Text, toml_text};
-
-    #[test]
-    fn a_key_with_no_span_is_refused_as_escaped() {
-        let key = toml_edit::Key::new("viewer");
-        assert!(key.span().is_none());
-        assert!(matches!(
-            toml_text("", key.get(), key.span()),
-            Text::Escaped(_)
-        ));
-    }
-
-    #[test]
-    fn a_string_with_no_span_is_refused_as_escaped() {
-        let string = toml_edit::Formatted::new("viewer".to_owned());
-        assert!(string.span().is_none());
-        assert!(matches!(
-            toml_text("", string.value(), string.span()),
-            Text::Escaped(_)
-        ));
-    }
 }

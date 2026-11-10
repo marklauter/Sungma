@@ -33,14 +33,20 @@ use sungma_table::read::{Consistency, ItemReader};
 /// Reads a stored namespace document back as a namespace with names.
 /// Injected, so Check needn't know the document language.
 pub trait Parser {
-    fn parse(&self, document: &str) -> Result<(NamespaceName, Namespace<RelationName>), String>;
+    fn parse(
+        &self,
+        document: &str,
+    ) -> Result<(NamespaceName, Namespace<RelationName, NamespaceName>), String>;
 }
 
 impl<F> Parser for F
 where
-    F: Fn(&str) -> Result<(NamespaceName, Namespace<RelationName>), String>,
+    F: Fn(&str) -> Result<(NamespaceName, Namespace<RelationName, NamespaceName>), String>,
 {
-    fn parse(&self, document: &str) -> Result<(NamespaceName, Namespace<RelationName>), String> {
+    fn parse(
+        &self,
+        document: &str,
+    ) -> Result<(NamespaceName, Namespace<RelationName, NamespaceName>), String> {
         self(document)
     }
 }
@@ -171,24 +177,47 @@ where
             .map_err(|error| StoreError(format!("a stored document is refused: {error}")))?;
         let mut ids = HashMap::new();
         for name in relations.names() {
-            let mut id = self.names.id(Pool::Relations, name.as_str()).await?;
-            // Names are stored before the versions that use them, so a name
-            // an eventual read misses is read again strongly.
-            if id.is_none() {
-                let strong = NameRows::new(&self.items, Consistency::Strong);
-                id = strong.id(Pool::Relations, name.as_str()).await?;
-            }
-            let id = id.ok_or_else(|| StoreError(format!("relation '{name}' isn't interned")))?;
+            let id = self.id(Pool::Relations, name.as_str()).await?;
             ids.insert(name.clone(), RelationId(id));
         }
+        let mut namespace_ids = HashMap::new();
+        for name in relations.namespaces() {
+            let id = self.id(Pool::Namespaces, name.as_str()).await?;
+            namespace_ids.insert(name.clone(), NamespaceId(id));
+        }
         let namespace = relations
-            .try_map(|name| {
-                ids.get(name)
-                    .copied()
-                    .ok_or_else(|| Unknown(StoreError(format!("relation '{name}' isn't interned"))))
-            })
+            .try_map(
+                |name| {
+                    ids.get(name).copied().ok_or_else(|| {
+                        Unknown(StoreError(format!("relation '{name}' isn't interned")))
+                    })
+                },
+                |name| {
+                    namespace_ids.get(name).copied().ok_or_else(|| {
+                        Unknown(StoreError(format!("namespace '{name}' isn't interned")))
+                    })
+                },
+            )
             .map_err(|Unknown(error)| error)?;
         Version::stored(namespace, revision, epochs).map_err(|error| StoreError(error.to_string()))
+    }
+}
+
+impl<R, N, P> RowReader<R, N, P>
+where
+    R: ItemReader + Sync,
+    N: NameReader + Sync,
+{
+    /// The id of a name in `pool`. Names are stored before the versions that
+    /// use them, so a name an eventual read misses is read again strongly,
+    /// and one still missing has failed.
+    async fn id(&self, pool: Pool, name: &str) -> Result<u32, StoreError> {
+        let mut id = self.names.id(pool, name).await?;
+        if id.is_none() {
+            let strong = NameRows::new(&self.items, Consistency::Strong);
+            id = strong.id(pool, name).await?;
+        }
+        id.ok_or_else(|| StoreError(format!("{pool:?} name '{name}' isn't interned")))
     }
 }
 
@@ -210,6 +239,7 @@ where
             revision: opened,
             document,
             epochs,
+            ..
         } = entry
         else {
             return Ok(None);

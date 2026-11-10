@@ -17,8 +17,6 @@
   { "namespace": "folder", "resource": "loop_a", "relation": "parent", "subject": { "namespace": "folder", "resource": "loop_b" } },
   { "namespace": "folder", "resource": "loop_b", "relation": "parent", "subject": { "namespace": "folder", "resource": "loop_a" } },
 
-  { "namespace": "file", "resource": "stray.md", "relation": "parent", "subject": { "namespace": "group", "resource": "eng" } },
-
   { "namespace": "file", "resource": "notes.md", "relation": "parent", "subject": { "namespace": "folder", "resource": "specs", "relation": "owner" } },
   { "namespace": "file", "resource": "notes.md", "relation": "parent", "subject": { "identity": "frank" } }
 ]

@@ -1,16 +1,20 @@
 //! Namespace rows. A namespace is its partition; under it, each entry has
 //! a row keyed by the revision it opens at, and a latest row, which sorts
 //! first, copies the newest entry. A version's row holds the printed
-//! document with names, the canonical form, and the epoch of each relation
-//! it declares, keyed by relation id. A retirement's row is marked retired.
+//! document with names, the canonical form, the epoch of each relation it
+//! declares, keyed by relation id, and the constraints of each relation
+//! that has any, keyed by relation id, each written with ids as a document
+//! writes it with names: `identity`, `7` or `7#12`. A retirement's row is
+//! marked retired.
 
 use std::collections::{BTreeMap, HashMap};
 
 use sungma::{
     id::{NamespaceId, RelationId},
+    namespace::Constraint,
     revision::Revision,
     store::StoreError,
-    version::Epochs,
+    version::{Constraints, Epochs},
 };
 use sungma_table::{
     item::{Item, Value},
@@ -27,6 +31,7 @@ const ENTRY: u8 = 1;
 const REVISION: &str = "revision";
 const DOCUMENT: &str = "document";
 const EPOCHS: &str = "epochs";
+const CONSTRAINTS: &str = "constraints";
 const RETIRED: &str = "retired";
 
 pub fn partition(namespace: NamespaceId) -> Vec<u8> {
@@ -55,6 +60,7 @@ pub enum Entry {
         /// The printed document, with names.
         document: String,
         epochs: Epochs,
+        constraints: Constraints,
     },
     Retired {
         revision: Revision,
@@ -77,19 +83,41 @@ impl Entry {
         }
     }
 
+    /// The constraints of a version, `None` for a retirement.
+    pub fn constraints(&self) -> Option<&Constraints> {
+        match self {
+            Entry::Version { constraints, .. } => Some(constraints),
+            Entry::Retired { .. } => None,
+        }
+    }
+
     fn item(&self) -> Item {
         let item = Item::new().with(REVISION, Value::Number(self.revision().0));
         match self {
             Entry::Retired { .. } => item.with(RETIRED, Value::Flag(true)),
             Entry::Version {
-                document, epochs, ..
+                document,
+                epochs,
+                constraints,
+                ..
             } => {
                 let epochs: BTreeMap<String, Value> = epochs
                     .iter()
                     .map(|(relation, epoch)| (relation.0.to_string(), Value::Number(epoch.0)))
                     .collect();
+                let constraints: BTreeMap<String, Value> = constraints
+                    .iter()
+                    .map(|(relation, constraints)| {
+                        let set = constraints
+                            .iter()
+                            .map(|constraint| (constraint.to_string(), Value::Flag(true)))
+                            .collect();
+                        (relation.0.to_string(), Value::Map(set))
+                    })
+                    .collect();
                 item.with(DOCUMENT, Value::Text(document.clone()))
                     .with(EPOCHS, Value::Map(epochs))
+                    .with(CONSTRAINTS, Value::Map(constraints))
             }
         }
     }
@@ -113,12 +141,45 @@ impl Entry {
             };
             epochs.insert(RelationId(relation), Revision(*epoch));
         }
+        let mut constraints = HashMap::new();
+        for (relation, set) in item.required_map(CONSTRAINTS).map_err(failed)? {
+            let id = relation.parse().map_err(|_| {
+                StoreError(format!("constraints of '{relation}', not a relation id"))
+            })?;
+            let Value::Map(set) = set else {
+                return Err(StoreError(format!(
+                    "the constraints of {relation} aren't a map"
+                )));
+            };
+            let set = set
+                .keys()
+                .map(|constraint| stored_constraint(constraint))
+                .collect::<Result<_, _>>()?;
+            constraints.insert(RelationId(id), set);
+        }
         Ok(Entry::Version {
             revision,
             document,
             epochs: Epochs::new(epochs),
+            constraints: Constraints::new(constraints),
         })
     }
+}
+
+/// A constraint as a row writes it with ids, refused when Sungma didn't
+/// write it.
+fn stored_constraint(text: &str) -> Result<Constraint, StoreError> {
+    let id = |text: &str| {
+        text.parse::<u32>()
+            .map_err(|_| StoreError(format!("'{text}' in a constraint isn't an id")))
+    };
+    Ok(match text.split_once('#') {
+        _ if text == "identity" => Constraint::Identity,
+        None => Constraint::Resource(NamespaceId(id(text)?)),
+        Some((namespace, relation)) => {
+            Constraint::Subjectset(NamespaceId(id(namespace)?), RelationId(id(relation)?))
+        }
+    })
 }
 
 /// The namespace's newest entry, `None` when it was never written. A read
@@ -194,7 +255,7 @@ pub fn written(namespace: NamespaceId, seen: Option<&Entry>, entry: &Entry) -> [
         None => Step::Insert { key, item },
         Some(seen) => Step::Update {
             key,
-            remove: [DOCUMENT, EPOCHS, RETIRED]
+            remove: [DOCUMENT, EPOCHS, CONSTRAINTS, RETIRED]
                 .into_iter()
                 .filter(|name| item.get(name).is_none())
                 .map(str::to_owned)

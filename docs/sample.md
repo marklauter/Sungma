@@ -1,31 +1,31 @@
 # Sample
 
-Three namespaces for documents: files sit in folders, folders sit in folders, and groups hold members. Each is a namespace document:
+Three namespaces for documents: groups hold members, folders sit in folders, and files sit in folders. Each is a namespace document, written in this order, since each names the ones before it:
 
 ```json
 {
-  "file": {
-    "auditor": "this & viewer",
-    "banned": "this",
-    "editor": "this | owner",
-    "owner": "this",
-    "parent": "this",
-    "viewer": "(this | editor | (parent, viewer)) ! banned"
+  "group": {
+    "member": { "constraints": ["group#member", "identity"] }
   }
 }
 
 {
   "folder": {
-    "banned": "this",
-    "owner": "this",
-    "parent": "this",
-    "viewer": "(this | (parent, viewer)) ! banned"
+    "banned": { "constraints": ["group#member", "identity"] },
+    "owner": { "constraints": ["identity"] },
+    "parent": { "constraints": ["folder"] },
+    "viewer": { "rewrite": "(this | (parent, viewer)) ! banned", "constraints": ["group#member", "identity"] }
   }
 }
 
 {
-  "group": {
-    "member": "this"
+  "file": {
+    "auditor": { "rewrite": "this & viewer", "constraints": ["identity"] },
+    "banned": { "constraints": ["identity"] },
+    "editor": { "rewrite": "this | owner", "constraints": ["group#member", "identity"] },
+    "owner": { "constraints": ["identity"] },
+    "parent": { "constraints": ["folder", "folder#owner", "identity"] },
+    "viewer": { "rewrite": "(this | editor | (parent, viewer)) ! banned", "constraints": ["group#member", "identity"] }
   }
 }
 ```

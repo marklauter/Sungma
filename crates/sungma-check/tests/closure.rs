@@ -24,7 +24,21 @@ use sungma_check::{
     store::NamespaceReader,
 };
 use sungma_names::store::Pool;
+use sungma_write::store::{NamespaceWrite, NamespaceWriter};
 use world::{World, head, identity, subjectset, world};
+
+/// Retires `namespace`'s latest version.
+async fn retire(world: &World, namespace: &str) {
+    let id = NamespaceId(world.intern(Pool::Namespaces, namespace).await);
+    let based_on = world.latest(id).await.unwrap().revision();
+    let retire = NamespaceWrite::Retire { based_on };
+    world
+        .node()
+        .writer()
+        .write_namespace(id, retire)
+        .await
+        .unwrap();
+}
 
 /// Whether an identity is in the closure of `namespace:id#relation` at `revision`.
 async fn check_at(
@@ -263,9 +277,33 @@ async fn passing_the_depth_limit_ends_the_check() {
     assert!(chain(MAX_DEPTH, &holds).await.unwrap());
 }
 
+/// A namespace a parent may name, checked to declare `viewer` when `file`
+/// was written, can lose it later: a namespace write checks only its own
+/// references.
 #[tokio::test]
 async fn late_bound_relation_missing_on_target_is_empty() {
     let world = world().await;
+    world
+        .declare("group", "viewer", This, &["identity"])
+        .await
+        .unwrap();
+    let parents = ["folder", "folder#owner", "group", "identity"];
+    world
+        .declare("file", "parent", This, &parents)
+        .await
+        .unwrap();
+    let facts = r#"[
+        { "namespace": "file", "resource": "stray.md", "relation": "parent", "subject": { "namespace": "group", "resource": "eng" } },
+        { "namespace": "group", "resource": "eng", "relation": "viewer", "subject": { "identity": "alice" } }
+    ]"#;
+    world.load_facts(facts).await.unwrap();
+    assert!(
+        check(&world, "file:stray.md#viewer", "alice")
+            .await
+            .unwrap()
+    );
+    // `group` drops `viewer`, keeping `member`, which `folder` names.
+    world.undeclare("group", "viewer").await.unwrap();
     assert!(
         !check(&world, "file:stray.md#viewer", "alice")
             .await
@@ -276,11 +314,20 @@ async fn late_bound_relation_missing_on_target_is_empty() {
 #[tokio::test]
 async fn a_parent_of_an_undeclared_namespace_is_empty() {
     let world = world().await;
-    // `ghost` is a known name that no version declares, as for a retired
-    // namespace.
-    world.intern(Pool::Namespaces, "ghost").await;
+    // `ghost` declares `viewer` when the parent fact is written, then is
+    // retired, so no version declares anything.
+    world
+        .declare("ghost", "viewer", This, &["identity"])
+        .await
+        .unwrap();
+    let parents = ["folder", "folder#owner", "ghost", "identity"];
+    world
+        .declare("file", "parent", This, &parents)
+        .await
+        .unwrap();
     let fact = r#"[{ "namespace": "file", "resource": "haunted.md", "relation": "parent", "subject": { "namespace": "ghost", "resource": "attic" } }]"#;
     world.load_facts(fact).await.unwrap();
+    retire(&world, "ghost").await;
     assert!(
         !check(&world, "file:haunted.md#viewer", "alice")
             .await
@@ -404,7 +451,8 @@ fn reordered(version: &Version, namespace: NamespaceId, seed: u64) -> Arc<Versio
         .relations()
         .map(|(relation, rewrite)| {
             let mut seed = seed_for(seed, (namespace, *relation));
-            (*relation, shuffled(rewrite, &mut seed))
+            let constraints = version.namespace().constraints(relation).to_vec();
+            (*relation, shuffled(rewrite, &mut seed), constraints)
         })
         .collect();
     let namespace: Namespace = Namespace::new(relations).unwrap();
@@ -607,7 +655,10 @@ async fn a_store_error_anywhere_in_the_tree_fails_expand() {
     // The docs namespaces exclude only computed subjectsets, which expand
     // leaves as references without a read.
     let unowned = Exclusion(Box::new(Computed("owner")), Box::new(This));
-    world.declare("file", "unowned", unowned).await.unwrap();
+    world
+        .declare("file", "unowned", unowned, &["identity"])
+        .await
+        .unwrap();
     let cases = [
         (
             "file:design.md#viewer",

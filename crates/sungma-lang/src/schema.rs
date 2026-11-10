@@ -5,37 +5,50 @@
 //! theory: io
 //!
 //! namespace: file
-//!   owner = this
-//!   parent = this
-//!   viewer = this | owner | (parent, viewer)
+//!   owner: identity
+//!   parent: folder
+//!   editor: identity, group#member = this | owner
+//!   viewer = editor | (parent, viewer)
 //! ```
 //!
-//! A relation is its name, `=` and its rewrite, which may wrap over as many
-//! lines as it needs: line breaks only separate tokens. A theory name, when
-//! there is one, prefixes each namespace's name. Accepted subjects, written
-//! `owner: identity`, come with accepted subjects in the namespace model.
+//! A relation reads like a signature: its name, a colon and its
+//! constraints, then `=` and its rewrite, which may wrap over as many lines
+//! as it needs: line breaks only separate tokens. A relation with
+//! constraints and no `=` reads `this`, and one with `=` and no constraints
+//! is computed. A theory name, when there is one, prefixes each namespace's
+//! name and the namespace part of each constraint but `identity`.
+//!
+//! A name followed by `:` or `=` starts a relation, except within a
+//! constraint list, where a constraint may be followed by its relation's
+//! `=`, as `member` is in `owner: group#member = this`. `namespace` and
+//! `theory` are reserved relation names, so `namespace:` always opens a
+//! namespace.
 //!
 //! The rewrite grammar, the namespace checks, the limits and the error kinds
 //! are those of [namespace documents](crate::namespace). The expression limit
 //! holds for a relation's rule as written, from its first token to its last.
 //! A namespace name that already starts with the theory's name and a dot is
 //! taken as written in full.
+//!
+//! A reference from one namespace to another in the document, through a
+//! constraint or a fact-to-subjectset, is checked against the document. A
+//! reference to a namespace outside it is left to the namespace write.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use thiserror::Error;
 
 use sungma::{
-    name::{NamespaceName, RelationName, quote},
-    namespace::{Namespace, Problem},
+    name::{NameError, NamespaceName, RelationName, quote},
+    namespace::{Constraint, Namespace, Problem},
     rewrite::Rewrite,
 };
 
 use crate::namespace::{
-    ErrorKind, Failure, Lexeme, MAX_DOCUMENT_BYTES, MAX_ERRORS, MAX_EXPRESSION_BYTES,
-    MAX_RELATIONS, Mode, NamespaceDocument, Parser, Place, PrintError, Token, lex, printed, quoted,
-    relation, syntax,
+    ErrorKind, Failure, IDENTITY, Lexeme, MAX_DOCUMENT_BYTES, MAX_ERRORS, MAX_EXPRESSION_BYTES,
+    MAX_RELATIONS, Mode, Named, NamedConstraint, NamespaceDocument, Parser, Place, PrintError,
+    Token, constraint, lex, namespace_name, printed, quoted, relation, syntax,
 };
 
 /// A problem in a schema document, with the namespace and relation it was
@@ -69,6 +82,8 @@ impl SchemaError {
 
 const NAMESPACE_OR_END: &str = "'namespace:' or the end";
 const RELATION: &str = "a relation, 'namespace:' or the end";
+const CONSTRAINT: &str = "a constraint";
+const AFTER_CONSTRAINTS: &str = "',', '=', a relation, 'namespace:' or the end";
 
 /// Parses and checks a document in Sungma schema language, as the
 /// [module](self) describes, into its namespaces under their full names.
@@ -146,18 +161,38 @@ impl<'a> Reader<'_, 'a> {
         self.relation_at(self.at)
     }
 
-    /// Whether a relation starts at lexeme `at`.
+    /// Whether a relation starts at lexeme `at`: a name followed by `=` or
+    /// `:`.
     fn relation_at(&self, at: usize) -> bool {
         matches!(self.lexemes[at].token, Token::Name | Token::This)
             && matches!(self.token(at + 1), Token::Equals | Token::Colon)
     }
 
+    /// Whether lexeme `at` continues a constraint list: it follows a comma,
+    /// a relation's colon, or, with no space between, the `#` or `.` of a
+    /// constraint. A colon after `namespace` or `theory` is a header's.
+    fn in_constraints(&self, at: usize) -> bool {
+        let Some(before) = at.checked_sub(1).map(|before| self.lexemes[before]) else {
+            return false;
+        };
+        match before.token {
+            Token::Comma => true,
+            Token::Colon => !at
+                .checked_sub(2)
+                .is_some_and(|header| matches!(self.lexemes[header].text, "namespace" | "theory")),
+            Token::Unknown => before.end == self.lexemes[at].start,
+            _ => false,
+        }
+    }
+
     /// How many relations the namespace whose relations start next
-    /// declares, counted without reading them.
+    /// declares, counted without reading them. A name in a constraint list
+    /// followed by `=`, as `identity` is in `owner: identity = this`, isn't
+    /// counted.
     fn declarations(&self) -> usize {
         (self.at..self.lexemes.len())
             .take_while(|&at| self.token(at) != Token::End && !self.keyword_at(at, "namespace"))
-            .filter(|&at| self.relation_at(at))
+            .filter(|&at| self.relation_at(at) && !self.in_constraints(at))
             .count()
     }
 
@@ -186,6 +221,17 @@ impl<'a> Reader<'_, 'a> {
         self.skip_until(Self::at_boundary);
     }
 
+    /// Whether what comes next ends a constraint list that failed: the end,
+    /// or a relation outside the list. Within it, a name followed by `=` is
+    /// a constraint before its relation's rewrite, as `member` is in
+    /// `editor: !, group#member = this`; a name followed by `:` always
+    /// starts a relation.
+    fn at_constraints_boundary(&self) -> bool {
+        self.token(self.at) == Token::End
+            || (self.at_relation()
+                && (self.token(self.at + 1) == Token::Colon || !self.in_constraints(self.at)))
+    }
+
     /// Skips lexemes until `stop` holds or the end. The end bounds the loop
     /// whatever `stop` says.
     fn skip_until(&mut self, stop: fn(&Self) -> bool) {
@@ -201,14 +247,16 @@ impl<'a> Reader<'_, 'a> {
 
     fn document(&mut self) -> Vec<NamespaceDocument> {
         // A theory name that fails prefixes nothing, so it's reported once.
+        // A theory only prefixes names, so it may be called `identity`; a
+        // namespace may not, as in a namespace document.
         let theory = if self.at_keyword("theory") {
             self.next();
             self.next();
-            self.namespace_name(None).ok()
+            self.namespace_name(None, str::parse).ok()
         } else {
             None
         };
-        let mut namespaces = Vec::new();
+        let mut namespaces: Vec<(NamespaceDocument, Vec<Place>)> = Vec::new();
         let mut seen = HashSet::new();
         // Each pass reads at least one lexeme, so the lexemes bound the passes
         // however the conditions inside read.
@@ -218,7 +266,7 @@ impl<'a> Reader<'_, 'a> {
                 self.next();
                 // A name that fails is reported once, and isn't a duplicate
                 // of another that fails.
-                let name = match self.namespace_name(theory.as_ref()) {
+                let name = match self.namespace_name(theory.as_ref(), namespace_name) {
                     Ok(name) => {
                         if !seen.insert(name.clone()) {
                             let kind = ErrorKind::DuplicateNamespace(quote(name.as_str()));
@@ -228,11 +276,12 @@ impl<'a> Reader<'_, 'a> {
                     }
                     Err(name) => name,
                 };
-                if let Some(relations) = self.relations(&name, place) {
-                    namespaces.push(NamespaceDocument {
+                if let Some((relations, places)) = self.relations(&name, place, theory.as_ref()) {
+                    let document = NamespaceDocument {
                         namespace: name,
                         relations,
-                    });
+                    };
+                    namespaces.push((document, places));
                 }
                 // Every error from here on comes later in the document than
                 // those already found, so once they pass the cap, reading on
@@ -252,16 +301,46 @@ impl<'a> Reader<'_, 'a> {
             let place = Some(self.peek().place);
             self.push(None, None, (place, ErrorKind::NoNamespace));
         }
+        self.references(&namespaces);
         namespaces
+            .into_iter()
+            .map(|(document, _)| document)
+            .collect()
+    }
+
+    /// Checks each reference from one namespace to another against the
+    /// document. A namespace outside it is left to the namespace write.
+    fn references(&mut self, namespaces: &[(NamespaceDocument, Vec<Place>)]) {
+        let mut declared = HashMap::new();
+        for (document, _) in namespaces {
+            declared
+                .entry(&document.namespace)
+                .or_insert(&document.relations);
+        }
+        for (document, places) in namespaces {
+            let (own, relations) = (&document.namespace, &document.relations);
+            let problems = relations.references(own, |namespace, relation| {
+                declared
+                    .get(namespace)
+                    .map(|relations| relations.rewrite(relation).is_some())
+            });
+            let names: Vec<_> = relations.relations().map(|(name, _)| name).collect();
+            for Problem { at, error } in problems {
+                let kind = ErrorKind::Namespace(quoted(error));
+                let failure = (Some(places[at]), kind);
+                self.push(Some(own), Some(names[at].as_str()), failure);
+            }
+        }
     }
 
     /// A namespace name, its segments written without spaces between them,
     /// with the theory's name before it unless it's written in full. A name
-    /// that fails is reported, and kept, unchecked, as the error, for the
-    /// checks that follow; the document is refused, so it never leaves.
+    /// that fails `check` is reported, and kept, unchecked, as the error, for
+    /// the checks that follow; the document is refused, so it never leaves.
     fn namespace_name(
         &mut self,
         theory: Option<&NamespaceName>,
+        check: fn(&str) -> Result<NamespaceName, NameError>,
     ) -> Result<NamespaceName, NamespaceName> {
         const EXPECTED: &str = "a namespace name";
         let first = self.peek();
@@ -292,20 +371,22 @@ impl<'a> Reader<'_, 'a> {
             }
             _ => written.to_owned(),
         };
-        name.parse().map_err(|error| {
+        check(&name).map_err(|error| {
             self.push(None, None, (Some(first.place), ErrorKind::Name(error)));
             NamespaceName::new_unchecked(name)
         })
     }
 
     /// A namespace's relations, up to the next namespace or the end, checked
-    /// whole, or `None` when the checks refuse it. Any error refuses the whole
-    /// document, so a namespace returned beside one never leaves.
+    /// whole, with the place of each, or `None` when the checks refuse it.
+    /// Any error refuses the whole document, so a namespace returned beside
+    /// one never leaves.
     fn relations(
         &mut self,
         namespace: &NamespaceName,
         header: Place,
-    ) -> Option<Namespace<RelationName>> {
+        theory: Option<&NamespaceName>,
+    ) -> Option<(Named, Vec<Place>)> {
         // Every declaration counts, a relation declared twice included, and
         // nothing past the limit is read, so a hostile namespace costs no
         // more than one pass over it.
@@ -334,13 +415,47 @@ impl<'a> Reader<'_, 'a> {
                 self.push(Some(namespace), Some(lexeme.text), failure);
                 RelationName::new_unchecked(lexeme.text)
             });
-            let rewrite = self.rewrite(namespace, &name);
+            let (constraints, failed) = if self.peek().token == Token::Colon {
+                self.next();
+                self.constraints(namespace, &name, theory)
+            } else {
+                (Vec::new(), false)
+            };
+            let (rewrite, failed) = match self.peek().token {
+                Token::Equals => {
+                    self.next();
+                    let rewrite = self.rewrite(namespace, &name);
+                    let failed = failed || rewrite.is_none();
+                    (rewrite.unwrap_or(Rewrite::This), failed)
+                }
+                _ if self.at_boundary() || self.at_keyword("namespace") => (Rewrite::This, failed),
+                _ => {
+                    let failure = syntax(self.next(), AFTER_CONSTRAINTS);
+                    self.push(Some(namespace), Some(name.as_str()), failure);
+                    self.recover();
+                    (Rewrite::This, true)
+                }
+            };
+            // A relation that fails is still declared, as `this` taking
+            // identities when nothing else is left, so the namespace reports
+            // nothing more about it.
+            let mut constraints = constraints;
+            if failed && constraints.is_empty() {
+                constraints.push(Constraint::Identity);
+            }
             places.push(lexeme.place);
-            relations.push((name, rewrite));
+            relations.push((name, rewrite, constraints));
         }
-        let names: Vec<_> = relations.iter().map(|(name, _)| name.clone()).collect();
+        // The count above leaves out names a constraint list could hold, so
+        // the relations read are held to the limit too.
+        if relations.len() > MAX_RELATIONS {
+            let kind = ErrorKind::TooManyRelations(relations.len());
+            self.push(Some(namespace), None, (Some(header), kind));
+            return None;
+        }
+        let names: Vec<_> = relations.iter().map(|(name, ..)| name.clone()).collect();
         match Namespace::new(relations) {
-            Ok(relations) => Some(relations),
+            Ok(relations) => Some((relations, places)),
             Err(problems) => {
                 for Problem { at, error } in problems {
                     let kind = ErrorKind::Namespace(quoted(error));
@@ -352,17 +467,86 @@ impl<'a> Reader<'_, 'a> {
         }
     }
 
-    /// The `=` and rewrite of relation `name`, whose name was just read. A
-    /// relation whose rewrite fails is still declared, as `this`, so the
-    /// namespace reports nothing more about it.
-    fn rewrite(&mut self, namespace: &NamespaceName, name: &RelationName) -> Rewrite<RelationName> {
-        let equals = self.next();
-        if equals.token != Token::Equals {
-            let failure = syntax(equals, "'='");
-            self.push(Some(namespace), Some(name.as_str()), failure);
-            self.recover();
-            return Rewrite::This;
+    /// The constraints of relation `name`, whose colon was just read, each
+    /// with the theory's name before its namespace unless it's written in
+    /// full or is `identity`, and whether any failed. A failed constraint
+    /// is reported and left out. Where no constraint starts at all, the
+    /// relation is skipped to where the next one starts, so one mistake is
+    /// one error.
+    fn constraints(
+        &mut self,
+        namespace: &NamespaceName,
+        name: &RelationName,
+        theory: Option<&NamespaceName>,
+    ) -> (Vec<NamedConstraint>, bool) {
+        let mut constraints = Vec::new();
+        let mut failed = false;
+        // Each pass reads at least one lexeme or ends, so the lexemes bound
+        // the passes.
+        for _ in 0..self.lexemes.len() {
+            let start = self.at;
+            match self.constraint(theory) {
+                Ok(constraint) => constraints.push(constraint),
+                Err(failure) => {
+                    self.push(Some(namespace), Some(name.as_str()), failure);
+                    failed = true;
+                    if self.at == start {
+                        self.skip_until(Self::at_constraints_boundary);
+                        break;
+                    }
+                }
+            }
+            if self.peek().token != Token::Comma {
+                break;
+            }
+            self.next();
         }
+        (constraints, failed)
+    }
+
+    /// One constraint: everything written without a space between, up to a
+    /// comma, `=`, `:` or a space, so a malformed one is refused whole.
+    fn constraint(&mut self, theory: Option<&NamespaceName>) -> Result<NamedConstraint, Failure> {
+        let first = self.peek();
+        // A name then `=` is a constraint before its relation's rewrite, but
+        // a name then `:` is the next relation's signature.
+        let opens = self.token(self.at + 1) == Token::Colon;
+        if opens || !matches!(first.token, Token::Name | Token::This | Token::Unknown) {
+            return Err(syntax(first, CONSTRAINT));
+        }
+        let mut end = first.start;
+        for lexeme in &self.lexemes[self.at..] {
+            let joined = matches!(lexeme.token, Token::Name | Token::This | Token::Unknown);
+            if !joined || lexeme.start != end {
+                break;
+            }
+            end = lexeme.end;
+            self.at += 1;
+        }
+        let written = &self.text[first.start..end];
+        let (named, relation) = match written.split_once('#') {
+            Some((named, relation)) => (named, Some(relation)),
+            None => (written, None),
+        };
+        let full = match theory {
+            Some(theory) if named != IDENTITY && !named.starts_with(&format!("{theory}.")) => {
+                match relation {
+                    Some(relation) => format!("{theory}.{named}#{relation}"),
+                    None => format!("{theory}.{named}"),
+                }
+            }
+            _ => written.to_owned(),
+        };
+        constraint(&full).map_err(|error| (Some(first.place), ErrorKind::Name(error)))
+    }
+
+    /// The rewrite of relation `name`, whose `=` was just read, or `None`
+    /// when it fails, reported.
+    fn rewrite(
+        &mut self,
+        namespace: &NamespaceName,
+        name: &RelationName,
+    ) -> Option<Rewrite<RelationName>> {
         // The rule runs to where the next relation or namespace starts, or
         // to the end. As in the JSON form, its text is held to the limit
         // before it's parsed, so a hostile rule builds no deep tree.
@@ -375,10 +559,9 @@ impl<'a> Reader<'_, 'a> {
         } else {
             Parser::within(self.lexemes, start, end).parse()
         };
-        parsed.unwrap_or_else(|failure| {
-            self.push(Some(namespace), Some(name.as_str()), failure);
-            Rewrite::This
-        })
+        parsed
+            .map_err(|failure| self.push(Some(namespace), Some(name.as_str()), failure))
+            .ok()
     }
 
     /// Every error in document order, capped at [`MAX_ERRORS`], or `None`.
@@ -411,7 +594,7 @@ impl<'a> Reader<'_, 'a> {
 /// refused, since [`parse`] would refuse them.
 pub fn print(
     theory: Option<&NamespaceName>,
-    namespaces: &[(&NamespaceName, &Namespace<RelationName>)],
+    namespaces: &[(&NamespaceName, &Named)],
 ) -> Result<String, PrintError> {
     if namespaces.is_empty() {
         return Err(PrintError::NoNamespace);
@@ -430,26 +613,29 @@ pub fn print(
             return Err(PrintError::DuplicateNamespace(quote(name.as_str())));
         }
         previous = Some(name.as_str());
-        // A name that still starts with the theory once it's taken off is
-        // written in full, as the parser reads it.
-        let written = match &prefix {
-            Some(prefix) => match name.as_str().strip_prefix(prefix.as_str()) {
-                Some(rest) if rest.starts_with(prefix.as_str()) => name.as_str(),
-                Some(rest) => rest,
-                None => return Err(PrintError::OutsideTheory(quote(name.as_str()))),
-            },
-            None => name.as_str(),
-        };
+        let written = within(name, prefix.as_deref())?;
         let relations = printed(name, relations)?;
         if !text.is_empty() {
             text.push('\n');
         }
         let _ = writeln!(text, "namespace: {written}");
-        for (relation, expression) in relations {
+        for relation in relations {
+            let (name, expression) = (relation.name, &relation.expression);
             if expression.len() > MAX_EXPRESSION_BYTES {
                 return Err(PrintError::ExpressionTooLong);
             }
-            let _ = writeln!(text, "  {relation} = {expression}");
+            let mut constraints = relation
+                .constraints
+                .iter()
+                .map(|constraint| written_constraint(constraint, prefix.as_deref()))
+                .collect::<Result<Vec<_>, _>>()?;
+            constraints.sort();
+            let constraints = constraints.join(", ");
+            let _ = match (constraints.is_empty(), expression == "this") {
+                (true, _) => writeln!(text, "  {name} = {expression}"),
+                (false, true) => writeln!(text, "  {name}: {constraints}"),
+                (false, false) => writeln!(text, "  {name}: {constraints} = {expression}"),
+            };
         }
         // Checked as it grows, so a caller's oversized input is refused
         // without being printed whole.
@@ -458,4 +644,36 @@ pub fn print(
         }
     }
     Ok(text)
+}
+
+/// A namespace's name as written under `prefix`, the theory's name and a
+/// dot: without the prefix, unless it would still start with it once it's
+/// taken off, so the parser reads it back as the same name.
+fn within<'a>(name: &'a NamespaceName, prefix: Option<&str>) -> Result<&'a str, PrintError> {
+    let Some(prefix) = prefix else {
+        return Ok(name.as_str());
+    };
+    match name.as_str().strip_prefix(prefix) {
+        Some(rest) if rest.starts_with(prefix) => Ok(name.as_str()),
+        Some(rest) => Ok(rest),
+        None => Err(PrintError::OutsideTheory(quote(name.as_str()))),
+    }
+}
+
+/// A constraint as written under `prefix`, as [`within`] writes a
+/// namespace's name. A namespace that would read as `identity` once the
+/// prefix is taken off is written in full.
+fn written_constraint(
+    constraint: &NamedConstraint,
+    prefix: Option<&str>,
+) -> Result<String, PrintError> {
+    let namespace = |name: &NamespaceName| match within(name, prefix)? {
+        IDENTITY => Ok(name.as_str().to_owned()),
+        written => Ok::<_, PrintError>(written.to_owned()),
+    };
+    Ok(match constraint {
+        Constraint::Identity => IDENTITY.to_owned(),
+        Constraint::Resource(name) => namespace(name)?,
+        Constraint::Subjectset(name, relation) => format!("{}#{relation}", namespace(name)?),
+    })
 }

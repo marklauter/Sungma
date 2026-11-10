@@ -162,6 +162,26 @@ fn a_name_has_checked_and_unchecked_constructors() {
 }
 
 #[test]
+fn namespace_and_theory_are_reserved_relation_names_in_any_casing() {
+    for reserved in [
+        "namespace",
+        "Namespace",
+        "NAMESPACE",
+        "theory",
+        "Theory",
+        "THEORY",
+    ] {
+        assert_eq!(
+            RelationName::try_from(reserved),
+            Err(NameError::Reserved(reserved.to_owned()))
+        );
+        assert!(NamespaceName::try_from(reserved).is_ok());
+    }
+    assert!(RelationName::try_from("namespaces").is_ok());
+    assert!(RelationName::try_from("theory_").is_ok());
+}
+
+#[test]
 fn a_name_error_quotes_a_bounded_and_escaped_cut_of_the_text() {
     let long = format!("{}{}", "x".repeat(300), char::from_u32(0x202e).unwrap());
     let error = format!("{long}:a").parse::<ResourceName>().unwrap_err();
@@ -183,7 +203,11 @@ proptest! {
         id in "[!-~]{1,64}",
         relation in RELATION,
     ) {
-        prop_assume!(!relation.eq_ignore_ascii_case("this"));
+        prop_assume!(
+            !["this", "namespace", "theory"]
+                .iter()
+                .any(|reserved| relation.eq_ignore_ascii_case(reserved))
+        );
         let text = format!("{namespace}:{id}#{relation}");
         let name: SubjectsetName = text.parse().unwrap();
         prop_assert_eq!(name.resource().namespace().as_str(), &namespace);

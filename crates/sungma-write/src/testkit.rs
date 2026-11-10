@@ -15,9 +15,9 @@ use sungma::{
     id::{NamespaceId, RelationId},
     name::{Identity, ResourceId},
     name::{NamespaceName, RelationName},
-    namespace::Namespace,
+    namespace::{Constraint, Namespace, NamespaceError},
     revision::Revision,
-    rewrite::Rewrite::{self, FactTo, This},
+    rewrite::Rewrite::{self, Computed, FactTo, This},
     version::Version,
 };
 use sungma_check::{
@@ -55,15 +55,22 @@ pub trait Stores: Send + Sync + 'static {
     fn names(&self) -> &Self::Names;
 }
 
-pub type Print = fn(&NamespaceName, &Namespace<RelationName>) -> Result<String, String>;
-pub type Parse = fn(&str) -> Result<(NamespaceName, Namespace<RelationName>), String>;
+pub type Print =
+    fn(&NamespaceName, &Namespace<RelationName, NamespaceName>) -> Result<String, String>;
+pub type Parse =
+    fn(&str) -> Result<(NamespaceName, Namespace<RelationName, NamespaceName>), String>;
 
 /// The canonical document, printed with `sungma-lang`.
-pub fn print(name: &NamespaceName, relations: &Namespace<RelationName>) -> Result<String, String> {
+pub fn print(
+    name: &NamespaceName,
+    relations: &Namespace<RelationName, NamespaceName>,
+) -> Result<String, String> {
     namespace::print(name, relations).map_err(|error| error.to_string())
 }
 
-pub fn parse(document: &str) -> Result<(NamespaceName, Namespace<RelationName>), String> {
+pub fn parse(
+    document: &str,
+) -> Result<(NamespaceName, Namespace<RelationName, NamespaceName>), String> {
     namespace::parse(document)
         .map(|document| (document.namespace, document.relations))
         .map_err(|errors| namespace::Refusal(errors).to_string())
@@ -133,6 +140,7 @@ macro_rules! store_tests {
             a_batch_that_writes_a_fact_twice_lands_its_net_change,
             subjects_are_read_in_order,
             an_insert_under_an_undeclared_relation_stores_nothing,
+            an_insert_its_relation_does_not_admit_stores_nothing,
             inserting_a_fact_from_before_its_epoch_opens_a_new_span,
             creating_a_namespace_that_has_a_current_version_is_refused,
             a_new_version_closes_the_current_one,
@@ -141,6 +149,9 @@ macro_rules! store_tests {
             a_read_between_two_versions_sees_the_earlier_one,
             the_one_timeline_sample,
             a_path_through_a_fact_from_before_its_epoch_is_closed,
+            a_version_naming_a_relation_another_namespace_lacks_is_refused,
+            a_version_naming_more_namespaces_than_one_write_checks_is_refused,
+            a_version_naming_many_namespaces_it_doesnt_judge_is_written,
         );
 
         /// Writers on separate threads, all based on one version, race
@@ -186,21 +197,17 @@ macro_rules! store_tests {
 
 // Names stand in for ids, so a store that keeps names can print documents.
 
-/// Interns a name for the namespace and for every relation it names.
+/// Interns a name for the namespace and for every relation and namespace
+/// it names.
 async fn intern<S: Stores>(stores: &S, id: NamespaceId, namespace: &Namespace) {
     let names = stores.names();
-    names
-        .insert_if_absent(Pool::Namespaces, &format!("ns{}", id.0), id.0)
-        .await
-        .unwrap();
-    let mut relations = Vec::new();
-    namespace
-        .map(|relation| {
-            relations.push(*relation);
-            *relation
-        })
-        .unwrap();
-    for relation in relations {
+    for id in std::iter::once(id).chain(namespace.namespaces().into_iter().copied()) {
+        names
+            .insert_if_absent(Pool::Namespaces, &format!("ns{}", id.0), id.0)
+            .await
+            .unwrap();
+    }
+    for &relation in namespace.names() {
         names
             .insert_if_absent(Pool::Relations, &format!("r{}", relation.0), relation.0)
             .await
@@ -226,8 +233,19 @@ async fn create<S: Stores>(stores: &S, id: NamespaceId, namespace: Namespace) ->
         .unwrap()
 }
 
-fn declaring(relations: &[RelationId]) -> Namespace {
-    Namespace::new(relations.iter().map(|&relation| (relation, This)).collect()).unwrap()
+/// Namespace `id` declaring each of `relations` as `this`, taking
+/// identities, its own resources, and, when it declares [`MEMBER`], its own
+/// members.
+fn declaring(id: NamespaceId, relations: &[RelationId]) -> Namespace {
+    let mut constraints = vec![Constraint::Identity, Constraint::Resource(id)];
+    if relations.contains(&MEMBER) {
+        constraints.push(Constraint::Subjectset(id, MEMBER));
+    }
+    let relations = relations
+        .iter()
+        .map(|&relation| (relation, This, constraints.clone()))
+        .collect();
+    Namespace::new(relations).unwrap()
 }
 
 fn person(name: &str) -> Subject {
@@ -254,7 +272,7 @@ const MEMBER: RelationId = RelationId(5);
 
 /// The namespace declares both relations, at revision 1.
 async fn declared<S: Stores>(stores: S) -> S {
-    create(&stores, DOC, declaring(&[OWNER, MEMBER])).await;
+    create(&stores, DOC, declaring(DOC, &[OWNER, MEMBER])).await;
     stores
 }
 
@@ -430,6 +448,199 @@ pub async fn an_insert_under_an_undeclared_relation_stores_nothing<S: Stores>(st
     .await;
 }
 
+/// An insert whose subject none of its relation's constraints admits is
+/// refused with the whole batch, and so is one under a computed relation,
+/// which has none.
+pub async fn an_insert_its_relation_does_not_admit_stores_nothing<S: Stores>(stores: S) {
+    create(&stores, GROUP, declaring(GROUP, &[MEMBER])).await;
+    let only_people = Namespace::new(vec![
+        (OWNER, This, vec![Constraint::Identity]),
+        (MEMBER, This, vec![Constraint::Subjectset(GROUP, MEMBER)]),
+        (BANNED, Computed(OWNER), vec![]),
+    ])
+    .unwrap();
+    create(&stores, DOC, only_people).await;
+    let group = at(resource(GROUP, "eng"), MEMBER);
+    let refusals = [
+        fact(Subject::ResourceMember(set().resource)),
+        fact(Subject::Subjectset(group.clone())),
+        Fact {
+            subjectset: at(resource(DOC, "doc"), MEMBER),
+            subject: alice(),
+        },
+        Fact {
+            subjectset: at(resource(DOC, "doc"), MEMBER),
+            subject: Subject::Subjectset(at(resource(GROUP, "eng"), OWNER)),
+        },
+        Fact {
+            subjectset: at(resource(DOC, "doc"), BANNED),
+            subject: alice(),
+        },
+    ];
+    let head = stores.reader().head().await.unwrap();
+    for refused in refusals {
+        let result = stores
+            .writer()
+            .write(&[Insert(fact(bob())), Insert(refused.clone())])
+            .await;
+        let expected = match &refused.subject {
+            // `group#owner` isn't declared, which is found first.
+            Subject::Subjectset(set) if set.relation == OWNER => {
+                matches!(&result, Err(FactWriteError::Undeclared(fact)) if *fact == refused)
+            }
+            _ => matches!(&result, Err(FactWriteError::Unsatisfied(fact)) if *fact == refused),
+        };
+        assert!(expected, "{refused:?}: {result:?}");
+    }
+    assert_eq!(stores.reader().head().await.unwrap(), head);
+    let member = Fact {
+        subjectset: at(resource(DOC, "doc"), MEMBER),
+        subject: Subject::Subjectset(group),
+    };
+    write(&stores, &[Insert(fact(alice())), Insert(member)]).await;
+}
+
+/// A version whose constraint names a relation another namespace's latest
+/// version doesn't declare, or whose fact-to-subjectset follows one, is
+/// refused, and so is one naming a namespace never written or retired. One
+/// whose references hold is stored.
+pub async fn a_version_naming_a_relation_another_namespace_lacks_is_refused<S: Stores>(stores: S) {
+    let members = |namespace| {
+        Namespace::new(vec![(
+            OWNER,
+            This,
+            vec![Constraint::Subjectset(namespace, MEMBER)],
+        )])
+        .unwrap()
+    };
+    let following = |namespace| {
+        Namespace::new(vec![
+            (PARENT, This, vec![Constraint::Resource(namespace)]),
+            (
+                INHERITED,
+                FactTo {
+                    factset: PARENT,
+                    computed: MEMBER,
+                },
+                vec![],
+            ),
+        ])
+        .unwrap()
+    };
+    let refused =
+        |result: Result<Revision, NamespaceWriteError>, error: NamespaceError| match result {
+            Err(NamespaceWriteError::References(problems)) => {
+                assert_eq!(problems.len(), 1, "{problems:?}");
+                assert_eq!(problems[0].error, error);
+            }
+            other => panic!("expected refused references, got {other:?}"),
+        };
+    let undeclared = || NamespaceError::UndeclaredConstraint {
+        relation: "r2".to_owned(),
+        constraint: "ns1#r5".to_owned(),
+    };
+    let unfollowed = || NamespaceError::UndeclaredFollowed {
+        relation: "r4".to_owned(),
+        namespace: "ns1".to_owned(),
+        followed: "r5".to_owned(),
+    };
+    // GROUP isn't written yet.
+    refused(
+        write_namespace(&stores, DOC, Create(members(GROUP))).await,
+        undeclared(),
+    );
+    refused(
+        write_namespace(&stores, DOC, Create(following(GROUP))).await,
+        unfollowed(),
+    );
+    // GROUP declares `owner` but not `member`.
+    let group = create(&stores, GROUP, declaring(GROUP, &[OWNER])).await;
+    refused(
+        write_namespace(&stores, DOC, Create(members(GROUP))).await,
+        undeclared(),
+    );
+    refused(
+        write_namespace(&stores, DOC, Create(following(GROUP))).await,
+        unfollowed(),
+    );
+    let group = write_namespace(
+        &stores,
+        GROUP,
+        NewVersion {
+            based_on: group,
+            namespace: declaring(GROUP, &[MEMBER]),
+        },
+    )
+    .await
+    .unwrap();
+    let doc = create(&stores, DOC, members(GROUP)).await;
+    let latest = latest(&stores, DOC).await.unwrap();
+    assert_eq!(latest.revision(), doc);
+    let retired = NamespaceWrite::Retire { based_on: group };
+    write_namespace(&stores, GROUP, retired).await.unwrap();
+    let again = NewVersion {
+        based_on: doc,
+        namespace: following(GROUP),
+    };
+    refused(write_namespace(&stores, DOC, again).await, unfollowed());
+    // A namespace that names itself is judged by the version being written.
+    let own = Namespace::new(vec![
+        (MEMBER, This, vec![Constraint::Identity]),
+        (OWNER, This, vec![Constraint::Subjectset(DOC, MEMBER)]),
+        (
+            INHERITED,
+            FactTo {
+                factset: OWNER,
+                computed: MEMBER,
+            },
+            vec![],
+        ),
+    ])
+    .unwrap();
+    let again = NewVersion {
+        based_on: doc,
+        namespace: own,
+    };
+    write_namespace(&stores, DOC, again).await.unwrap();
+}
+
+/// Relations taking, between them, each of `constraints`.
+fn taking(constraints: &[Constraint]) -> Namespace {
+    let relations = constraints
+        .chunks(32)
+        .zip(10..)
+        .map(|(constraints, relation)| (RelationId(relation), This, constraints.to_vec()))
+        .collect();
+    Namespace::new(relations).unwrap()
+}
+
+/// A version whose constraints name more namespaces' relations than one
+/// write can check is refused before it takes a revision, and before it
+/// judges them.
+pub async fn a_version_naming_more_namespaces_than_one_write_checks_is_refused<S: Stores>(
+    stores: S,
+) {
+    let many = (1..=200)
+        .map(|id| Constraint::Subjectset(NamespaceId(id), MEMBER))
+        .collect::<Vec<_>>();
+    let result = write_namespace(&stores, DOC, Create(taking(&many))).await;
+    assert!(
+        matches!(result, Err(NamespaceWriteError::TooLarge { rows: 203, .. })),
+        "{result:?}"
+    );
+    assert_eq!(stores.reader().head().await.unwrap(), Revision(0));
+}
+
+/// A plain resource constraint is never judged, so a version may name more
+/// such namespaces than one write could check.
+pub async fn a_version_naming_many_namespaces_it_doesnt_judge_is_written<S: Stores>(stores: S) {
+    let many = (1..=200)
+        .map(|id| Constraint::Resource(NamespaceId(id)))
+        .collect::<Vec<_>>();
+    let written = write_namespace(&stores, DOC, Create(taking(&many))).await;
+    assert_eq!(written.unwrap(), Revision(1));
+}
+
 /// The latest version at the head.
 async fn latest<S: Stores>(stores: &S, id: NamespaceId) -> Option<Arc<Version>> {
     let reader = stores.reader();
@@ -457,8 +668,8 @@ async fn redeclare<S: Stores>(stores: &S, id: NamespaceId, namespace: Namespace)
 pub async fn inserting_a_fact_from_before_its_epoch_opens_a_new_span<S: Stores>(stores: S) {
     let stores = declared(stores).await;
     write(&stores, &[Insert(fact(alice()))]).await;
-    redeclare(&stores, DOC, declaring(&[MEMBER])).await;
-    let back = redeclare(&stores, DOC, declaring(&[OWNER, MEMBER])).await;
+    redeclare(&stores, DOC, declaring(DOC, &[MEMBER])).await;
+    let back = redeclare(&stores, DOC, declaring(DOC, &[OWNER, MEMBER])).await;
     assert_eq!(back, Revision(4));
     write(&stores, &[Insert(fact(alice()))]).await;
     assert_eq!(written(&stores, 4).await, Some(Revision(2)));
@@ -590,16 +801,16 @@ fn refused_retirement(result: Result<Revision, NamespaceWriteError>) -> bool {
 }
 
 pub async fn creating_a_namespace_that_has_a_current_version_is_refused<S: Stores>(stores: S) {
-    let created = create(&stores, FILE, declaring(&[FILE_OWNER])).await;
+    let created = create(&stores, FILE, declaring(FILE, &[FILE_OWNER])).await;
     assert_eq!(created, Revision(1));
-    let refused = write_namespace(&stores, FILE, Create(declaring(&[BANNED]))).await;
+    let refused = write_namespace(&stores, FILE, Create(declaring(FILE, &[BANNED]))).await;
     assert_eq!(conflict(refused), Some(created));
     assert!(rewrite(&stores, BANNED).await.is_none());
 }
 
 pub async fn a_new_version_closes_the_current_one<S: Stores>(stores: S) {
-    let first = create(&stores, FILE, declaring(&[FILE_OWNER, BANNED])).await;
-    let second = redeclare(&stores, FILE, declaring(&[FILE_OWNER])).await;
+    let first = create(&stores, FILE, declaring(FILE, &[FILE_OWNER, BANNED])).await;
+    let second = redeclare(&stores, FILE, declaring(FILE, &[FILE_OWNER])).await;
     assert_eq!(second, Revision(2));
     let latest = latest(&stores, FILE).await.unwrap();
     assert_eq!(latest.revision(), second);
@@ -609,15 +820,15 @@ pub async fn a_new_version_closes_the_current_one<S: Stores>(stores: S) {
 }
 
 pub async fn a_write_based_on_an_older_version_stores_nothing<S: Stores>(stores: S) {
-    let first = create(&stores, FILE, declaring(&[FILE_OWNER])).await;
+    let first = create(&stores, FILE, declaring(FILE, &[FILE_OWNER])).await;
     let based_on = |namespace| NewVersion {
         based_on: first,
         namespace,
     };
-    let second = write_namespace(&stores, FILE, based_on(declaring(&[FILE_OWNER])))
+    let second = write_namespace(&stores, FILE, based_on(declaring(FILE, &[FILE_OWNER])))
         .await
         .unwrap();
-    let refused = write_namespace(&stores, FILE, based_on(declaring(&[BANNED]))).await;
+    let refused = write_namespace(&stores, FILE, based_on(declaring(FILE, &[BANNED]))).await;
     assert_eq!(conflict(refused), Some(second));
     let refused = write_namespace(&stores, FILE, NamespaceWrite::Retire { based_on: first }).await;
     assert_eq!(conflict(refused), Some(second));
@@ -635,8 +846,8 @@ where
 {
     for _ in 0..10 {
         let stores = Arc::new(make().await);
-        let first = create(&*stores, FILE, declaring(&[FILE_OWNER])).await;
-        intern(&*stores, FILE, &declaring(&[BANNED])).await;
+        let first = create(&*stores, FILE, declaring(FILE, &[FILE_OWNER])).await;
+        intern(&*stores, FILE, &declaring(FILE, &[BANNED])).await;
         let writers: Vec<_> = [FILE_OWNER, BANNED, FILE_OWNER, BANNED]
             .into_iter()
             .map(|relation| {
@@ -644,7 +855,7 @@ where
                 tokio::spawn(async move {
                     let write = NewVersion {
                         based_on: first,
-                        namespace: declaring(&[relation]),
+                        namespace: declaring(FILE, &[relation]),
                     };
                     stores.writer().write_namespace(FILE, write).await.is_ok()
                 })
@@ -659,7 +870,7 @@ where
 }
 
 pub async fn a_retired_namespace_declares_nothing_until_it_is_created_again<S: Stores>(stores: S) {
-    let first = create(&stores, FILE, declaring(&[FILE_OWNER])).await;
+    let first = create(&stores, FILE, declaring(FILE, &[FILE_OWNER])).await;
     let retire = || NamespaceWrite::Retire { based_on: first };
     let retired = write_namespace(&stores, FILE, retire()).await.unwrap();
     assert!(latest(&stores, FILE).await.is_none());
@@ -669,7 +880,7 @@ pub async fn a_retired_namespace_declares_nothing_until_it_is_created_again<S: S
         FILE,
         NewVersion {
             based_on: first,
-            namespace: declaring(&[FILE_OWNER]),
+            namespace: declaring(FILE, &[FILE_OWNER]),
         },
     )
     .await;
@@ -680,7 +891,7 @@ pub async fn a_retired_namespace_declares_nothing_until_it_is_created_again<S: S
     assert!(refused_retirement(
         write_namespace(&stores, NamespaceId(3), retire()).await
     ));
-    let again = create(&stores, FILE, declaring(&[FILE_OWNER])).await;
+    let again = create(&stores, FILE, declaring(FILE, &[FILE_OWNER])).await;
     assert!(again > retired);
     assert_eq!(
         latest(&stores, FILE).await.unwrap().epoch(FILE_OWNER),
@@ -695,14 +906,14 @@ pub async fn a_read_between_two_versions_sees_the_earlier_one<S: Stores>(stores:
         opened(reader.version(FILE, Revision(0)).await.unwrap()),
         None
     );
-    let first = create(&stores, FILE, declaring(&[FILE_OWNER])).await;
-    create(&stores, NamespaceId(1), declaring(&[])).await;
+    let first = create(&stores, FILE, declaring(FILE, &[FILE_OWNER])).await;
+    create(&stores, NamespaceId(1), declaring(FILE, &[])).await;
     let second = write_namespace(
         &stores,
         FILE,
         NewVersion {
             based_on: first,
-            namespace: declaring(&[FILE_OWNER, BANNED]),
+            namespace: declaring(FILE, &[FILE_OWNER, BANNED]),
         },
     )
     .await
@@ -764,7 +975,7 @@ async fn counted<S: Stores>(stores: &S, revision: Revision) -> [bool; 3] {
 /// The sample's revisions are 10, 12, 14 and so on; the clock counts 1, 2,
 /// 3, in the same order.
 pub async fn the_one_timeline_sample<S: Stores>(stores: S) {
-    let version_1 = create(&stores, FILE, declaring(&[FILE_OWNER, BANNED])).await;
+    let version_1 = create(&stores, FILE, declaring(FILE, &[FILE_OWNER, BANNED])).await;
     grant(&stores, FILE_OWNER, "carol").await;
     let bob = grant(&stores, BANNED, "bob").await;
     let version_2 = write_namespace(
@@ -772,7 +983,7 @@ pub async fn the_one_timeline_sample<S: Stores>(stores: S) {
         FILE,
         NewVersion {
             based_on: version_1,
-            namespace: declaring(&[FILE_OWNER]),
+            namespace: declaring(FILE, &[FILE_OWNER]),
         },
     )
     .await
@@ -782,7 +993,7 @@ pub async fn the_one_timeline_sample<S: Stores>(stores: S) {
         FILE,
         NewVersion {
             based_on: version_2,
-            namespace: declaring(&[FILE_OWNER, BANNED]),
+            namespace: declaring(FILE, &[FILE_OWNER, BANNED]),
         },
     )
     .await
@@ -797,7 +1008,7 @@ pub async fn the_one_timeline_sample<S: Stores>(stores: S) {
     )
     .await
     .unwrap();
-    let version_4 = create(&stores, FILE, declaring(&[FILE_OWNER, BANNED])).await;
+    let version_4 = create(&stores, FILE, declaring(FILE, &[FILE_OWNER, BANNED])).await;
     let bob_again = grant(&stores, BANNED, "bob").await;
 
     // Read at 15: version 1, and both facts were written after epoch 10.
@@ -829,9 +1040,14 @@ fn file(relations: &[RelationId]) -> Namespace {
         },
         _ => This,
     };
-    let relations: Vec<(RelationId, Rewrite)> = relations
+    let constraints = |relation| match relation {
+        VIEWER => vec![Constraint::Identity, Constraint::Subjectset(GROUP, MEMBER)],
+        PARENT => vec![Constraint::Resource(FILE)],
+        _ => vec![],
+    };
+    let relations: Vec<_> = relations
         .iter()
-        .map(|&relation| (relation, rule(relation)))
+        .map(|&relation| (relation, rule(relation), constraints(relation)))
         .collect();
     Namespace::new(relations).unwrap()
 }
@@ -864,7 +1080,7 @@ async fn reached<S: Stores>(stores: &S, revision: Revision) -> (bool, bool, Expa
 /// A nested subjectset and a parent link written before their relation's
 /// epoch don't count, though the facts they lead to do.
 pub async fn a_path_through_a_fact_from_before_its_epoch_is_closed<S: Stores>(stores: S) {
-    create(&stores, GROUP, declaring(&[MEMBER])).await;
+    create(&stores, GROUP, declaring(GROUP, &[MEMBER])).await;
     let first = create(&stores, FILE, file(&[VIEWER, PARENT, INHERITED])).await;
     let eng = Subject::Subjectset(at(resource(GROUP, "eng"), MEMBER));
     let nested = Fact {
@@ -901,7 +1117,7 @@ pub async fn a_path_through_a_fact_from_before_its_epoch_is_closed<S: Stores>(st
         FILE,
         NewVersion {
             based_on: first,
-            namespace: declaring(&[FILE_OWNER]),
+            namespace: declaring(FILE, &[FILE_OWNER]),
         },
     )
     .await

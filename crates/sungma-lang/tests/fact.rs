@@ -303,14 +303,17 @@ fn fact_json(namespace: &str, resource: &str, relation: &str, subject: &Who) -> 
 }
 
 /// Declares every namespace a fact or subjectset subject in the document
-/// names, with each relation named under it as `this`, so the document's
-/// facts are declared, and interns the namespace of each resource member.
-/// Gives how many namespaces it declared, each at its own revision.
+/// names, with each relation named under it as `this`, constrained to the
+/// kinds of subject the document's facts under it name, or to identities
+/// when none do, so the document's facts are declared and admitted, and
+/// interns the namespace of each resource member. A namespace is declared
+/// after those its constraints name. Gives how many namespaces it declared,
+/// each at its own revision.
 async fn declare_all(json: &str, world: &World) -> u64 {
     let Ok(Value::Array(facts)) = serde_json::from_str(json) else {
         return 0;
     };
-    let mut relations: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    let mut relations: BTreeMap<&str, BTreeMap<&str, BTreeSet<String>>> = BTreeMap::new();
     for fact in &facts {
         for part in [fact, &fact["subject"]] {
             let Some(namespace) = part["namespace"].as_str() else {
@@ -318,12 +321,47 @@ async fn declare_all(json: &str, world: &World) -> u64 {
             };
             let names = relations.entry(namespace).or_default();
             if let Some(relation) = part["relation"].as_str() {
-                names.insert(relation);
+                names.entry(relation).or_default();
             }
         }
+        let (Some(namespace), Some(relation)) =
+            (fact["namespace"].as_str(), fact["relation"].as_str())
+        else {
+            continue;
+        };
+        let subject = &fact["subject"];
+        let kind = match (subject["namespace"].as_str(), subject["relation"].as_str()) {
+            (Some(namespace), Some(relation)) => format!("{namespace}#{relation}"),
+            (Some(namespace), None) => namespace.to_owned(),
+            _ => "identity".to_owned(),
+        };
+        if let Some(constraints) = relations
+            .get_mut(namespace)
+            .and_then(|names| names.get_mut(relation))
+        {
+            constraints.insert(kind);
+        }
+    }
+    // Each namespace after every other one its subjectset constraints name.
+    let mut order: Vec<&str> = Vec::new();
+    while order.len() < relations.len() {
+        let before = order.len();
+        for (namespace, names) in &relations {
+            let ready = !order.contains(namespace)
+                && names.values().flatten().all(|constraint| {
+                    constraint
+                        .split_once('#')
+                        .is_none_or(|(other, _)| other == *namespace || order.contains(&other))
+                });
+            if ready {
+                order.push(namespace);
+            }
+        }
+        assert!(order.len() > before, "namespaces that name each other");
     }
     let mut documents = Vec::new();
-    for (namespace, names) in &relations {
+    for namespace in order {
+        let names = &relations[namespace];
         // A namespace only resource members name needs only its name.
         if names.is_empty() {
             world.intern(Pool::Namespaces, namespace).await;
@@ -331,9 +369,16 @@ async fn declare_all(json: &str, world: &World) -> u64 {
         }
         let rules: serde_json::Map<String, Value> = names
             .iter()
-            .map(|name| ((*name).to_owned(), json!("this")))
+            .map(|(name, constraints)| {
+                let constraints: Vec<_> = if constraints.is_empty() {
+                    vec!["identity".to_owned()]
+                } else {
+                    constraints.iter().cloned().collect()
+                };
+                ((*name).to_owned(), json!({ "constraints": constraints }))
+            })
             .collect();
-        documents.push(json!({ *namespace: rules }).to_string());
+        documents.push(json!({ namespace: rules }).to_string());
     }
     let documents: Vec<&str> = documents.iter().map(String::as_str).collect();
     world.load_namespaces(&documents).await.unwrap();
@@ -661,11 +706,28 @@ fn who() -> impl Strategy<Value = Who> {
     ]
 }
 
+/// A fact, its subjectset subject's namespace never sorting before the
+/// fact's own. The namespaces a document's subjectsets name then never name
+/// each other in a cycle, so each can be written after those it names.
+fn ordered_fact() -> impl Strategy<Value = (String, String, String, Who)> {
+    (name(), opaque(), name(), who()).prop_map(|(namespace, resource, relation, subject)| {
+        match subject {
+            Who::Subjectset(other, id, set) if other < namespace => (
+                other,
+                resource,
+                relation,
+                Who::Subjectset(namespace, id, set),
+            ),
+            subject => (namespace, resource, relation, subject),
+        }
+    })
+}
+
 proptest! {
     /// Generated documents load, and each fact is found under its names.
     #[test]
     fn a_generated_document_loads_and_each_fact_is_found(
-        facts in proptest::collection::vec((name(), opaque(), name(), who()), 1..10),
+        facts in proptest::collection::vec(ordered_fact(), 1..10),
     ) {
         let documents: Vec<Value> = facts
             .iter()

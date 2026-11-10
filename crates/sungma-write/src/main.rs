@@ -80,7 +80,10 @@ async fn main() -> Result<(), Failed> {
 }
 
 /// The printer's canonical document.
-fn print(name: &NamespaceName, relations: &Namespace<RelationName>) -> Result<String, String> {
+fn print(
+    name: &NamespaceName,
+    relations: &Namespace<RelationName, NamespaceName>,
+) -> Result<String, String> {
     namespace::print(name, relations).map_err(|error| error.to_string())
 }
 

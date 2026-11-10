@@ -8,7 +8,6 @@ serde.workspace = true
 serde_json.workspace = true
 sungma.workspace = true
 thiserror.workspace = true
-toml_edit.workspace = true
 
 [dev-dependencies]
 sungma-names.workspace = true

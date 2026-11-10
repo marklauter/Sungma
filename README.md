@@ -54,7 +54,9 @@ scripts/dynamodb.sh
 export SUNGMA_DYNAMODB_URL=http://localhost:8000
 F=crates/sungma/tests/fixtures
 # The Write service creates the table and seeds it.
-cargo run -p sungma-write --features server -- $F/docs.facts.json $F/namespaces/*.json &
+# Each namespace after those it names.
+cargo run -p sungma-write --features server -- $F/docs.facts.json \
+  $F/namespaces/group.json $F/namespaces/folder.json $F/namespaces/file.json &
 # Once it listens:
 cargo run -p sungma-check --features server &
 

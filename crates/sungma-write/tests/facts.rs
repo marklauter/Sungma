@@ -12,9 +12,13 @@ use common::{post, post_raw, stores};
 async fn declare(app: &Router) -> Value {
     let mut zookie = Value::Null;
     for document in [
-        json!({ "file": { "owner": "this", "parent": "this", "viewer": "this | owner" } }),
-        json!({ "folder": { "viewer": "this" } }),
-        json!({ "group": { "member": "this" } }),
+        json!({ "group": { "member": { "constraints": ["identity"] } } }),
+        json!({ "folder": { "viewer": { "constraints": ["identity"] } } }),
+        json!({ "file": {
+            "owner": { "constraints": ["identity"] },
+            "parent": { "constraints": ["folder"] },
+            "viewer": { "rewrite": "this | owner", "constraints": ["group#member", "identity"] }
+        } }),
     ] {
         let (status, reply) = post(app, "/namespaces/write", json!({ "create": document })).await;
         assert_eq!(status, StatusCode::OK, "{reply}");
@@ -157,6 +161,16 @@ async fn a_write_naming_what_no_namespace_declares_is_refused_whole() {
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{store}: {reply}");
         let error = reply["error"].as_str().unwrap();
         assert!(error.contains("folder:a#owner@alice"), "{store}: {error}");
+        // `owner` takes identities only.
+        let folder = json!({ "namespace": "file", "resource": "a", "relation": "owner",
+                             "subject": { "namespace": "folder", "resource": "root" } });
+        let (status, reply) = write(&app, json!({ "add": [owner("alice"), folder] })).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{store}: {reply}");
+        let error = reply["error"].as_str().unwrap();
+        assert!(
+            error.contains("constraints don't admit"),
+            "{store}: {error}"
+        );
 
         let (_, reply) = read(&app, owners()).await;
         assert_eq!(reply["facts"], json!([]), "{store}");

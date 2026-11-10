@@ -58,6 +58,7 @@ Each is answered with the roadmap item that needs it, so the namespace writes sp
    Partly settled: namespace versions go into the same change log as facts, and a node behind a request's revision token replays the log up to it.
    Deferred to the Watch service on the roadmap.
 5. **Who may write.** Settled by [Sungma's own authorization](../specs/sungma-authorization.md).
+6. **Narrowing constraints.** A relation that carries over to a new version keeps its epoch, so when the new version drops one of its constraints, facts already stored that only the dropped constraint admitted keep counting, while a new write of the same fact is refused. Whether they should keep counting.
 
 ## The clock port
 

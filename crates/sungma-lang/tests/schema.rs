@@ -7,9 +7,9 @@ mod grammar;
 use proptest::{collection::vec, prelude::*};
 use sungma::{
     name::{NameError, NamespaceName, RelationName},
-    namespace::{MAX_REWRITE_DEPTH, Namespace, NamespaceError},
+    namespace::{Constraint, MAX_REWRITE_DEPTH, Namespace, NamespaceError},
     nonempty,
-    rewrite::Rewrite::{self, Computed, This, Union},
+    rewrite::Rewrite::{self, This, Union},
 };
 use sungma_lang::{
     namespace::{
@@ -56,7 +56,9 @@ fn namespace_name(name: &str) -> NamespaceName {
 
 /// A namespace's relations, sorted by name, so namespaces from any form
 /// compare by what they declare.
-fn sorted(relations: &Namespace<RelationName>) -> Vec<(RelationName, Rewrite<RelationName>)> {
+fn sorted(
+    relations: &Namespace<RelationName, NamespaceName>,
+) -> Vec<(RelationName, Rewrite<RelationName>)> {
     let mut relations: Vec<_> = relations
         .relations()
         .map(|(name, rewrite)| (name.clone(), rewrite.clone()))
@@ -84,10 +86,35 @@ fn print(theory: Option<&str>, documents: &[NamespaceDocument]) -> Result<String
     schema::print(theory.as_ref(), &namespaces)
 }
 
-/// Where `  r = ` leaves an expression on its line.
-const INDENT: usize = "  r = ".len();
 /// The line relation `r` is on in a [`grammar_case`].
 const LINE: usize = DECLARED.len() + 2;
+
+/// A relation's value in a namespace document for `expression`: the
+/// constraints form, taking identities, when it reads `this`.
+fn value(expression: &str) -> String {
+    if mentions_this(expression) {
+        format!(r#"{{ "rewrite": "{expression}", "constraints": ["identity"] }}"#)
+    } else {
+        format!(r#""{expression}""#)
+    }
+}
+
+/// Whether an expression's text holds the keyword `this`.
+fn mentions_this(expression: &str) -> bool {
+    expression
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .any(|word| word == "this")
+}
+
+/// Relation `r`'s signature for `expression`: taking identities when it
+/// reads `this`.
+fn signature(expression: &str) -> &'static str {
+    if mentions_this(expression) {
+        "  r: identity = "
+    } else {
+        "  r = "
+    }
+}
 
 /// A document whose namespace `t` declares every relation in [`DECLARED`]
 /// as `this`, then relation `r` with `expression`, last and on line
@@ -95,9 +122,12 @@ const LINE: usize = DECLARED.len() + 2;
 fn grammar_case(expression: &str) -> String {
     let declared: String = DECLARED
         .iter()
-        .map(|name| format!("  {name} = this\n"))
+        .map(|name| format!("  {name}: identity\n"))
         .collect();
-    format!("namespace: t\n{declared}  r = {expression}")
+    format!(
+        "namespace: t\n{declared}{}{expression}",
+        signature(expression)
+    )
 }
 
 // The oracle: the grammar cases every form shares.
@@ -110,9 +140,13 @@ fn every_valid_form_parses_to_its_tree_and_prints_canonically() {
         let text = print(None, &[document]).expect("a printable namespace");
         let line = text
             .lines()
-            .find(|line| line.starts_with("  r = "))
+            .find(|line| line.starts_with("  r =") || line.starts_with("  r:"))
             .expect("relation r is printed");
-        assert_eq!(&line[INDENT..], canonical, "{expression}");
+        let printed = match line {
+            "  r: identity" => "this",
+            _ => &line[signature(canonical).len()..],
+        };
+        assert_eq!(printed, canonical, "{expression}");
         let again = one(&grammar_case(canonical));
         assert_eq!(rewrite_of(&again, "r"), tree, "{expression} as {canonical}");
     }
@@ -136,7 +170,7 @@ fn every_invalid_form_is_refused_where_it_goes_wrong() {
         assert_eq!(error.relation.as_deref(), Some("r"), "{expression}");
         let place = Place {
             line: LINE,
-            column: column + INDENT,
+            column: column + signature(expression).len(),
         };
         assert_eq!(error.place, Some(place), "{expression}");
         assert_eq!(
@@ -153,7 +187,7 @@ fn a_reserved_or_overlong_name_is_refused_where_it_appears() {
         let error = only(&grammar_case(&expression));
         let place = Place {
             line: LINE,
-            column: column + INDENT,
+            column: column + signature(&expression).len(),
         };
         assert_eq!(error.place, Some(place), "{expression}");
         assert!(
@@ -173,18 +207,18 @@ const DRIVE: &str = "theory: drive
 
 // Files sit in folders, and a file's viewers include its folder's.
 namespace: file
-  owner = this
-  parent = this
-  editor = this | owner
-  viewer = (this | editor | (parent, viewer)) ! banned
-  auditor = this & viewer
-  banned = this
+  owner: identity = this
+  parent: identity = this
+  editor: identity = this | owner
+  viewer: identity = (this | editor | (parent, viewer)) ! banned
+  auditor: identity = this & viewer
+  banned: identity = this
 
 namespace: folder
-  owner = this
-  parent = this
-  viewer = (this | (parent, viewer)) ! banned
-  banned = this
+  owner: identity = this
+  parent: identity = this
+  viewer: identity = (this | (parent, viewer)) ! banned
+  banned: identity = this
 ";
 
 fn fixture(name: &str) -> NamespaceDocument {
@@ -207,7 +241,7 @@ fn a_theory_parses_to_its_namespaces_under_their_full_names() {
 
 #[test]
 fn without_a_theory_names_are_full() {
-    let documents = parsed("namespace: drive.file\n  owner = this\nnamespace: folder\n");
+    let documents = parsed("namespace: drive.file\n  owner: identity = this\nnamespace: folder\n");
     let names: Vec<_> = documents.iter().map(|d| d.namespace.as_str()).collect();
     assert_eq!(names, ["drive.file", "folder"]);
 }
@@ -236,12 +270,12 @@ fn a_namespace_without_relations_is_empty() {
 
 #[test]
 fn a_rewrite_can_start_on_the_next_line_and_wrap() {
-    let one_line = one("namespace: t\n  a = this\n  r = this | a ! a\n");
+    let one_line = one("namespace: t\n  a: identity = this\n  r: identity = this | a ! a\n");
     let cases = [
-        "namespace: t\n  a = this\n  r\n    = this | a ! a\n",
-        "namespace: t\n  a = this\n  r =\n    this\n    | a\n    ! a\n",
-        "namespace: t a = this r = this | a ! a",
-        "namespace:t\r\n\ta=this\r\n\tr=this|a!a",
+        "namespace: t\n  a: identity = this\n  r: identity\n    = this | a ! a\n",
+        "namespace: t\n  a: identity = this\n  r: identity =\n    this\n    | a\n    ! a\n",
+        "namespace: t a: identity = this r: identity = this | a ! a",
+        "namespace:t\r\n\ta: identity=this\r\n\tr: identity=this|a!a",
     ];
     for text in cases {
         assert_eq!(
@@ -260,10 +294,13 @@ fn comments_change_nothing() {
             "\nnamespace: folder",
             "// folders\nnamespace: folder // and more\n",
         )
-        .replace("banned = this\n", "banned = this // é \u{202e} //\n")
         .replace(
-            "editor = this | owner",
-            "editor = this // first\n    | owner",
+            "banned: identity = this\n",
+            "banned: identity = this // é \u{202e} //\n",
+        )
+        .replace(
+            "editor: identity = this | owner",
+            "editor: identity = this // first\n    | owner",
         );
     let commented = parsed(&format!("// top\n{commented}// last"));
     for (one, other) in plain.iter().zip(&commented) {
@@ -273,20 +310,56 @@ fn comments_change_nothing() {
 }
 
 #[test]
-fn relations_named_like_keywords_are_relations() {
-    let document = one("namespace: t\n  namespace = this\n  theory = namespace\n");
-    assert_eq!(
-        rewrite_of(&document, "theory"),
-        Computed(relation("namespace"))
-    );
+fn namespace_and_theory_are_refused_as_relation_names() {
+    for (text, name) in [
+        ("namespace: t\n  a: identity\n  theory = a\n", "theory"),
+        (
+            "namespace: t\n  a: identity\n  Namespace = a\n",
+            "Namespace",
+        ),
+        ("namespace: t\n  THEORY: identity\n", "THEORY"),
+        ("namespace: t\n  a: identity\n  r = a | theory\n", "theory"),
+    ] {
+        let error = only(text);
+        assert!(
+            matches!(error.kind, ErrorKind::Name(NameError::Reserved(_))),
+            "{text}: {error}"
+        );
+        assert!(error.to_string().contains(name), "{error}");
+    }
 }
 
 #[test]
-fn accepted_subjects_are_refused_until_the_model_holds_them() {
-    let error = only("namespace: t\n  owner: identity\n");
+fn namespace_and_theory_stay_namespace_names_and_constraints() {
+    let documents = parsed(
+        "theory: sungma\nnamespace: namespace\n  parent: theory, namespace#parent\nnamespace: theory\n",
+    );
+    let names: Vec<_> = documents.iter().map(|d| d.namespace.as_str()).collect();
+    assert_eq!(names, ["sungma.namespace", "sungma.theory"]);
+    let parent = relation("parent");
+    let constraints: Vec<_> = documents[0]
+        .relations
+        .constraints(&parent)
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(constraints, ["sungma.theory", "sungma.namespace#parent"]);
+}
+
+/// A relation can't be named `namespace`, so `namespace:` always opens a
+/// namespace, even where a constraint list could go on.
+#[test]
+fn namespace_colon_is_always_a_header() {
+    let documents = parsed("namespace: doc\n  owner: identity\n  namespace: user\n");
+    let names: Vec<_> = documents.iter().map(|d| d.namespace.as_str()).collect();
+    assert_eq!(names, ["doc", "user"]);
+    let error = only("namespace: doc\n  owner:\n  namespace: user\n");
     assert_eq!(error.relation.as_deref(), Some("owner"));
-    assert_eq!(error.place, Some(Place { line: 2, column: 8 }));
-    assert_eq!(error.kind.to_string(), "expected '=', found ':'");
+    assert_eq!(error.place, Some(Place { line: 3, column: 3 }));
+    assert_eq!(
+        error.kind.to_string(),
+        "expected a constraint, found 'namespace'"
+    );
 }
 
 #[test]
@@ -295,8 +368,9 @@ fn what_isnt_in_the_grammar_is_refused() {
         ("namespace: t\n  r = \"this\"", 2, 7, "'\"'"),
         ("namespace: t\n  r = 'this'", 2, 7, "'''"),
         ("namespace: t\n  r = 1", 2, 7, "'1'"),
-        ("namespace: t\n  r = this # comment", 2, 12, "'#'"),
-        ("namespace: t\n  r = this / comment", 2, 12, "'/'"),
+        ("namespace: t\n  r: identity = this # comment", 2, 22, "'#'"),
+        ("namespace: t\n  r: identity = this / comment", 2, 22, "'/'"),
+        ("namespace: t\n  r: identity / comment", 2, 15, "'/'"),
         ("namespace: t\n  r = é", 2, 7, "'é'"),
         ("namespace: t\n  r = \0", 2, 7, "'\\u{0000}'"),
     ];
@@ -327,7 +401,7 @@ fn a_document_declares_at_least_one_namespace() {
 
 #[test]
 fn relations_belong_to_a_namespace() {
-    let error = only("theory: t\n  r = this\nnamespace: n\n");
+    let error = only("theory: t\n  r: identity = this\nnamespace: n\n");
     assert_eq!(error.namespace, None);
     assert_eq!(error.place, Some(Place { line: 2, column: 3 }));
     assert_eq!(
@@ -338,9 +412,9 @@ fn relations_belong_to_a_namespace() {
 
 #[test]
 fn the_theory_comes_first() {
-    let error = only("namespace: n\n  r = this\ntheory: t\n");
+    let error = only("namespace: n\n  r: identity = this\ntheory: t\n");
     assert_eq!(error.relation.as_deref(), Some("theory"));
-    assert_eq!(error.kind.to_string(), "expected '=', found ':'");
+    assert_eq!(error.kind.to_string(), "'theory' is reserved");
 }
 
 #[test]
@@ -378,6 +452,26 @@ fn a_namespace_name_is_written_without_spaces() {
         );
         assert!(error.to_string().contains(message), "{text:?}: {error}");
     }
+}
+
+#[test]
+fn identity_is_reserved_as_a_namespace_name_as_in_json() {
+    let error = only("namespace: identity\n  owner: identity\n");
+    assert_eq!(
+        error.place,
+        Some(Place {
+            line: 1,
+            column: 12
+        })
+    );
+    let json = namespace::parse(r#"{ "identity": { "owner": { "constraints": ["identity"] } } }"#)
+        .expect_err("identity is reserved");
+    assert_eq!(json.len(), 1, "{json:?}");
+    assert_eq!(error.kind.to_string(), json[0].kind.to_string());
+    assert!(
+        matches!(error.kind, ErrorKind::Name(NameError::Reserved(_))),
+        "{error}"
+    );
 }
 
 #[test]
@@ -420,7 +514,9 @@ fn one_bad_namespace_refuses_the_document() {
 
 #[test]
 fn namespace_checks_apply_to_each_namespace() {
-    let errors = refused("namespace: a\n  r = s\n  s = r\nnamespace: b\n  r = this\n  r = this\n");
+    let errors = refused(
+        "namespace: a\n  r = s\n  s = r\nnamespace: b\n  r: identity = this\n  r: identity = this\n",
+    );
     let kinds: Vec<_> = errors.iter().map(|error| error.kind.to_string()).collect();
     assert_eq!(errors.len(), 2, "{kinds:?}");
     assert_eq!(errors[0].namespace.as_deref(), Some("a"));
@@ -441,12 +537,12 @@ fn namespace_checks_apply_to_each_namespace() {
 #[test]
 fn every_problem_is_reported_in_document_order_once() {
     let text = "namespace: t
-  a = this |
-  b = this
-  c = this )
+  a: identity = this |
+  b: identity = this
+  c: identity = this )
   d = undeclared
-  e = (this
-  f = this
+  e: identity = (this
+  f: identity = this
 ";
     let errors = refused(text);
     let places: Vec<_> = errors
@@ -467,7 +563,7 @@ fn every_problem_is_reported_in_document_order_once() {
 
 #[test]
 fn a_relation_whose_rewrite_fails_is_still_declared() {
-    let error = only("namespace: t\n  a = this (\n  b = a\n");
+    let error = only("namespace: t\n  a: identity = this (\n  b = a\n");
     assert_eq!(error.relation.as_deref(), Some("a"));
 }
 
@@ -504,7 +600,7 @@ fn errors_name_their_place() {
         "line 3, column 7: namespace 't', relation 'r': \
          expected 'this', a relation name or '(', found 'é'"
     );
-    let error = only("namespace: t\n  r = this\n  r = this");
+    let error = only("namespace: t\n  r: identity = this\n  r: identity = this");
     assert_eq!(
         error.to_string(),
         "line 3, column 3: namespace 't', relation 'r': relation 'r' is declared more than once"
@@ -523,15 +619,28 @@ fn errors_name_their_place() {
 
 #[test]
 fn columns_count_characters_on_their_line() {
-    let error = only("namespace: t\n  a = this // ü ü\n  r = this | ü");
+    let error = only("namespace: t\n  a: identity = this // ü ü\n  r: identity = this | ü");
     assert_eq!(
         error.place,
         Some(Place {
             line: 3,
-            column: 14
+            column: 24
         })
     );
-    let error = only("namespace: t\n  r = this\n    | this\n    ! ü");
+    let error = only("namespace: t\n  é: identity");
+    assert_eq!(error.place, Some(Place { line: 2, column: 3 }));
+    let places: Vec<_> = refused("namespace: t\n  r: é, ü")
+        .iter()
+        .map(|error| error.place)
+        .collect();
+    assert_eq!(
+        places,
+        [
+            Some(Place { line: 2, column: 6 }),
+            Some(Place { line: 2, column: 9 })
+        ]
+    );
+    let error = only("namespace: t\n  r: identity = this\n    | this\n    ! ü");
     assert_eq!(error.place, Some(Place { line: 4, column: 7 }));
 }
 
@@ -549,7 +658,9 @@ fn an_error_quotes_a_bounded_and_escaped_cut() {
 #[test]
 fn each_limit_holds_at_its_value_and_breaks_one_past_it() {
     let relations = |count: usize| -> String {
-        let relations: String = (0..count).map(|i| format!("  r{i} = this\n")).collect();
+        let relations: String = (0..count)
+            .map(|i| format!("  r{i}: identity = this\n"))
+            .collect();
         format!("namespace: t\n{relations}")
     };
     one(&relations(MAX_RELATIONS));
@@ -568,7 +679,10 @@ fn each_limit_holds_at_its_value_and_breaks_one_past_it() {
         let last = "n".repeat(bytes - 4 - 3 - 7 * runs);
         let rule = format!("this{} | {last}", " | this".repeat(runs));
         assert_eq!(rule.len(), bytes);
-        (format!("namespace: t\n  {last} = this\n  r = "), rule)
+        (
+            format!("namespace: t\n  {last}: identity = this\n  r: identity = "),
+            rule,
+        )
     };
     for bytes in [MAX_EXPRESSION_BYTES - 1, MAX_EXPRESSION_BYTES] {
         let (head, rule) = rule(bytes);
@@ -588,7 +702,13 @@ fn each_limit_holds_at_its_value_and_breaks_one_past_it() {
         matches!(error.kind, ErrorKind::ExpressionTooLong),
         "{error}"
     );
-    assert_eq!(error.place, Some(Place { line: 3, column: 7 }));
+    assert_eq!(
+        error.place,
+        Some(Place {
+            line: 3,
+            column: 17
+        })
+    );
 
     let name = "n".repeat(MAX_NAMESPACE_BYTES - 2);
     one(&format!("theory: t\nnamespace: {name}"));
@@ -611,18 +731,18 @@ fn each_limit_holds_at_its_value_and_breaks_one_past_it() {
 fn parentheses_nest_at_most_max_depth() {
     let nested = |depth: usize| format!("{}this{}", "(".repeat(depth), ")".repeat(depth));
     one(&format!(
-        "namespace: t\n  r = {}",
+        "namespace: t\n  r: identity = {}",
         nested(MAX_REWRITE_DEPTH)
     ));
     let error = only(&format!(
-        "namespace: t\n  r = {}",
+        "namespace: t\n  r: identity = {}",
         nested(MAX_REWRITE_DEPTH + 1)
     ));
     assert!(
         matches!(error.kind, ErrorKind::TooManyParentheses),
         "{error}"
     );
-    let column = INDENT + MAX_REWRITE_DEPTH + 1;
+    let column = "  r: identity = ".len() + MAX_REWRITE_DEPTH + 1;
     assert_eq!(error.place, Some(Place { line: 2, column }));
 }
 
@@ -645,7 +765,7 @@ fn the_longest_chain_of_relations_is_checked() {
     let relations: String = (0..MAX_RELATIONS)
         .map(|i| {
             if i + 1 == MAX_RELATIONS {
-                format!("  r{i} = this\n")
+                format!("  r{i}: identity = this\n")
             } else {
                 format!("  r{i} = r{}\n", i + 1)
             }
@@ -664,18 +784,18 @@ fn the_printer_writes_the_canonical_form() {
     let expected = "theory: drive
 
 namespace: file
-  auditor = this & viewer
-  banned = this
-  editor = this | owner
-  owner = this
-  parent = this
-  viewer = (this | editor | (parent, viewer)) ! banned
+  auditor: identity = this & viewer
+  banned: identity
+  editor: identity = this | owner
+  owner: identity
+  parent: identity
+  viewer: identity = (this | editor | (parent, viewer)) ! banned
 
 namespace: folder
-  banned = this
-  owner = this
-  parent = this
-  viewer = (this | (parent, viewer)) ! banned
+  banned: identity
+  owner: identity
+  parent: identity
+  viewer: identity = (this | (parent, viewer)) ! banned
 ";
     assert_eq!(print(Some("drive"), &documents), Ok(expected.to_owned()));
     assert_eq!(print(Some("drive"), &reversed), Ok(expected.to_owned()));
@@ -710,8 +830,12 @@ fn the_printer_refuses_caller_defects() {
     );
     let one_operand = NamespaceDocument {
         namespace: namespace_name("t"),
-        relations: Namespace::new(vec![(relation("r"), Union(nonempty![This]))])
-            .expect("a valid namespace"),
+        relations: Namespace::new(vec![(
+            relation("r"),
+            Union(nonempty![This]),
+            vec![Constraint::Identity],
+        )])
+        .expect("a valid namespace"),
     };
     assert_eq!(print(None, &[one_operand]), Err(PrintError::OneOperand));
     let bad_namespace = NamespaceDocument {
@@ -740,10 +864,13 @@ proptest! {
     ) {
         let expression = tokens.concat();
         let json = format!(
-            r#"{{ "t": {{ "r": "{}", "r0": "this", "r1": "this", "r2": "this" }} }}"#,
-            expression.replace('\n', " ")
+            r#"{{ "t": {{ "r": {}, "r0": {{ "constraints": ["identity"] }}, "r1": {{ "constraints": ["identity"] }}, "r2": {{ "constraints": ["identity"] }} }} }}"#,
+            value(&expression.replace('\n', " "))
         );
-        let text = format!("namespace: t\n  r0 = this\n  r1 = this\n  r2 = this\n  r = {expression}");
+        let text = format!(
+            "namespace: t\n  r0: identity\n  r1: identity\n  r2: identity\n{}{expression}",
+            signature(&expression)
+        );
         match (namespace::parse(&json), schema::parse(&text)) {
             (Ok(json), Ok(mut documents)) => {
                 let document = documents.remove(0);
@@ -786,7 +913,9 @@ proptest! {
 #[test]
 fn a_long_chain_of_exclusions_is_refused_without_a_crash() {
     let chain = vec!["b"; 300_000].join("!");
-    let error = only(&format!("namespace: t\n  b = this\n  a = {chain}"));
+    let error = only(&format!(
+        "namespace: t\n  b: identity = this\n  a = {chain}"
+    ));
     assert!(
         matches!(error.kind, ErrorKind::ExpressionTooLong),
         "{error}"
@@ -799,7 +928,7 @@ fn the_printer_refuses_a_document_past_the_size_limit() {
     // written in.
     let dense = vec!["b"; 1024].join("|");
     let relations: String = (0..400).map(|i| format!("r{i}={dense}\n")).collect();
-    let namespace = |name: &str| format!("namespace: {name}\nb=this\n{relations}");
+    let namespace = |name: &str| format!("namespace: {name}\nb: identity=this\n{relations}");
     let text = format!("{}{}{}", namespace("s"), namespace("t"), namespace("u"));
     assert!(text.len() < MAX_DOCUMENT_BYTES);
     let documents = parsed(&text);
@@ -831,9 +960,9 @@ fn the_end_after_a_trailing_comment_is_at_the_end_of_its_line() {
 #[test]
 fn a_rewrite_left_open_doesnt_swallow_what_comes_next() {
     for text in [
-        "namespace: a\n  r = this |\nnamespace: b\n  r = this",
-        "namespace: a\n  r = this |\n  b = this\n  c = b",
-        "namespace: a\n  r = this !\n  s = this",
+        "namespace: a\n  r: identity = this |\nnamespace: b\n  r: identity = this",
+        "namespace: a\n  r: identity = this |\n  b: identity = this\n  c = b",
+        "namespace: a\n  r: identity = this !\n  s: identity = this",
     ] {
         let error = only(text);
         assert_eq!(error.place.map(|place| place.line), Some(3), "{text:?}");
@@ -861,8 +990,8 @@ fn a_namespace_named_in_full_under_its_theory_is_the_same_namespace() {
 #[test]
 fn an_unclosed_parenthesis_doesnt_swallow_the_next_relation() {
     for text in [
-        "namespace: x\n  b = this\n  r = (b\n  a = this\n  c = a\n",
-        "namespace: x\n  b = this\n  r = (b,\n  a = this\n  c = a\n",
+        "namespace: x\n  b: identity = this\n  r = (b\n  a: identity = this\n  c = a\n",
+        "namespace: x\n  b: identity = this\n  r = (b,\n  a: identity = this\n  c = a\n",
     ] {
         let error = only(text);
         assert_eq!(error.relation.as_deref(), Some("r"), "{text:?}");
@@ -883,8 +1012,11 @@ fn namespaces_missing_their_names_arent_duplicates() {
 #[test]
 fn a_missing_name_doesnt_take_the_next_lines_keyword() {
     for (text, found) in [
-        ("theory:\nnamespace: x\n  a = this\n", "'namespace'"),
-        ("namespace:\n  owner = this\n", "'owner'"),
+        (
+            "theory:\nnamespace: x\n  a: identity = this\n",
+            "'namespace'",
+        ),
+        ("namespace:\n  owner: identity = this\n", "'owner'"),
     ] {
         let error = only(text);
         assert_eq!(
@@ -898,15 +1030,17 @@ fn a_missing_name_doesnt_take_the_next_lines_keyword() {
 #[test]
 fn the_printer_refuses_a_rule_that_prints_past_the_limit() {
     let dense = vec!["b"; 2048].join("|");
-    let documents = parsed(&format!("namespace: t\n  b = this\n  r = {dense}"));
+    let documents = parsed(&format!(
+        "namespace: t\n  b: identity = this\n  r = {dense}"
+    ));
     assert_eq!(print(None, &documents), Err(PrintError::ExpressionTooLong));
 }
 
 #[test]
 fn a_malformed_namespace_name_is_one_name_error() {
     for (text, written) in [
-        ("namespace: 1abc\n  owner = this\n", "1abc"),
-        ("namespace: my-ns\n  r = this\n", "my-ns"),
+        ("namespace: 1abc\n  owner: identity = this\n", "1abc"),
+        ("namespace: my-ns\n  r: identity = this\n", "my-ns"),
     ] {
         let error = only(text);
         assert_eq!(
@@ -933,7 +1067,7 @@ fn rule_of(bytes: usize) -> (String, String) {
     let last = "n".repeat(bytes - 4 - 3 - 7 * runs);
     let rule = format!("this{} | {last}", " | this".repeat(runs));
     assert_eq!(rule.len(), bytes);
-    (format!("  {last} = this\n"), rule)
+    (format!("  {last}: identity\n"), rule)
 }
 
 #[test]
@@ -958,7 +1092,7 @@ fn a_name_still_starting_with_the_theory_prints_in_full() {
 #[test]
 fn the_printer_writes_a_rule_exactly_at_the_limit() {
     let (declared, rule) = rule_of(MAX_EXPRESSION_BYTES);
-    let documents = parsed(&format!("namespace: t\n{declared}  r = {rule}"));
+    let documents = parsed(&format!("namespace: t\n{declared}  r: identity = {rule}"));
     print(None, &documents).expect("a rule at the limit prints");
 }
 
@@ -970,7 +1104,7 @@ fn the_printer_writes_a_document_exactly_at_the_limit() {
     // name `rule_of` may end on, so its size doesn't depend on which.
     let (declared, rule) = rule_of(3000);
     let namespace = |name: &str, declared: &str, rule: &str| {
-        format!("namespace: {name}\n{declared}  r = {rule}\n")
+        format!("namespace: {name}\n{declared}  r: identity = {rule}\n")
     };
     let each = namespace("n0000", &declared, &rule).len() + 1;
     // Leaves the last rule between 100 bytes and one namespace more,
@@ -981,7 +1115,7 @@ fn the_printer_writes_a_document_exactly_at_the_limit() {
         .collect();
     let body = body.join("\n");
     let every: String = (1..=7)
-        .map(|n| format!("  {} = this\n", "n".repeat(n)))
+        .map(|n| format!("  {}: identity\n", "n".repeat(n)))
         .collect();
     let room = MAX_DOCUMENT_BYTES - body.len() - 1 - namespace("z", &every, "").len();
     let (_, last_rule) = rule_of(room);
@@ -989,4 +1123,355 @@ fn the_printer_writes_a_document_exactly_at_the_limit() {
     assert_eq!(text.len(), MAX_DOCUMENT_BYTES);
     let printed = print(None, &parsed(&text)).expect("a document at the limit prints");
     assert_eq!(printed, text);
+}
+
+// Constraints.
+
+/// Each relation's constraints, as written with names, sorted.
+fn constraints_of(document: &NamespaceDocument, name: &str) -> Vec<String> {
+    let mut constraints: Vec<_> = document
+        .relations
+        .constraints(&relation(name))
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    constraints.sort();
+    constraints
+}
+
+/// Sungma's own model, as `docs/specs/theory-documents.md` writes it.
+const SUNGMA: &str = "theory: sungma
+
+// The deployment, one resource: sungma.root:sungma
+namespace: root
+  owner: identity
+  admin: identity = this | owner
+  namespace_creator: identity, group#member = this | admin
+  group_creator: identity, group#member = this | admin
+  operator: identity, group#member = this | admin
+  auditor: identity, group#member = this | admin
+  reader: identity, group#member = this | auditor
+  writer: identity, group#member = this | admin
+  fact_writer: identity, group#member = this | admin
+  fact_reader: identity, group#member
+    = this | fact_writer | auditor
+  directory_reader: identity, group#member
+    = this | auditor
+  access_reader = auditor
+
+namespace: namespace
+  parent: root
+  protected: root
+  owner: identity, group#member = this | (parent, owner) ! (protected, owner)
+  admin: identity, group#member = this | owner | (parent, admin) ! (protected, admin)
+  writer: identity, group#member = this | admin | (parent, writer) ! (protected, writer)
+  reader: identity, group#member = this | writer | fact_reader | auditor | (parent, reader)
+  fact_writer: identity, group#member
+    = this | admin | (parent, fact_writer) ! (protected, fact_writer)
+  fact_reader: identity, group#member
+    = this | fact_writer | auditor | (parent, fact_reader)
+  auditor: identity, group#member
+    = this | (parent, auditor)
+  access_reader = admin | auditor
+
+namespace: relation
+  parent: namespace
+  writer: identity, group#member = this | (parent, fact_writer)
+  reader: identity, group#member = this | writer | (parent, fact_reader)
+
+namespace: group
+  parent: root
+  owner: identity, group#member = this | (parent, admin)
+  member: identity, group#member
+  access_reader = owner | (parent, auditor)
+";
+
+#[test]
+fn sungma_s_own_model_parses_to_its_four_namespaces() {
+    let documents = parsed(SUNGMA);
+    let names: Vec<_> = documents.iter().map(|d| d.namespace.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "sungma.root",
+            "sungma.namespace",
+            "sungma.relation",
+            "sungma.group"
+        ]
+    );
+    assert_eq!(constraints_of(&documents[0], "owner"), ["identity"]);
+    assert_eq!(
+        constraints_of(&documents[0], "reader"),
+        ["identity", "sungma.group#member"]
+    );
+    assert_eq!(rewrite_of(&documents[0], "owner"), This);
+    assert_eq!(constraints_of(&documents[0], "access_reader"), [""; 0]);
+    assert_eq!(constraints_of(&documents[1], "parent"), ["sungma.root"]);
+    assert_eq!(
+        constraints_of(&documents[2], "parent"),
+        ["sungma.namespace"]
+    );
+    // Printed and read back, it's the same model.
+    let printed = print(Some("sungma"), &documents).expect("a printable model");
+    let again = parsed(&printed);
+    let mut documents = documents;
+    documents.sort_by(|one, other| one.namespace.cmp(&other.namespace));
+    for (one, other) in documents.iter().zip(&again) {
+        assert_eq!(one.namespace, other.namespace);
+        assert_eq!(sorted(&one.relations), sorted(&other.relations));
+        for (name, _) in one.relations.relations() {
+            assert_eq!(
+                constraints_of(one, name.as_str()),
+                constraints_of(other, name.as_str())
+            );
+        }
+    }
+    assert_eq!(print(Some("sungma"), &again), Ok(printed));
+}
+
+#[test]
+fn the_theory_prefixes_constraints_but_never_identity_or_a_rewrite() {
+    let document = one(
+        "theory: t\nnamespace: a\n  r: identity, b, b#s, t.c, t.c#s\n    = this | s\n  s: identity\n",
+    );
+    assert_eq!(document.namespace.as_str(), "t.a");
+    assert_eq!(
+        constraints_of(&document, "r"),
+        ["identity", "t.b", "t.b#s", "t.c", "t.c#s"]
+    );
+    assert_eq!(
+        rewrite_of(&document, "r"),
+        Union(nonempty![This, Rewrite::Computed(relation("s"))])
+    );
+}
+
+#[test]
+fn a_relation_with_constraints_and_no_rewrite_reads_this() {
+    let document = one("namespace: t\n  owner: identity\n  viewer = owner\n");
+    assert_eq!(rewrite_of(&document, "owner"), This);
+    assert_eq!(constraints_of(&document, "owner"), ["identity"]);
+    assert_eq!(constraints_of(&document, "viewer"), [""; 0]);
+    let error = only("namespace: t\n  owner = this\n");
+    assert!(
+        matches!(
+            error.kind,
+            ErrorKind::Namespace(NamespaceError::Unconstrained(_))
+        ),
+        "{error}"
+    );
+    let error = only("namespace: t\n  a: identity\n  owner: identity = a\n");
+    assert!(
+        matches!(
+            error.kind,
+            ErrorKind::Namespace(NamespaceError::ConstrainedComputed(_))
+        ),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_constraint_list_can_wrap_and_holds_no_entry_twice() {
+    let wrapped = one("namespace: t\n  owner: identity,\n    group#member,\n    folder\n");
+    assert_eq!(
+        constraints_of(&wrapped, "owner"),
+        ["folder", "group#member", "identity"]
+    );
+    let error = only("namespace: t\n  owner: identity, identity\n");
+    assert!(
+        matches!(
+            error.kind,
+            ErrorKind::Namespace(NamespaceError::DuplicateConstraint { .. })
+        ),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_malformed_constraint_list_is_refused_where_it_goes_wrong() {
+    let error = only("namespace: t\n  owner: identity,\n");
+    assert_eq!(error.place, Some(Place { line: 3, column: 1 }));
+    assert_eq!(
+        error.kind.to_string(),
+        "expected a constraint, found the end"
+    );
+    for (text, column, kind) in [
+        (
+            "namespace: t\n  owner: , identity\n",
+            10,
+            "expected a constraint, found ','",
+        ),
+        (
+            "namespace: t\n  owner: = this\n",
+            10,
+            "expected a constraint, found '='",
+        ),
+        (
+            "namespace: t\n  owner: identity, = this\n",
+            20,
+            "expected a constraint, found '='",
+        ),
+        (
+            "namespace: t\n  owner: (a)\n",
+            10,
+            "expected a constraint, found '('",
+        ),
+        (
+            "namespace: t\n  owner: a b\n",
+            12,
+            "expected ',', '=', a relation, 'namespace:' or the end, found 'b'",
+        ),
+        (
+            "namespace: t\n  owner: a#\n",
+            10,
+            "'a#' is not a valid name",
+        ),
+        (
+            "namespace: t\n  owner: identity#member\n",
+            10,
+            "'identity' is reserved",
+        ),
+        ("namespace: t\n  owner: a#this\n", 10, "'this' is reserved"),
+        (
+            "namespace: t\n  owner: a..b\n",
+            10,
+            "'a..b' is not a valid name",
+        ),
+    ] {
+        let error = only(text);
+        assert_eq!(error.relation.as_deref(), Some("owner"), "{text:?}");
+        assert_eq!(error.place, Some(Place { line: 2, column }), "{text:?}");
+        assert!(error.kind.to_string().ends_with(kind), "{text:?}: {error}");
+    }
+}
+
+#[test]
+fn a_bad_constraint_before_a_subjectset_constraint_is_one_error() {
+    let errors =
+        refused("namespace: group\n  member: identity\n  editor: !, group#member = this\n");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].relation.as_deref(), Some("editor"));
+    assert_eq!(
+        errors[0].place,
+        Some(Place {
+            line: 3,
+            column: 11
+        })
+    );
+}
+
+#[test]
+fn a_bad_constraint_before_a_constraint_with_its_rewrite_is_one_error() {
+    let errors = refused(
+        "namespace: t
+  editor: !, member = this
+",
+    );
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].relation.as_deref(), Some("editor"));
+}
+
+#[test]
+fn a_bad_constraint_list_ends_at_the_next_signature() {
+    for text in [
+        "namespace: t
+  editor: !
+  viewer: !
+",
+        "namespace: t
+  editor: !,
+  viewer: !
+",
+    ] {
+        let errors = refused(text);
+        let relations: Vec<_> = errors
+            .iter()
+            .map(|error| error.relation.as_deref())
+            .collect();
+        assert_eq!(relations, [Some("editor"), Some("viewer")], "{text:?}");
+    }
+}
+
+#[test]
+fn a_constraint_signature_doesnt_take_the_next_relation() {
+    let errors = refused("namespace: t\n  owner:\n  viewer: identity\n");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].relation.as_deref(), Some("owner"));
+    let document = one("namespace: t\n  owner: identity\n  viewer: identity\n");
+    assert_eq!(constraints_of(&document, "viewer"), ["identity"]);
+}
+
+#[test]
+fn a_reference_between_namespaces_is_checked_against_the_document() {
+    // Either order, by constraint or by a fact-to-subjectset.
+    for text in [
+        "namespace: a\n  r: b#m\nnamespace: b\n  m: identity\n",
+        "namespace: b\n  m: identity\nnamespace: a\n  r: b#m\n",
+        "namespace: a\n  p: b\n  v = (p, m)\nnamespace: b\n  m: identity\n",
+    ] {
+        parsed(text);
+    }
+    let error = only("namespace: a\n  r: b#x\nnamespace: b\n  m: identity\n");
+    assert_eq!(error.namespace.as_deref(), Some("a"));
+    assert_eq!(error.place, Some(Place { line: 2, column: 3 }));
+    assert_eq!(
+        error.kind.to_string(),
+        "relation 'r' has constraint 'b#x', whose namespace doesn't declare its relation"
+    );
+    let error = only("namespace: b\n  m: identity\nnamespace: a\n  p: b, identity\n  v = (p, x)\n");
+    assert_eq!(error.relation.as_deref(), Some("v"));
+    assert_eq!(
+        error.kind.to_string(),
+        "relation 'v' follows 'x', which namespace 'b' doesn't declare"
+    );
+    // A namespace outside the document is left to the namespace write.
+    parsed("namespace: a\n  r: elsewhere#x\n  p: elsewhere\n  v = (p, x)\n");
+}
+
+#[test]
+fn the_printer_writes_constraints_sorted_under_the_theory() {
+    let documents = parsed(
+        "theory: t\nnamespace: a\n  r: t.t.b, identity, c#s, t.identity = this | s\n  s: identity\n",
+    );
+    assert_eq!(
+        constraints_of(&documents[0], "r"),
+        ["identity", "t.c#s", "t.identity", "t.t.b"]
+    );
+    let printed = print(Some("t"), &documents).expect("a printable namespace");
+    assert_eq!(
+        printed,
+        "theory: t\n\nnamespace: a\n  r: c#s, identity, t.identity, t.t.b = this | s\n  s: identity\n"
+    );
+    let again = parsed(&printed);
+    assert_eq!(
+        constraints_of(&again[0], "r"),
+        constraints_of(&documents[0], "r")
+    );
+    // Without a theory, names print in full.
+    let printed = print(None, &documents).expect("a printable namespace");
+    assert!(
+        printed.contains("  r: identity, t.c#s, t.identity, t.t.b = this | s\n"),
+        "{printed}"
+    );
+}
+
+#[test]
+fn the_printer_refuses_a_constraint_outside_the_theory() {
+    let documents = parsed("namespace: t.a\n  r: elsewhere\n");
+    assert_eq!(
+        print(Some("t"), &documents),
+        Err(PrintError::OutsideTheory("elsewhere".to_owned()))
+    );
+    let bad = NamespaceDocument {
+        namespace: namespace_name("t"),
+        relations: Namespace::new(vec![(
+            relation("r"),
+            This,
+            vec![Constraint::Subjectset(
+                namespace_name("a"),
+                relation("this"),
+            )],
+        )])
+        .expect("a valid namespace"),
+    };
+    assert!(matches!(print(None, &[bad]), Err(PrintError::Name(_))));
 }

@@ -1,10 +1,25 @@
 {
   "file": {
-    "auditor": "this & viewer",
-    "banned": "this",
-    "editor": "this | owner",
-    "owner": "this",
-    "parent": "this",
-    "viewer": "(this | editor | (parent, viewer)) ! banned"
+    "auditor": {
+      "rewrite": "this & viewer",
+      "constraints": ["identity"]
+    },
+    "banned": {
+      "constraints": ["identity"]
+    },
+    "editor": {
+      "rewrite": "this | owner",
+      "constraints": ["group#member", "identity"]
+    },
+    "owner": {
+      "constraints": ["identity"]
+    },
+    "parent": {
+      "constraints": ["folder", "folder#owner", "identity"]
+    },
+    "viewer": {
+      "rewrite": "(this | editor | (parent, viewer)) ! banned",
+      "constraints": ["group#member", "identity"]
+    }
   }
 }

@@ -15,8 +15,8 @@
 //! A namespace write is one of:
 //!
 //! ```json
-//! { "create": { "file": { "owner": "this" } } }
-//! { "new_version": { "file": { "owner": "this", "viewer": "owner" } }, "based_on": { "revision": 12 } }
+//! { "create": { "file": { "owner": { "constraints": ["identity"] } } } }
+//! { "new_version": { "file": { "owner": { "constraints": ["identity"] }, "viewer": "owner" } }, "based_on": { "revision": 12 } }
 //! { "retire": "file", "based_on": { "revision": 14 } }
 //! ```
 //!
@@ -28,9 +28,12 @@
 //! Beyond the statuses every route shares:
 //!
 //! - 409: a namespace write whose `based_on` isn't the latest version.
-//! - 413: a fact write past what one write holds.
+//! - 413: a fact write past what one write holds, or a namespace version
+//!   naming more namespaces than one write checks.
 //! - 422: a refused write. A refused namespace document is 422 whatever
-//!   its problems, names included, so it lists them all in one reply.
+//!   its problems, names included, so it lists them all in one reply, and
+//!   so is a version naming a relation another namespace doesn't declare,
+//!   or a fact whose subject its relation's constraints don't admit.
 //! - 502: the store or the clock failed.
 //! - 500: one of Sungma's limits, such as running out of ids.
 
@@ -119,9 +122,9 @@ where
         .into_response(),
         Err(error) => {
             let status = match error {
-                FactWriteServiceError::Unknown(_) | FactWriteServiceError::Undeclared(_) => {
-                    StatusCode::UNPROCESSABLE_ENTITY
-                }
+                FactWriteServiceError::Unknown(_)
+                | FactWriteServiceError::Undeclared(_)
+                | FactWriteServiceError::Unsatisfied(_) => StatusCode::UNPROCESSABLE_ENTITY,
                 FactWriteServiceError::TooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
                 FactWriteServiceError::Clock(_) | FactWriteServiceError::Store(_) => {
                     StatusCode::BAD_GATEWAY
@@ -241,8 +244,11 @@ where
 fn status(error: &NamespaceWriteServiceError) -> StatusCode {
     use NamespaceWriteServiceError::{Intern, Write};
     match error {
-        Write(NamespaceWriteError::NothingToRetire) => StatusCode::UNPROCESSABLE_ENTITY,
+        Write(NamespaceWriteError::NothingToRetire | NamespaceWriteError::References(_)) => {
+            StatusCode::UNPROCESSABLE_ENTITY
+        }
         Write(NamespaceWriteError::Conflict { .. }) => StatusCode::CONFLICT,
+        Write(NamespaceWriteError::TooLarge { .. }) => StatusCode::PAYLOAD_TOO_LARGE,
         Intern(InternError::Exhausted(_)) => StatusCode::INTERNAL_SERVER_ERROR,
         Intern(InternError::Store(_))
         | Write(NamespaceWriteError::Clock(_) | NamespaceWriteError::Store(_)) => {

@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 
 use sungma::{
-    id::RelationId,
-    namespace::Namespace,
+    id::{NamespaceId, RelationId},
+    namespace::{Constraint, Namespace},
     revision::Revision,
     rewrite::Rewrite::This,
     version::{Epochs, StoredVersionError, Version},
@@ -15,7 +15,11 @@ const OWNER: RelationId = RelationId(0);
 const BANNED: RelationId = RelationId(1);
 
 fn declaring(relations: &[RelationId]) -> Namespace {
-    Namespace::new(relations.iter().map(|&relation| (relation, This)).collect()).unwrap()
+    let constraints = vec![Constraint::Identity];
+    let relations = relations
+        .iter()
+        .map(|&relation| (relation, This, constraints.clone()));
+    Namespace::new(relations.collect()).unwrap()
 }
 
 #[test]
@@ -92,4 +96,46 @@ fn a_stored_version_needs_an_epoch_for_exactly_each_relation() {
         stored(&[OWNER], &[(OWNER, 31)]).unwrap_err(),
         StoredVersionError::LaterEpoch(OWNER)
     );
+}
+
+#[test]
+fn constraints_admit_by_relation_and_ignore_order() {
+    use sungma::{
+        graph::{Resource, Subject},
+        rewrite::Rewrite::Computed,
+        version::Constraints,
+    };
+    let folder = NamespaceId(3);
+    let namespace = Namespace::new(vec![
+        (
+            OWNER,
+            This,
+            vec![Constraint::Resource(folder), Constraint::Identity],
+        ),
+        (BANNED, Computed(OWNER), vec![]),
+    ])
+    .unwrap();
+    let constraints = Constraints::of(&namespace);
+    let alice = Subject::Identity("alice".parse().unwrap());
+    let root = Subject::ResourceMember(Resource {
+        namespace: folder,
+        id: "root".parse().unwrap(),
+    });
+    assert!(constraints.admits(OWNER, &alice));
+    assert!(constraints.admits(OWNER, &root));
+    assert!(!constraints.admits(BANNED, &alice));
+    assert!(!constraints.admits(RelationId(9), &alice));
+    let listed: Vec<_> = constraints.iter().collect();
+    assert_eq!(
+        listed,
+        [(
+            OWNER,
+            &[Constraint::Identity, Constraint::Resource(folder)][..]
+        )]
+    );
+    let reordered = Constraints::new(HashMap::from([(
+        OWNER,
+        vec![Constraint::Resource(folder), Constraint::Identity],
+    )]));
+    assert_eq!(reordered, constraints);
 }

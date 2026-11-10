@@ -1,8 +1,0 @@
-# Files sit in folders.
-[file]
-auditor = "this & viewer"
-banned = "this"
-editor = "this | owner"
-owner = "this"
-parent = "this"
-viewer = "(this | editor | (parent, viewer)) ! banned"
