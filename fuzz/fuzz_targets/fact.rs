@@ -1,5 +1,5 @@
 //! Runs the fact document parser on arbitrary bytes, against the fixture
-//! namespaces on a memory node: it must never panic, overflow its stack or
+//! namespaces (in the order their constraints name each other) on a memory node: it must never panic, overflow its stack or
 //! abort, and a document it refuses must store no fact.
 
 #![no_main]
@@ -14,9 +14,9 @@ use libfuzzer_sys::fuzz_target;
 use sungma_node::testkit::World;
 
 const NAMESPACES: [&str; 3] = [
-    include_str!("../../crates/sungma/tests/fixtures/namespaces/file.json"),
-    include_str!("../../crates/sungma/tests/fixtures/namespaces/folder.json"),
     include_str!("../../crates/sungma/tests/fixtures/namespaces/group.json"),
+    include_str!("../../crates/sungma/tests/fixtures/namespaces/folder.json"),
+    include_str!("../../crates/sungma/tests/fixtures/namespaces/file.json"),
 ];
 
 /// Runs `future` to its end. The memory node never waits on anything, so
