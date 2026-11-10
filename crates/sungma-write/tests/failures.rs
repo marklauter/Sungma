@@ -103,7 +103,7 @@ impl Sent {
     }
 
     fn tdl(document: &str, headers: &[(&'static str, &'static str)]) -> Self {
-        let mut all = vec![("content-type", "text/plain; charset=utf-8")];
+        let mut all = vec![("content-type", "application/vnd.sungma.tdl")];
         all.extend_from_slice(headers);
         Self {
             path: "/namespaces/write",

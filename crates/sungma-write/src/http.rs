@@ -13,11 +13,13 @@
 //! and gives the zookie of its revision.
 //!
 //! A namespace write's body is a theory document, in TDL, that declares
-//! the one namespace written, sent as `text/plain; charset=utf-8`:
+//! the one namespace written, sent as `application/vnd.sungma.tdl`. A browser can't send that
+//! type across sites without a CORS preflight, so a page on another site
+//! can't write a namespace with a caller's cookies:
 //!
 //! ```text
 //! POST /namespaces/write
-//! Content-Type: text/plain; charset=utf-8
+//! Content-Type: application/vnd.sungma.tdl
 //! If-Match: "12"
 //!
 //! namespace: file
@@ -50,7 +52,7 @@
 //! - 413: a fact write past what one write holds, a namespace write whose
 //!   body is past [`MAX_NAMESPACE_BODY_BYTES`], or a namespace version
 //!   naming more namespaces than one write checks.
-//! - 415: a namespace write not sent as `text/plain; charset=utf-8`.
+//! - 415: a namespace write not sent as `application/vnd.sungma.tdl`.
 //! - 422: a refused write. A refused namespace document is 422 whatever
 //!   its problems, names included, so it lists them all in one reply, and
 //!   so is a document that doesn't declare exactly one namespace, a
@@ -178,9 +180,9 @@ type Named = NamespaceWrite<RelationName, NamespaceName>;
 
 /// The media type of a namespace write's body, the TDL text of one
 /// namespace.
-pub const TDL_MEDIA_TYPE: &str = "text/plain; charset=utf-8";
+pub const TDL_MEDIA_TYPE: &str = "application/vnd.sungma.tdl";
 
-/// Whether the content type is `text/plain`, with no parameter but an
+/// Whether the content type is `application/vnd.sungma.tdl`, with no parameter but an
 /// optional `charset=utf-8`, case aside.
 fn is_tdl(headers: &HeaderMap) -> bool {
     let Some(value) = header(headers, "content-type") else {
@@ -188,7 +190,7 @@ fn is_tdl(headers: &HeaderMap) -> bool {
     };
     let mut parts = value.split(';').map(str::trim);
     let essence = parts.next().unwrap_or_default();
-    essence.eq_ignore_ascii_case("text/plain")
+    essence.eq_ignore_ascii_case(TDL_MEDIA_TYPE)
         && parts.all(|parameter| {
             parameter.split_once('=').is_some_and(|(name, value)| {
                 let value = value.trim();

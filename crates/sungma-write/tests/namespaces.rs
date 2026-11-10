@@ -138,21 +138,26 @@ async fn a_refused_document_lists_every_problem() {
     }
 }
 
-/// A namespace write is TDL sent as `text/plain`, with no parameter but
-/// an optional `charset=utf-8`; any other content type is unsupported.
+/// A namespace write is TDL sent as `application/vnd.sungma.tdl`, with no parameter but an
+/// optional `charset=utf-8`; any other content type, `text/plain` included,
+/// is unsupported, so a browser can't send one across sites unpreflighted.
 #[tokio::test]
-async fn a_namespace_write_is_sent_as_utf_8_text() {
+async fn a_namespace_write_is_sent_as_tdl() {
     for (store, app) in stores().await {
         let document = "namespace: file\n";
         for content_type in [
             None,
             Some("application/json"),
             Some("text/html"),
-            Some("text/plain; charset=iso-8859-1"),
-            Some("text/plain; format=flowed"),
-            Some("text/plain; charset"),
-            Some("text/plain; charset=\"utf-8"),
-            Some("text/plain-ish"),
+            Some("text/plain"),
+            Some("text/plain; charset=utf-8"),
+            Some("application/x-www-form-urlencoded"),
+            Some("multipart/form-data"),
+            Some("application/vnd.sungma.tdl; charset=iso-8859-1"),
+            Some("application/vnd.sungma.tdl; format=flowed"),
+            Some("application/vnd.sungma.tdl; charset"),
+            Some("application/vnd.sungma.tdl; charset=\"utf-8"),
+            Some("application/vnd.sungma.tdl-ish"),
         ] {
             let headers: Vec<_> = content_type
                 .map(|c| ("content-type", c))
@@ -165,14 +170,17 @@ async fn a_namespace_write_is_sent_as_utf_8_text() {
                 "{store}: {content_type:?}"
             );
             assert!(
-                reply["error"].as_str().unwrap().contains("text/plain"),
+                reply["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("application/vnd.sungma.tdl"),
                 "{store}"
             );
         }
         for (namespace, content_type) in [
-            ("a", "text/plain"),
-            ("b", "text/plain; charset=utf-8"),
-            ("c", "Text/Plain ; Charset=\"UTF-8\""),
+            ("a", "application/vnd.sungma.tdl"),
+            ("b", "application/vnd.sungma.tdl; charset=utf-8"),
+            ("c", "Application/Vnd.Sungma.TDL ; Charset=\"UTF-8\""),
         ] {
             let document = format!("namespace: {namespace}\n");
             let headers = [("content-type", content_type)];
@@ -185,7 +193,7 @@ async fn a_namespace_write_is_sent_as_utf_8_text() {
 #[tokio::test]
 async fn a_body_that_is_not_utf_8_is_malformed() {
     for (store, app) in stores().await {
-        let headers = [("content-type", "text/plain; charset=utf-8")];
+        let headers = [("content-type", "application/vnd.sungma.tdl")];
         let body = b"namespace: \xff\n";
         let (status, reply) = send(&app, "/namespaces/write", body, &headers).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{store}: {reply}");
@@ -210,7 +218,10 @@ async fn an_if_match_that_is_not_one_revision_is_malformed() {
             "\"1x\"".to_owned(),
             "\"18446744073709551616\"".to_owned(),
         ] {
-            let headers = [("content-type", "text/plain"), ("if-match", tag.as_str())];
+            let headers = [
+                ("content-type", "application/vnd.sungma.tdl"),
+                ("if-match", tag.as_str()),
+            ];
             let (status, reply) =
                 send(&app, "/namespaces/write", "namespace: file\n", &headers).await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{store}: {tag}: {reply}");
@@ -224,7 +235,7 @@ async fn an_if_match_that_is_not_one_revision_is_malformed() {
         }
         let tag = format!("\"{revision}\"");
         let headers = [
-            ("content-type", "text/plain"),
+            ("content-type", "application/vnd.sungma.tdl"),
             ("if-match", tag.as_str()),
             ("if-match", tag.as_str()),
         ];
@@ -233,7 +244,7 @@ async fn an_if_match_that_is_not_one_revision_is_malformed() {
         // Space around the tag is allowed.
         let spaced = format!(" {tag} ");
         let headers = [
-            ("content-type", "text/plain"),
+            ("content-type", "application/vnd.sungma.tdl"),
             ("if-match", spaced.as_str()),
         ];
         let (status, reply) = send(&app, "/namespaces/write", "namespace: file\n", &headers).await;

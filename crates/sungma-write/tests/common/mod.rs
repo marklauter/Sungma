@@ -126,7 +126,7 @@ pub async fn write_namespace(
     based_on: Option<&Value>,
 ) -> (StatusCode, Value) {
     let tag = based_on.map(if_match);
-    let mut headers = vec![("content-type", "text/plain; charset=utf-8")];
+    let mut headers = vec![("content-type", "application/vnd.sungma.tdl")];
     if let Some(tag) = &tag {
         headers.push(("if-match", tag));
     }
