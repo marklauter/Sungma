@@ -29,6 +29,104 @@ A document is applied, like a DDL script: Sungma checks each namespace and store
 In logic, a theory is a set of sentences closed under deduction. Here the sentences are rewrites. When rewrites are combined with fact tuples, a graph is formed from which each subjectset's closure may be deduced. [Checks](#checks) keep that true.
 <!-- /final -->
 
+## TDL
+
+A relation reads like a signature: its name, a colon and its constraints, then `=` and its rewrite. With no `=`, it reads `this`. With no constraints, it's computed.
+
+```ebnf
+⟨document⟩    ::= [ 'theory' ':' ⟨namespace name⟩ ] ⟨namespace⟩ { ⟨namespace⟩ }
+⟨namespace⟩   ::= 'namespace' ':' ⟨namespace name⟩ { ⟨relation⟩ }
+⟨relation⟩    ::= ⟨relation name⟩ ':' ⟨constraints⟩ [ '=' ⟨rewrite⟩ ]
+                | ⟨relation name⟩ '=' ⟨rewrite⟩
+⟨constraints⟩ ::= ⟨constraint⟩ { ',' ⟨constraint⟩ }
+```
+
+Grammars here are EBNF: `{ }` repeats, `[ ]` is optional, and `'x'…'y'` is a character range.
+
+- Whitespace, line breaks included, only separates tokens. A rewrite may start on the next line and wrap.
+- A rewrite runs until the next signature (a name followed by `:` or `=`), the next `namespace:`, or the end. A constraint list ends where no comma follows.
+- `//` starts a comment to the end of the line. Comments aren't kept.
+- There are no quotes, escapes, numbers or booleans, so every token is a name, a keyword or punctuation.
+- A document is UTF-8 without a byte-order mark. Outside comments, a character the grammar doesn't use is refused.
+- A document declares at least one namespace.
+
+## Names
+
+A namespace name is one or more names joined by dots, such as `drive.file`. A relation name is one name. Names are case-sensitive.
+
+```ebnf
+⟨namespace name⟩ ::= ⟨name⟩ { '.' ⟨name⟩ }
+⟨relation name⟩  ::= ⟨name⟩     excluding 'this', 'namespace' and 'theory' in any casing
+⟨name⟩           ::= ( ⟨letter⟩ | '_' ) { ⟨letter⟩ | ⟨digit⟩ | '_' }
+⟨letter⟩         ::= 'a'…'z' | 'A'…'Z'
+⟨digit⟩          ::= '0'…'9'
+```
+
+Reserved:
+
+- `this` is the rewrite keyword, in lowercase. No relation may be named `this` in any casing, so `This | owner` is refused.
+- `namespace` and `theory` are TDL keywords, so no relation may be named either, in any casing. They may still name namespaces and appear in constraints.
+- No namespace may be named `identity`.
+- A first segment of `sungma` is reserved for Sungma's own namespaces, so `sungma.audit` is reserved and `sungmax` isn't.
+
+Names are checked once, where they enter. Past that, only checked names exist.
+
+## Constraints
+
+A relation whose rewrite reads `this` declares its constraints. A fact whose subject satisfies none of them is refused, so bad data can't quietly empty a closure. A constraint is:
+
+- `identity`: an identity, such as a person's or a client's `sub`;
+- a namespace, such as `folder`: a resource of it, such as `folder:root#...`;
+- `namespace#relation`, such as `group#member`: a subjectset of that relation.
+
+```ebnf
+⟨constraint⟩ ::= 'identity' | ⟨namespace name⟩ [ '#' ⟨relation name⟩ ]
+```
+
+A relation declares at least one constraint, none twice, in any order. No constraint admits every subject, so every link can be checked.
+
+A relation whose rewrite doesn't read `this` is computed, and declares none.
+
+## Rewrite grammar
+
+```ebnf
+⟨rewrite⟩             ::= ⟨union⟩
+⟨union⟩               ::= ⟨intersection⟩ { '|' ⟨intersection⟩ }
+⟨intersection⟩        ::= ⟨exclusion⟩ { '&' ⟨exclusion⟩ }
+⟨exclusion⟩           ::= ⟨term⟩ { '!' ⟨term⟩ }
+⟨term⟩                ::= 'this' | ⟨computed-subjectset⟩ | ⟨fact-to-subjectset⟩ | '(' ⟨rewrite⟩ ')'
+⟨computed-subjectset⟩ ::= ⟨relation name⟩
+⟨fact-to-subjectset⟩  ::= '(' ⟨factset⟩ ',' ⟨computed-subjectset⟩ ')'
+⟨factset⟩             ::= ⟨relation name⟩
+```
+
+`!` (exclusion) binds tightest, then `&` (intersection), then `|` (union), each reading left to right: `a | b & c` is `a | (b & c)`, and `a ! b ! c` is `(a ! b) ! c`.
+
+- A name is the longest run of name characters, so `thisone` is one name.
+- A run of one operator is one node: `a | b | c` is one union of three.
+- Parentheses are kept: `(a | b) | c` is a union whose first operand is a union.
+
+## Meaning
+
+A rewrite defines the closure of each subjectset formed from its relation:
+
+- `this` is the subjects the facts bind to the subjectset.
+- A computed subjectset is the closure of the named relation on the same resource.
+- A fact-to-subjectset takes the subjects the factset binds on the same resource. For each that is a resource or a subjectset, it takes the closure of the followed relation on that subject's resource. Identities are skipped.
+
+A subjectset whose relation isn't declared has an empty closure.
+
+## The theory name
+
+The theory name is a prefix. The parser adds it and a dot to each unqualified namespace name, in headers and in constraints. Under `theory: sungma`, `root` means `sungma.root`, and `group#member` means `sungma.group#member`.
+
+- A name that already starts with the theory name and a dot gets no prefix: under `theory: t`, `a` and `t.a` both name `t.a`.
+- `identity` is never prefixed, and rewrites name only relations, so the prefix never touches them.
+- Without a theory name, a document holds full names.
+- A theory name follows the namespace name grammar.
+
+Once parsed, the prefix is gone. Everything sees full names, and nothing records which document a namespace came from. A theory shows only in the shared first segment of its namespaces' names.
+
 ## Sample
 
 [Sungma's own authorization](sungma-authorization.md#the-model):
@@ -79,104 +177,6 @@ namespace: group
   member: identity, group#member
   access_reader = owner | (parent, auditor)
 ```
-
-## TDL
-
-A relation reads like a signature: its name, a colon and its constraints, then `=` and its rewrite. With no `=`, it reads `this`. With no constraints, it's computed.
-
-```ebnf
-⟨document⟩    ::= [ 'theory' ':' ⟨namespace name⟩ ] ⟨namespace⟩ { ⟨namespace⟩ }
-⟨namespace⟩   ::= 'namespace' ':' ⟨namespace name⟩ { ⟨relation⟩ }
-⟨relation⟩    ::= ⟨relation name⟩ ':' ⟨constraints⟩ [ '=' ⟨rewrite⟩ ]
-                | ⟨relation name⟩ '=' ⟨rewrite⟩
-⟨constraints⟩ ::= ⟨constraint⟩ { ',' ⟨constraint⟩ }
-```
-
-Grammars here are EBNF: `{ }` repeats, `[ ]` is optional, and `'x'…'y'` is a character range.
-
-- Whitespace, line breaks included, only separates tokens. A rewrite may start on the next line and wrap.
-- A rewrite runs until the next signature (a name followed by `:` or `=`), the next `namespace:`, or the end. A constraint list ends where no comma follows.
-- `//` starts a comment to the end of the line. Comments aren't kept.
-- There are no quotes, escapes, numbers or booleans, so every token is a name, a keyword or punctuation.
-- A document is UTF-8 without a byte-order mark. Outside comments, a character the grammar doesn't use is refused.
-- A document declares at least one namespace.
-
-## The theory name
-
-The theory name is a prefix. The parser adds it and a dot to each unqualified namespace name, in headers and in constraints. Under `theory: sungma`, `root` means `sungma.root`, and `group#member` means `sungma.group#member`.
-
-- A name that already starts with the theory name and a dot gets no prefix: under `theory: t`, `a` and `t.a` both name `t.a`.
-- `identity` is never prefixed, and rewrites name only relations, so the prefix never touches them.
-- Without a theory name, a document holds full names.
-- A theory name follows the namespace name grammar.
-
-Once parsed, the prefix is gone. Everything sees full names, and nothing records which document a namespace came from. A theory shows only in the shared first segment of its namespaces' names.
-
-## Names
-
-A namespace name is one or more names joined by dots, such as `drive.file`. A relation name is one name. Names are case-sensitive.
-
-```ebnf
-⟨namespace name⟩ ::= ⟨name⟩ { '.' ⟨name⟩ }
-⟨relation name⟩  ::= ⟨name⟩     excluding 'this', 'namespace' and 'theory' in any casing
-⟨name⟩           ::= ( ⟨letter⟩ | '_' ) { ⟨letter⟩ | ⟨digit⟩ | '_' }
-⟨letter⟩         ::= 'a'…'z' | 'A'…'Z'
-⟨digit⟩          ::= '0'…'9'
-```
-
-Reserved:
-
-- `this` is the rewrite keyword, in lowercase. No relation may be named `this` in any casing, so `This | owner` is refused.
-- `namespace` and `theory` are TDL keywords, so no relation may be named either, in any casing. They may still name namespaces and appear in constraints.
-- No namespace may be named `identity`.
-- A first segment of `sungma` is reserved for Sungma's own namespaces, so `sungma.audit` is reserved and `sungmax` isn't.
-
-Names are checked once, where they enter. Past that, only checked names exist.
-
-## Rewrite grammar
-
-```ebnf
-⟨rewrite⟩             ::= ⟨union⟩
-⟨union⟩               ::= ⟨intersection⟩ { '|' ⟨intersection⟩ }
-⟨intersection⟩        ::= ⟨exclusion⟩ { '&' ⟨exclusion⟩ }
-⟨exclusion⟩           ::= ⟨term⟩ { '!' ⟨term⟩ }
-⟨term⟩                ::= 'this' | ⟨computed-subjectset⟩ | ⟨fact-to-subjectset⟩ | '(' ⟨rewrite⟩ ')'
-⟨computed-subjectset⟩ ::= ⟨relation name⟩
-⟨fact-to-subjectset⟩  ::= '(' ⟨factset⟩ ',' ⟨computed-subjectset⟩ ')'
-⟨factset⟩             ::= ⟨relation name⟩
-```
-
-`!` (exclusion) binds tightest, then `&` (intersection), then `|` (union), each reading left to right: `a | b & c` is `a | (b & c)`, and `a ! b ! c` is `(a ! b) ! c`.
-
-- A name is the longest run of name characters, so `thisone` is one name.
-- A run of one operator is one node: `a | b | c` is one union of three.
-- Parentheses are kept: `(a | b) | c` is a union whose first operand is a union.
-
-## Constraints
-
-A relation whose rewrite reads `this` declares its constraints. A fact whose subject satisfies none of them is refused, so bad data can't quietly empty a closure. A constraint is:
-
-- `identity`: an identity, such as a person's or a client's `sub`;
-- a namespace, such as `folder`: a resource of it, such as `folder:root#...`;
-- `namespace#relation`, such as `group#member`: a subjectset of that relation.
-
-```ebnf
-⟨constraint⟩ ::= 'identity' | ⟨namespace name⟩ [ '#' ⟨relation name⟩ ]
-```
-
-A relation declares at least one constraint, none twice, in any order. No constraint admits every subject, so every link can be checked.
-
-A relation whose rewrite doesn't read `this` is computed, and declares none.
-
-## Meaning
-
-A rewrite defines the closure of each subjectset formed from its relation:
-
-- `this` is the subjects the facts bind to the subjectset.
-- A computed subjectset is the closure of the named relation on the same resource.
-- A fact-to-subjectset takes the subjects the factset binds on the same resource. For each that is a resource or a subjectset, it takes the closure of the followed relation on that subject's resource. Identities are skipped.
-
-A subjectset whose relation isn't declared has an empty closure.
 
 ## Checks
 
