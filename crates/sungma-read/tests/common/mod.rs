@@ -92,15 +92,60 @@ pub async fn post_raw(
     body: &str,
     content_type: Option<&str>,
 ) -> (StatusCode, Value) {
+    let headers: Vec<_> = content_type
+        .map(|content_type| ("content-type", content_type))
+        .into_iter()
+        .collect();
+    send(app, path, body, &headers).await
+}
+
+/// Posts `body` to `path` with the headers, and gives the status and the
+/// JSON reply.
+pub async fn send(
+    app: &Router,
+    path: &str,
+    body: impl AsRef<[u8]>,
+    headers: &[(&str, &str)],
+) -> (StatusCode, Value) {
     let mut request = Request::post(path);
-    if let Some(content_type) = content_type {
-        request = request.header("content-type", content_type);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
     }
-    let request = request.body(Body::from(body.to_owned())).unwrap();
+    let request = request.body(Body::from(body.as_ref().to_vec())).unwrap();
     let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     let reply = serde_json::from_slice(&bytes)
         .unwrap_or_else(|_| panic!("not JSON: {}", String::from_utf8_lossy(&bytes)));
     (status, reply)
+}
+
+/// The `If-Match` value naming a zookie's revision.
+pub fn if_match(zookie: &Value) -> String {
+    format!("\"{}\"", zookie["revision"])
+}
+
+/// Writes a namespace from its TDL text: a create without `based_on`, a
+/// new version based on that zookie with one.
+pub async fn write_namespace(
+    app: &Router,
+    document: &str,
+    based_on: Option<&Value>,
+) -> (StatusCode, Value) {
+    let tag = based_on.map(if_match);
+    let mut headers = vec![("content-type", "text/plain; charset=utf-8")];
+    if let Some(tag) = &tag {
+        headers.push(("if-match", tag));
+    }
+    send(app, "/namespaces/write", document, &headers).await
+}
+
+/// Retires `namespace`, based on that zookie.
+pub async fn retire_namespace(
+    app: &Router,
+    namespace: &str,
+    based_on: &Value,
+) -> (StatusCode, Value) {
+    let path = format!("/namespaces/retire?namespace={namespace}");
+    send(app, &path, "", &[("if-match", &if_match(based_on))]).await
 }

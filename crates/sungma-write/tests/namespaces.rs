@@ -1,15 +1,12 @@
-//! `POST /namespaces/write` and `POST /namespaces/read`, on each store.
+//! `POST /namespaces/write`, `POST /namespaces/retire` and
+//! `POST /namespaces/read`, on each store.
 
 mod common;
 
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
-use common::{post, post_raw, stores};
-
-async fn write(app: &axum::Router, body: Value) -> (StatusCode, Value) {
-    post(app, "/namespaces/write", body).await
-}
+use common::{post, retire_namespace, send, stores, write_namespace};
 
 async fn read(app: &axum::Router, body: Value) -> (StatusCode, Value) {
     post(app, "/namespaces/read", body).await
@@ -18,9 +15,10 @@ async fn read(app: &axum::Router, body: Value) -> (StatusCode, Value) {
 #[tokio::test]
 async fn a_namespace_is_created_read_versioned_and_retired() {
     for (store, app) in stores().await {
-        let (status, created) = write(
+        let (status, created) = write_namespace(
             &app,
-            json!({ "create": "namespace: file\n  viewer: owner\n  owner<@identity>\n" }),
+            "namespace: file\n  viewer: owner\n  owner<@identity>\n",
+            None,
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{store}: {created}");
@@ -36,11 +34,8 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
         assert_eq!(reply["version"], v1, "{store}");
         assert_eq!(reply["zookie"], v1, "{store}");
 
-        let (status, versioned) = write(
-            &app,
-            json!({ "new_version": "namespace: file\n  owner<@identity>\n", "based_on": v1 }),
-        )
-        .await;
+        let (status, versioned) =
+            write_namespace(&app, "namespace: file\n  owner<@identity>\n", Some(&v1)).await;
         assert_eq!(status, StatusCode::OK, "{store}: {versioned}");
         let v2 = versioned["zookie"].clone();
         assert!(v2["revision"].as_u64() > v1["revision"].as_u64(), "{store}");
@@ -56,7 +51,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
         let (_, reply) = read(&app, json!({ "namespace": "file", "zookie": v1 })).await;
         assert_eq!(reply["version"], v2, "{store}");
 
-        let (status, retired) = write(&app, json!({ "retire": "file", "based_on": v2 })).await;
+        let (status, retired) = retire_namespace(&app, "file", &v2).await;
         assert_eq!(status, StatusCode::OK, "{store}: {retired}");
 
         let (status, reply) = read(&app, json!({ "namespace": "file" })).await;
@@ -64,7 +59,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
         assert!(reply["error"].as_str().unwrap().contains("file"), "{store}");
 
         // Created again after its retirement.
-        let (status, reply) = write(&app, json!({ "create": "namespace: file\n" })).await;
+        let (status, reply) = write_namespace(&app, "namespace: file\n", None).await;
         assert_eq!(status, StatusCode::OK, "{store}: {reply}");
     }
 }
@@ -72,34 +67,28 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
 #[tokio::test]
 async fn a_write_not_based_on_the_latest_version_is_a_conflict() {
     for (store, app) in stores().await {
-        let (_, created) = write(
-            &app,
-            json!({ "create": "namespace: file\n  owner<@identity>\n" }),
-        )
-        .await;
+        let (_, created) =
+            write_namespace(&app, "namespace: file\n  owner<@identity>\n", None).await;
         let v1 = created["zookie"].clone();
-        let (_, versioned) = write(
+        let (_, versioned) = write_namespace(
             &app,
-            json!({ "new_version": "namespace: file\n  owner<@identity>\n  viewer: owner\n", "based_on": v1 }),
+            "namespace: file\n  owner<@identity>\n  viewer: owner\n",
+            Some(&v1),
         )
         .await;
         let v2 = versioned["zookie"].clone();
-        for body in [
-            json!({ "new_version": "namespace: file\n", "based_on": v1 }),
-            json!({ "retire": "file", "based_on": v1 }),
-            json!({ "create": "namespace: file\n" }),
-        ] {
-            let (status, reply) = write(&app, body.clone()).await;
-            assert_eq!(status, StatusCode::CONFLICT, "{store}: {body}");
-            assert_eq!(reply["latest"], v2, "{store}: {body}");
+        let stale = [
+            write_namespace(&app, "namespace: file\n", Some(&v1)).await,
+            retire_namespace(&app, "file", &v1).await,
+            write_namespace(&app, "namespace: file\n", None).await,
+        ];
+        for (write, (status, reply)) in ["new version", "retire", "create"].iter().zip(stale) {
+            assert_eq!(status, StatusCode::CONFLICT, "{store}: {write}");
+            assert_eq!(reply["latest"], v2, "{store}: {write}");
             assert!(reply["error"].is_string(), "{store}");
         }
         // A namespace with no version has no latest to name.
-        let (status, reply) = write(
-            &app,
-            json!({ "new_version": "namespace: folder\n", "based_on": v1 }),
-        )
-        .await;
+        let (status, reply) = write_namespace(&app, "namespace: folder\n", Some(&v1)).await;
         assert_eq!(status, StatusCode::CONFLICT, "{store}");
         assert_eq!(reply["latest"], Value::Null, "{store}");
     }
@@ -109,17 +98,13 @@ async fn a_write_not_based_on_the_latest_version_is_a_conflict() {
 async fn retiring_a_namespace_with_no_version_is_refused() {
     for (store, app) in stores().await {
         let based_on = json!({ "revision": 1 });
-        let (status, _) = write(&app, json!({ "retire": "file", "based_on": based_on })).await;
+        let (status, _) = retire_namespace(&app, "file", &based_on).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{store}");
 
-        let (_, created) = write(&app, json!({ "create": "namespace: file\n" })).await;
+        let (_, created) = write_namespace(&app, "namespace: file\n", None).await;
         let v1 = created["zookie"].clone();
-        let (_, retired) = write(&app, json!({ "retire": "file", "based_on": v1 })).await;
-        let (status, _) = write(
-            &app,
-            json!({ "retire": "file", "based_on": retired["zookie"] }),
-        )
-        .await;
+        let (_, retired) = retire_namespace(&app, "file", &v1).await;
+        let (status, _) = retire_namespace(&app, "file", &retired["zookie"]).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{store}");
     }
 }
@@ -127,9 +112,10 @@ async fn retiring_a_namespace_with_no_version_is_refused() {
 #[tokio::test]
 async fn a_refused_document_lists_every_problem() {
     for (store, app) in stores().await {
-        let (status, reply) = write(
+        let (status, reply) = write_namespace(
             &app,
-            json!({ "create": "namespace: file\n  viewer: editor\n  owner<@identity>\n  this<@identity>\n" }),
+            "namespace: file\n  viewer: editor\n  owner<@identity>\n  this<@identity>\n",
+            None,
         )
         .await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{store}: {reply}");
@@ -141,37 +127,166 @@ async fn a_refused_document_lists_every_problem() {
         let (status, _) = read(&app, json!({ "namespace": "file" })).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{store}");
 
-        let (_, created) = write(&app, json!({ "create": "namespace: file\n" })).await;
-        let (status, reply) = write(
+        let (_, created) = write_namespace(&app, "namespace: file\n", None).await;
+        let (status, reply) = write_namespace(
             &app,
-            json!({ "new_version": "namespace: file\n  viewer: editor\n", "based_on": created["zookie"] }),
+            "namespace: file\n  viewer: editor\n",
+            Some(&created["zookie"]),
         )
         .await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{store}: {reply}");
     }
 }
 
+/// A namespace write is TDL sent as `text/plain`, with no parameter but
+/// an optional `charset=utf-8`; any other content type is unsupported.
 #[tokio::test]
-async fn a_body_of_no_known_shape_is_malformed() {
+async fn a_namespace_write_is_sent_as_utf_8_text() {
     for (store, app) in stores().await {
-        let zookie = json!({ "revision": 1 });
-        for body in [
-            json!({}),
-            json!({ "create": "namespace: file\n", "based_on": zookie }),
-            json!({ "new_version": "namespace: file\n" }),
-            json!({ "retire": "file" }),
-            json!({ "create": "namespace: file\n", "retire": "file", "based_on": zookie }),
-            json!({ "retire": "no such name!", "based_on": zookie }),
-            json!({ "create": "namespace: file\n", "extra": 1 }),
+        let document = "namespace: file\n";
+        for content_type in [
+            None,
+            Some("application/json"),
+            Some("text/html"),
+            Some("text/plain; charset=iso-8859-1"),
+            Some("text/plain; format=flowed"),
+            Some("text/plain; charset"),
+            Some("text/plain; charset=\"utf-8"),
+            Some("text/plain-ish"),
         ] {
-            let (status, reply) = write(&app, body.clone()).await;
-            assert_eq!(status, StatusCode::BAD_REQUEST, "{store}: {body}");
-            assert!(reply["request_id"].is_string(), "{store}");
-            assert!(reply["error"].is_string(), "{store}");
+            let headers: Vec<_> = content_type
+                .map(|c| ("content-type", c))
+                .into_iter()
+                .collect();
+            let (status, reply) = send(&app, "/namespaces/write", document, &headers).await;
+            assert_eq!(
+                status,
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "{store}: {content_type:?}"
+            );
+            assert!(
+                reply["error"].as_str().unwrap().contains("text/plain"),
+                "{store}"
+            );
         }
-        let body = r#"{"create":"namespace: file\n"}"#;
-        let (status, _) = post_raw(&app, "/namespaces/write", body, None).await;
-        assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE, "{store}");
+        for (namespace, content_type) in [
+            ("a", "text/plain"),
+            ("b", "text/plain; charset=utf-8"),
+            ("c", "Text/Plain ; Charset=\"UTF-8\""),
+        ] {
+            let document = format!("namespace: {namespace}\n");
+            let headers = [("content-type", content_type)];
+            let (status, reply) = send(&app, "/namespaces/write", &document, &headers).await;
+            assert_eq!(status, StatusCode::OK, "{store}: {content_type}: {reply}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_body_that_is_not_utf_8_is_malformed() {
+    for (store, app) in stores().await {
+        let headers = [("content-type", "text/plain; charset=utf-8")];
+        let body = b"namespace: \xff\n";
+        let (status, reply) = send(&app, "/namespaces/write", body, &headers).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{store}: {reply}");
+        assert!(reply["request_id"].is_string(), "{store}");
+    }
+}
+
+/// `If-Match` is one revision as a strong entity tag.
+#[tokio::test]
+async fn an_if_match_that_is_not_one_revision_is_malformed() {
+    for (store, app) in stores().await {
+        let (_, created) = write_namespace(&app, "namespace: file\n", None).await;
+        let revision = created["zookie"]["revision"].as_u64().unwrap();
+        for tag in [
+            format!("{revision}"),
+            format!("W/\"{revision}\""),
+            format!("\"{revision}\", \"{revision}\""),
+            format!("\"+{revision}\""),
+            format!("\"{revision}"),
+            "*".to_owned(),
+            "\"\"".to_owned(),
+            "\"1x\"".to_owned(),
+            "\"18446744073709551616\"".to_owned(),
+        ] {
+            let headers = [("content-type", "text/plain"), ("if-match", tag.as_str())];
+            let (status, reply) =
+                send(&app, "/namespaces/write", "namespace: file\n", &headers).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{store}: {tag}: {reply}");
+            assert!(
+                reply["error"].as_str().unwrap().contains("If-Match"),
+                "{store}"
+            );
+            let path = "/namespaces/retire?namespace=file";
+            let (status, _) = send(&app, path, "", &[("if-match", tag.as_str())]).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{store}: {tag}");
+        }
+        let tag = format!("\"{revision}\"");
+        let headers = [
+            ("content-type", "text/plain"),
+            ("if-match", tag.as_str()),
+            ("if-match", tag.as_str()),
+        ];
+        let (status, _) = send(&app, "/namespaces/write", "namespace: file\n", &headers).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{store}: two headers");
+        // Space around the tag is allowed.
+        let spaced = format!(" {tag} ");
+        let headers = [
+            ("content-type", "text/plain"),
+            ("if-match", spaced.as_str()),
+        ];
+        let (status, reply) = send(&app, "/namespaces/write", "namespace: file\n", &headers).await;
+        assert_eq!(status, StatusCode::OK, "{store}: {reply}");
+    }
+}
+
+/// A namespace write declares exactly one namespace.
+#[tokio::test]
+async fn a_document_of_other_than_one_namespace_is_refused() {
+    for (store, app) in stores().await {
+        for document in ["", "namespace: file\nnamespace: folder\n"] {
+            let (status, reply) = write_namespace(&app, document, None).await;
+            assert_eq!(
+                status,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{store}: {document:?}: {reply}"
+            );
+        }
+    }
+}
+
+/// A retire names its namespace in the query and the version it retires
+/// in `If-Match`.
+#[tokio::test]
+async fn a_retire_names_its_namespace_and_version() {
+    for (store, app) in stores().await {
+        let (_, created) = write_namespace(&app, "namespace: file\n", None).await;
+        let tag = common::if_match(&created["zookie"]);
+        let headers = [("if-match", tag.as_str())];
+        for path in [
+            "/namespaces/retire",
+            "/namespaces/retire?namespace=File!",
+            "/namespaces/retire?namespace=file&extra=1",
+            "/namespaces/retire?name=file",
+        ] {
+            let (status, reply) = send(&app, path, "", &headers).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{store}: {path}: {reply}");
+            assert!(reply["request_id"].is_string(), "{store}");
+        }
+        let (status, reply) = send(&app, "/namespaces/retire?namespace=file", "", &[]).await;
+        assert_eq!(
+            status,
+            StatusCode::PRECONDITION_REQUIRED,
+            "{store}: {reply}"
+        );
+        assert!(
+            reply["error"].as_str().unwrap().contains("If-Match"),
+            "{store}"
+        );
+
+        let (status, reply) = read(&app, json!({ "namespace": "file" })).await;
+        assert_eq!(status, StatusCode::OK, "{store}: still there: {reply}");
     }
 }
 
@@ -181,11 +296,8 @@ async fn a_body_of_no_known_shape_is_malformed() {
 #[tokio::test]
 async fn a_version_whose_references_fail_is_refused() {
     for (store, app) in stores().await {
-        let (status, reply) = write(
-            &app,
-            json!({ "create": "namespace: file\n  owner<group#member>\n" }),
-        )
-        .await;
+        let (status, reply) =
+            write_namespace(&app, "namespace: file\n  owner<group#member>\n", None).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{store}: {reply}");
         let error = reply["error"].as_str().unwrap();
         assert!(error.contains("'group#member'"), "{store}: {error}");
@@ -201,7 +313,7 @@ async fn a_version_whose_references_fail_is_refused() {
         wide.push_str(&relation("s", 32..64));
         wide.push_str(&relation("t", 64..96));
         wide.push_str(&relation("u", 96..128));
-        let (status, reply) = write(&app, json!({ "create": wide })).await;
+        let (status, reply) = write_namespace(&app, &wide, None).await;
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{store}: {reply}");
     }
 }

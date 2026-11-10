@@ -1,6 +1,6 @@
-//! The Write service's routes, `POST /facts/write` and
-//! `POST /namespaces/write`. See `sungma-http` for what every route
-//! shares.
+//! The Write service's routes, `POST /facts/write`,
+//! `POST /namespaces/write` and `POST /namespaces/retire`. See
+//! `sungma-http` for what every route shares.
 //!
 //! A fact write takes the write request in `docs/specs/fact-documents.md`:
 //!
@@ -12,31 +12,52 @@
 //!
 //! and gives the zookie of its revision.
 //!
-//! A namespace write is one of:
+//! A namespace write's body is a theory document, in TDL, that declares
+//! the one namespace written, sent as `text/plain; charset=utf-8`:
 //!
-//! ```json
-//! { "create": "namespace: file\n  owner<@identity>\n" }
-//! { "new_version": "namespace: file\n  owner<@identity>\n  viewer: owner\n", "based_on": { "revision": 12 } }
-//! { "retire": "file", "based_on": { "revision": 14 } }
+//! ```text
+//! POST /namespaces/write
+//! Content-Type: text/plain; charset=utf-8
+//! If-Match: "12"
+//!
+//! namespace: file
+//!   owner<@identity>
+//!   viewer: owner
 //! ```
 //!
-//! where `create` and `new_version` hold a theory document, in TDL, that
-//! declares the one namespace written, and gives the zookie of its
-//! revision. `based_on` is the zookie of the
-//! version the write follows. A write that doesn't follow the latest
-//! version is refused with the zookie of the latest version as `latest`,
-//! `null` when there's none, so the caller can read it and try again.
+//! Without `If-Match` it creates the namespace; with it, it writes a new
+//! version based on the version whose revision `If-Match` names, a strong
+//! entity tag holding the revision of that version's zookie. A retire
+//! names the namespace in its query and the version it retires in
+//! `If-Match`, and has no body:
+//!
+//! ```text
+//! POST /namespaces/retire?namespace=file
+//! If-Match: "14"
+//! ```
+//!
+//! Each gives the zookie of its revision. A write that doesn't follow the
+//! latest version is refused with the zookie of the latest version as
+//! `latest`, `null` when there's none, so the caller can read it and try
+//! again.
 //!
 //! Beyond the statuses every route shares:
 //!
-//! - 409: a namespace write whose `based_on` isn't the latest version.
+//! - 400: a namespace write whose body isn't UTF-8, or an `If-Match` that
+//!   isn't one revision as a strong entity tag.
+//! - 409: a namespace write or retire that doesn't follow the latest
+//!   version.
 //! - 413: a fact write past what one write holds, a namespace write whose
 //!   body is past [`MAX_NAMESPACE_BODY_BYTES`], or a namespace version
 //!   naming more namespaces than one write checks.
+//! - 415: a namespace write not sent as `text/plain; charset=utf-8`.
 //! - 422: a refused write. A refused namespace document is 422 whatever
 //!   its problems, names included, so it lists them all in one reply, and
-//!   so is a version naming a relation another namespace doesn't declare,
-//!   or a fact whose subject its relation's constraints don't admit.
+//!   so is a document that doesn't declare exactly one namespace, a
+//!   version naming a relation another namespace doesn't declare, a fact
+//!   whose subject its relation's constraints don't admit, or a retire of
+//!   a namespace with no version.
+//! - 428: a retire without `If-Match`.
 //! - 502: the store or the clock failed.
 //! - 500: one of Sungma's limits, such as running out of ids.
 
@@ -44,14 +65,21 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, State, rejection::JsonRejection},
-    http::{HeaderMap, StatusCode},
+    body::Bytes,
+    extract::{
+        DefaultBodyLimit, Query, State,
+        rejection::{BytesRejection, JsonRejection, QueryRejection},
+    },
+    http::{HeaderMap, StatusCode, header::IF_MATCH},
     response::{IntoResponse, Response},
     routing::post,
 };
 use serde::{Deserialize, Serialize};
-use sungma::{name::NamespaceName, revision::Revision};
-use sungma_http::{Refused, Requests, Zookie, accept, failure};
+use sungma::{
+    name::{NamespaceName, RelationName},
+    revision::Revision,
+};
+use sungma_http::{Refused, Requests, Zookie, accept, failure, header, named};
 use sungma_lang::{
     fact::WriteRequest,
     tdl::{self, Refusal},
@@ -98,6 +126,7 @@ where
             "/namespaces/write",
             post(namespaces::<I, W>).layer(DefaultBodyLimit::max(MAX_NAMESPACE_BODY_BYTES)),
         )
+        .route("/namespaces/retire", post(retire::<I, W>))
         .with_state(state)
 }
 
@@ -144,36 +173,106 @@ where
     }
 }
 
+/// A namespace write as the caller names it.
+type Named = NamespaceWrite<RelationName, NamespaceName>;
+
+/// The media type of a namespace write's body, the TDL text of one
+/// namespace.
+pub const TDL_MEDIA_TYPE: &str = "text/plain; charset=utf-8";
+
+/// Whether the content type is `text/plain`, with no parameter but an
+/// optional `charset=utf-8`, case aside.
+fn is_tdl(headers: &HeaderMap) -> bool {
+    let Some(value) = header(headers, "content-type") else {
+        return false;
+    };
+    let mut parts = value.split(';').map(str::trim);
+    let essence = parts.next().unwrap_or_default();
+    essence.eq_ignore_ascii_case("text/plain")
+        && parts.all(|parameter| {
+            parameter.split_once('=').is_some_and(|(name, value)| {
+                let value = value.trim();
+                let value = value
+                    .strip_prefix('"')
+                    .and_then(|value| value.strip_suffix('"'))
+                    .unwrap_or(value);
+                name.trim().eq_ignore_ascii_case("charset") && value.eq_ignore_ascii_case("utf-8")
+            })
+        })
+}
+
+/// The revision `If-Match` names, `None` without the header. Its value is
+/// one strong entity tag holding a revision, such as `"12"`.
+fn if_match(headers: &HeaderMap) -> Result<Option<Revision>, Refused> {
+    let mut values = headers.get_all(IF_MATCH).iter();
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+    let malformed = || {
+        Refused::malformed("If-Match must be one revision as a strong entity tag, such as \"12\"")
+    };
+    if values.next().is_some() {
+        return Err(malformed());
+    }
+    let revision = value
+        .to_str()
+        .ok()
+        .and_then(|value| value.trim().strip_prefix('"')?.strip_suffix('"'))
+        .filter(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|digits| digits.parse().ok())
+        .ok_or_else(malformed)?;
+    Ok(Some(Revision(revision)))
+}
+
+/// The namespace a write names, and the write: a create without
+/// `If-Match`, a new version based on the revision it names with one.
+fn namespace_write(headers: &HeaderMap, body: &Bytes) -> Result<(NamespaceName, Named), Refused> {
+    if !is_tdl(headers) {
+        return Err(Refused(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            format!("a namespace write is sent as {TDL_MEDIA_TYPE}"),
+        ));
+    }
+    let based_on = if_match(headers)?;
+    let text = std::str::from_utf8(body).map_err(Refused::malformed)?;
+    let document = tdl::parse_one(text).map_err(|errors| {
+        Refused(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Refusal(errors).to_string(),
+        )
+    })?;
+    let write = match based_on {
+        None => NamespaceWrite::Create(document.relations),
+        Some(based_on) => NamespaceWrite::NewVersion {
+            based_on,
+            namespace: document.relations,
+        },
+    };
+    Ok((document.namespace, write))
+}
+
+/// The query `POST /namespaces/retire` takes.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct NamespacesBody {
-    create: Option<String>,
-    new_version: Option<String>,
-    retire: Option<String>,
-    based_on: Option<Zookie>,
+struct RetireQuery {
+    #[serde(deserialize_with = "named")]
+    namespace: NamespaceName,
 }
 
-/// A write as the body names it, its document not yet parsed.
-enum Write {
-    Create(String),
-    NewVersion(String, Revision),
-    Retire(NamespaceName, Revision),
-}
-
-impl NamespacesBody {
-    fn into_write(self) -> Result<Write, String> {
-        match (self.create, self.new_version, self.retire, self.based_on) {
-            (Some(document), None, None, None) => Ok(Write::Create(document)),
-            (None, Some(document), None, Some(based_on)) => {
-                Ok(Write::NewVersion(document, based_on.into()))
-            }
-            (None, None, Some(name), Some(based_on)) => Ok(Write::Retire(
-                name.parse().map_err(|error| format!("{error}"))?,
-                based_on.into(),
-            )),
-            _ => Err("expected create, new_version with based_on, or retire with based_on".into()),
-        }
-    }
+/// The namespace a retire names, and the write that retires the version
+/// `If-Match` names.
+fn retire_write(
+    headers: &HeaderMap,
+    query: Result<Query<RetireQuery>, QueryRejection>,
+) -> Result<(NamespaceName, Named), Refused> {
+    let Query(query) = query.map_err(|rejection| Refused::malformed(rejection.body_text()))?;
+    let based_on = if_match(headers)?.ok_or_else(|| {
+        Refused(
+            StatusCode::PRECONDITION_REQUIRED,
+            "a retire names the version it retires in If-Match".into(),
+        )
+    })?;
+    Ok((query.namespace, NamespaceWrite::Retire { based_on }))
 }
 
 #[derive(Serialize)]
@@ -186,47 +285,50 @@ struct Conflict {
 async fn namespaces<I, W>(
     State(state): State<Arc<AppState<I, W>>>,
     headers: HeaderMap,
-    body: Result<Json<NamespacesBody>, JsonRejection>,
+    body: Result<Bytes, BytesRejection>,
 ) -> Response
 where
     I: Interner + Sync,
     W: NamespaceWriter + Sync,
 {
     let request_id = state.requests.id(&headers);
-    let write = match accept(body).and_then(|body| body.into_write().map_err(Refused::malformed)) {
-        Ok(write) => write,
-        Err(refused) => return refused.reply(&request_id),
-    };
-    let parsed = |document: String| {
-        tdl::parse_one(&document).map_err(|errors| {
-            Refused(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Refusal(errors).to_string(),
-            )
-        })
-    };
-    let (name, write) = match write {
-        Write::Retire(name, based_on) => (name, NamespaceWrite::Retire { based_on }),
-        Write::Create(document) => match parsed(document) {
-            Ok(document) => (
-                document.namespace,
-                NamespaceWrite::Create(document.relations),
-            ),
-            Err(refused) => return refused.reply(&request_id),
-        },
-        Write::NewVersion(document, based_on) => match parsed(document) {
-            Ok(document) => (
-                document.namespace,
-                NamespaceWrite::NewVersion {
-                    based_on,
-                    namespace: document.relations,
-                },
-            ),
-            Err(refused) => return refused.reply(&request_id),
-        },
-    };
+    let write = body
+        .map_err(|rejection| Refused(rejection.status(), rejection.body_text()))
+        .and_then(|body| namespace_write(&headers, &body));
+    match write {
+        Ok((name, write)) => write_namespace(&state, request_id, &name, write).await,
+        Err(refused) => refused.reply(&request_id),
+    }
+}
+
+async fn retire<I, W>(
+    State(state): State<Arc<AppState<I, W>>>,
+    headers: HeaderMap,
+    query: Result<Query<RetireQuery>, QueryRejection>,
+) -> Response
+where
+    I: Interner + Sync,
+    W: NamespaceWriter + Sync,
+{
+    let request_id = state.requests.id(&headers);
+    match retire_write(&headers, query) {
+        Ok((name, write)) => write_namespace(&state, request_id, &name, write).await,
+        Err(refused) => refused.reply(&request_id),
+    }
+}
+
+async fn write_namespace<I, W>(
+    state: &AppState<I, W>,
+    request_id: String,
+    name: &NamespaceName,
+    write: Named,
+) -> Response
+where
+    I: Interner + Sync,
+    W: NamespaceWriter + Sync,
+{
     let service = NamespaceWriteService::new(&state.interner, &state.writer);
-    match service.write(&name, write).await {
+    match service.write(name, write).await {
         Ok(revision) => Json(Written {
             request_id,
             zookie: revision.into(),

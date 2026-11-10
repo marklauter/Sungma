@@ -5,7 +5,7 @@ mod common;
 use axum::{Router, http::StatusCode};
 use serde_json::{Value, json};
 
-use common::{post, post_raw, stores};
+use common::{post, post_raw, retire_namespace, stores, write_namespace};
 
 /// `file` with an owner, a parent folder and viewers; `folder` with
 /// viewers; `group` with members. Gives the zookie of the last version.
@@ -16,7 +16,7 @@ async fn declare(app: &Router) -> Value {
         "namespace: folder\n  viewer<@identity>\n",
         "namespace: file\n  owner<@identity>\n  parent<folder>\n  viewer<@identity, group#member>: this | owner\n",
     ] {
-        let (status, reply) = post(app, "/namespaces/write", json!({ "create": document })).await;
+        let (status, reply) = write_namespace(app, document, None).await;
         assert_eq!(status, StatusCode::OK, "{reply}");
         zookie = reply["zookie"].clone();
     }
@@ -107,10 +107,10 @@ async fn a_read_naming_what_no_namespace_declares_finds_nothing() {
 #[tokio::test]
 async fn a_read_counts_only_facts_their_namespace_declares() {
     for (store, app) in stores().await {
-        let (_, created) = post(
+        let (_, created) = write_namespace(
             &app,
-            "/namespaces/write",
-            json!({ "create": "namespace: file\n  owner<@identity>\n  banned<@identity>\n" }),
+            "namespace: file\n  owner<@identity>\n  banned<@identity>\n",
+            None,
         )
         .await;
         let banned = |identity: &str| {
@@ -119,20 +119,19 @@ async fn a_read_counts_only_facts_their_namespace_declares() {
         };
         let set = json!({ "namespace": "file", "resource": "readme", "relation": "banned" });
         write(&app, json!({ "add": [banned("bob")] })).await;
-        let (_, dropped) = post(
+        let (_, dropped) = write_namespace(
             &app,
-            "/namespaces/write",
-            json!({ "new_version": "namespace: file\n  owner<@identity>\n", "based_on": created["zookie"] }),
+            "namespace: file\n  owner<@identity>\n",
+            Some(&created["zookie"]),
         )
         .await;
         let (_, reply) = read(&app, set.clone()).await;
         assert_eq!(reply["facts"], json!([]), "{store}: dropped");
 
-        post(
+        write_namespace(
             &app,
-            "/namespaces/write",
-            json!({ "new_version": "namespace: file\n  owner<@identity>\n  banned<@identity>\n",
-                    "based_on": dropped["zookie"] }),
+            "namespace: file\n  owner<@identity>\n  banned<@identity>\n",
+            Some(&dropped["zookie"]),
         )
         .await;
         let mut point = set.clone();
@@ -156,12 +155,7 @@ async fn a_read_after_a_namespace_is_retired_finds_nothing() {
         let declared = declare(&app).await;
         write(&app, json!({ "add": [owner("alice")] })).await;
         let (_, reply) = post(&app, "/namespaces/read", json!({ "namespace": "file" })).await;
-        let (status, _) = post(
-            &app,
-            "/namespaces/write",
-            json!({ "retire": "file", "based_on": reply["version"] }),
-        )
-        .await;
+        let (status, _) = retire_namespace(&app, "file", &reply["version"]).await;
         assert_eq!(status, StatusCode::OK, "{store}");
         let (_, reply) = read(&app, owners()).await;
         assert_eq!(reply["facts"], json!([]), "{store}");

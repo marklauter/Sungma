@@ -1,11 +1,12 @@
-//! What Sungma's HTTP services share. Each is JSON over HTTP, on axum:
-//! every route is a `POST` taking and giving JSON, and every reply carries
-//! `request_id`, the request's `x-request-id` header or, without one, a
-//! number the service gives it.
+//! What Sungma's HTTP services share. Each runs on axum: every route is a
+//! `POST` giving JSON, and takes JSON unless its own docs say otherwise.
+//! Every reply carries `request_id`, the request's `x-request-id` header
+//! or, without one, a number the service gives it.
 //!
 //! Every error reply is JSON, `{"request_id": .., "error": ..}`. A body
 //! that isn't well formed, or a name that breaks the grammar, is 400; a
-//! body past the size limit is 413; a body that isn't sent as JSON is 415.
+//! body past the size limit is 413; a body not sent as the media type the
+//! route takes is 415.
 
 use std::{
     str::FromStr,

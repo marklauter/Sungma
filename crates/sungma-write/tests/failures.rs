@@ -20,7 +20,7 @@ use sungma_table::{
 };
 use sungma_write::http::{AppState, MAX_NAMESPACE_BODY_BYTES, router};
 
-use common::post;
+use common::{send, write_namespace};
 
 /// A store that is down.
 #[derive(Clone, Copy)]
@@ -84,32 +84,59 @@ fn readme(identity: &str) -> Value {
             "subject": { "identity": identity } })
 }
 
-/// Every route, with a body it would otherwise take.
-fn requests() -> Vec<(&'static str, Value)> {
-    let zookie = json!({ "revision": 1 });
+/// A request to a route: its path, body and headers.
+struct Sent {
+    path: &'static str,
+    body: String,
+    headers: Vec<(&'static str, &'static str)>,
+}
+
+impl Sent {
+    fn json(path: &'static str, body: Value) -> Self {
+        let headers = vec![("content-type", "application/json")];
+        let body = body.to_string();
+        Self {
+            path,
+            body,
+            headers,
+        }
+    }
+
+    fn tdl(document: &str, headers: &[(&'static str, &'static str)]) -> Self {
+        let mut all = vec![("content-type", "text/plain; charset=utf-8")];
+        all.extend_from_slice(headers);
+        Self {
+            path: "/namespaces/write",
+            body: document.to_owned(),
+            headers: all,
+        }
+    }
+}
+
+/// Every route, with a request it would otherwise take.
+fn requests() -> Vec<Sent> {
     vec![
-        ("/facts/write", json!({ "add": [readme("alice")] })),
-        ("/facts/write", json!({ "retire": [readme("alice")] })),
-        (
-            "/namespaces/write",
-            json!({ "create": "namespace: file\n  owner<@identity>\n" }),
+        Sent::json("/facts/write", json!({ "add": [readme("alice")] })),
+        Sent::json("/facts/write", json!({ "retire": [readme("alice")] })),
+        Sent::tdl("namespace: file\n  owner<@identity>\n", &[]),
+        Sent::tdl(
+            "namespace: file\n  owner<@identity>\n",
+            &[("if-match", "\"1\"")],
         ),
-        (
-            "/namespaces/write",
-            json!({ "new_version": "namespace: file\n  owner<@identity>\n", "based_on": zookie }),
-        ),
-        (
-            "/namespaces/write",
-            json!({ "retire": "file", "based_on": zookie }),
-        ),
+        Sent {
+            path: "/namespaces/retire?namespace=file",
+            body: String::new(),
+            headers: vec![("if-match", "\"1\"")],
+        },
     ]
 }
 
 #[tokio::test]
 async fn a_store_that_fails_is_a_bad_gateway() {
     let app = app(Down, Down, DevClock::default());
-    for (path, body) in requests() {
-        let (status, reply) = post(&app, path, body.clone()).await;
+    for sent in requests() {
+        let (status, reply) = send(&app, sent.path, &sent.body, &sent.headers).await;
+        let (path, body) = (sent.path, &sent.body);
         assert_eq!(status, StatusCode::BAD_GATEWAY, "{path}: {body}");
         assert!(
             reply["error"].as_str().unwrap().contains("down"),
@@ -135,12 +162,8 @@ fn faulted() -> Router {
 #[tokio::test]
 async fn a_clock_that_fails_is_a_bad_gateway() {
     let app = faulted();
-    let (status, reply) = post(
-        &app,
-        "/namespaces/write",
-        json!({ "create": "namespace: file\n  owner<@identity>\n" }),
-    )
-    .await;
+    let (status, reply) =
+        write_namespace(&app, "namespace: file\n  owner<@identity>\n", None).await;
     assert_eq!(status, StatusCode::BAD_GATEWAY, "{reply}");
     assert!(
         reply["error"].as_str().unwrap().contains("drifted"),
@@ -166,18 +189,16 @@ async fn a_body_past_the_limit_is_too_large() {
 async fn a_namespace_body_holds_to_the_edges_limit() {
     let app = memory();
     let body = |bytes: usize| {
-        let (head, tail) = (r#"{"create":"namespace: file "#, r#""}"#);
-        let pad = " ".repeat(bytes - head.len() - tail.len());
-        format!("{head}{pad}{tail}")
+        let head = "namespace: file\n";
+        let pad = " ".repeat(bytes - head.len());
+        format!("{head}{pad}")
     };
     let at = body(MAX_NAMESPACE_BODY_BYTES);
     assert_eq!(at.len(), MAX_NAMESPACE_BODY_BYTES);
-    let (status, reply) =
-        common::post_raw(&app, "/namespaces/write", &at, Some("application/json")).await;
+    let (status, reply) = write_namespace(&app, &at, None).await;
     assert_eq!(status, StatusCode::OK, "{reply}");
     let past = body(MAX_NAMESPACE_BODY_BYTES + 1);
-    let (status, _) =
-        common::post_raw(&app, "/namespaces/write", &past, Some("application/json")).await;
+    let (status, _) = write_namespace(&app, &past, None).await;
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
 }
 
@@ -189,11 +210,7 @@ async fn a_pool_with_no_ids_left_is_a_fault() {
     let relations = Key::new((3u8, 1u8), 0u8);
     sequence.next(&relations, u64::MAX).await.unwrap();
     let app = app(Arc::new(MemoryTable::new()), sequence, DevClock::default());
-    let (status, reply) = post(
-        &app,
-        "/namespaces/write",
-        json!({ "create": "namespace: file\n  owner<@identity>\n" }),
-    )
-    .await;
+    let (status, reply) =
+        write_namespace(&app, "namespace: file\n  owner<@identity>\n", None).await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{reply}");
 }

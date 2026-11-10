@@ -5,7 +5,7 @@ mod common;
 use axum::{Router, http::StatusCode};
 use serde_json::{Value, json};
 
-use common::{post, post_raw, stores};
+use common::{post, post_raw, stores, write_namespace};
 
 /// `file` with an owner, a parent folder and viewers; `folder` with
 /// viewers; `group` with members. Gives the zookie of the last version.
@@ -16,7 +16,7 @@ async fn declare(app: &Router) -> Value {
         "namespace: folder\n  viewer<@identity>\n",
         "namespace: file\n  owner<@identity>\n  parent<folder>\n  viewer<@identity, group#member>: this | owner\n",
     ] {
-        let (status, reply) = post(app, "/namespaces/write", json!({ "create": document })).await;
+        let (status, reply) = write_namespace(app, document, None).await;
         assert_eq!(status, StatusCode::OK, "{reply}");
         zookie = reply["zookie"].clone();
     }

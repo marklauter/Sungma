@@ -1,15 +1,12 @@
-//! `POST /namespaces/write` and `POST /namespaces/read`, on each store.
+//! `POST /namespaces/write`, `POST /namespaces/retire` and
+//! `POST /namespaces/read`, on each store.
 
 mod common;
 
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
-use common::{post, post_raw, stores};
-
-async fn write(app: &axum::Router, body: Value) -> (StatusCode, Value) {
-    post(app, "/namespaces/write", body).await
-}
+use common::{post, post_raw, retire_namespace, stores, write_namespace};
 
 async fn read(app: &axum::Router, body: Value) -> (StatusCode, Value) {
     post(app, "/namespaces/read", body).await
@@ -18,9 +15,10 @@ async fn read(app: &axum::Router, body: Value) -> (StatusCode, Value) {
 #[tokio::test]
 async fn a_namespace_is_created_read_versioned_and_retired() {
     for (store, app) in stores().await {
-        let (status, created) = write(
+        let (status, created) = write_namespace(
             &app,
-            json!({ "create": "namespace: file\n  viewer: owner\n  owner<@identity>\n" }),
+            "namespace: file\n  viewer: owner\n  owner<@identity>\n",
+            None,
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{store}: {created}");
@@ -36,11 +34,8 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
         assert_eq!(reply["version"], v1, "{store}");
         assert_eq!(reply["zookie"], v1, "{store}");
 
-        let (status, versioned) = write(
-            &app,
-            json!({ "new_version": "namespace: file\n  owner<@identity>\n", "based_on": v1 }),
-        )
-        .await;
+        let (status, versioned) =
+            write_namespace(&app, "namespace: file\n  owner<@identity>\n", Some(&v1)).await;
         assert_eq!(status, StatusCode::OK, "{store}: {versioned}");
         let v2 = versioned["zookie"].clone();
         assert!(v2["revision"].as_u64() > v1["revision"].as_u64(), "{store}");
@@ -56,7 +51,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
         let (_, reply) = read(&app, json!({ "namespace": "file", "zookie": v1 })).await;
         assert_eq!(reply["version"], v2, "{store}");
 
-        let (status, retired) = write(&app, json!({ "retire": "file", "based_on": v2 })).await;
+        let (status, retired) = retire_namespace(&app, "file", &v2).await;
         assert_eq!(status, StatusCode::OK, "{store}: {retired}");
 
         let (status, reply) = read(&app, json!({ "namespace": "file" })).await;
@@ -64,7 +59,7 @@ async fn a_namespace_is_created_read_versioned_and_retired() {
         assert!(reply["error"].as_str().unwrap().contains("file"), "{store}");
 
         // Created again after its retirement.
-        let (status, reply) = write(&app, json!({ "create": "namespace: file\n" })).await;
+        let (status, reply) = write_namespace(&app, "namespace: file\n", None).await;
         assert_eq!(status, StatusCode::OK, "{store}: {reply}");
     }
 }
@@ -99,7 +94,7 @@ async fn a_read_of_a_namespace_never_written_finds_no_version() {
 #[tokio::test]
 async fn a_zookie_ahead_of_the_latest_revision_is_refused() {
     for (store, app) in stores().await {
-        let (_, created) = write(&app, json!({ "create": "namespace: file\n" })).await;
+        let (_, created) = write_namespace(&app, "namespace: file\n", None).await;
         let ahead = created["zookie"]["revision"].as_u64().unwrap() + 1;
         let (status, reply) = read(
             &app,

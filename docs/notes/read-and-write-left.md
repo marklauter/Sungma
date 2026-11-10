@@ -12,7 +12,7 @@ cites:
 
 ## Where it stands
 
-The API checks access and reads and writes facts and namespaces, as JSON over HTTP, on DynamoDB or in memory. What follows is open.
+The API checks access and reads and writes facts and namespaces over HTTP, on DynamoDB or in memory. Facts are written as JSON and namespaces as TDL. What follows is open.
 
 ## Open
 
