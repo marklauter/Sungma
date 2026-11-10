@@ -1458,6 +1458,19 @@ namespace: a
 }
 
 #[test]
+fn a_dotted_namespace_naming_an_undotted_one_prints_before_every_theory() {
+    let documents = parsed(
+        "namespace: drive.folder\n  parent<file>\n  owner<drive.user, file#owner>\nnamespace: a\ntheory: drive\nnamespace: user\n",
+    );
+    let expected = "namespace: a\n\nnamespace: drive.folder\n  owner<drive.user, file#owner>\n  parent<file>\n\ntheory: drive\n\nnamespace: user\n";
+    let printed = print(&documents).expect("printable namespaces");
+    assert_eq!(printed, expected);
+    let again = parsed(&printed);
+    assert!(same(&documents, &again), "{printed}");
+    assert_eq!(print(&again), Ok(printed));
+}
+
+#[test]
 fn constraints_print_sorted_with_the_prefix_taken_off() {
     let documents = parsed(
         "theory: t\nnamespace: a\n  r<t.t.b, @identity, c#s, t.identity, u.v.w>: this | s\n  s<@identity>\n",
@@ -1572,23 +1585,6 @@ fn the_printer_refuses_what_no_document_declares() {
             "{constraint:?}"
         );
     }
-    // A namespace in a theory can't name one without a dot, which the
-    // theory would prefix.
-    let undotted = with(
-        "x.a",
-        vec![(
-            "r",
-            This,
-            vec![Constraint::Resource(namespace_name("folder"))],
-        )],
-    );
-    assert_eq!(
-        print(&[undotted]),
-        Err(PrintError::Undotted {
-            namespace: "x.a".to_owned(),
-            constraint: "folder".to_owned(),
-        })
-    );
 }
 
 /// A namespace `t` printed as exactly `bytes`: relations sorted by name,
@@ -1847,16 +1843,11 @@ proptest! {
         text in r"(theory|namespace|this|@identity|[:<>.,()|&!/ \n#rt0-9])*",
     ) {
         if let Ok(documents) = tdl::parse(&text) {
-            match print(&documents) {
-                Ok(printed) => {
-                    let again = parsed(&printed);
-                    prop_assert!(same(&again, &documents));
-                    prop_assert_eq!(print(&again), Ok(printed));
-                }
-                // Only a namespace in a theory naming one without a dot
-                // can't be printed.
-                Err(error) => prop_assert!(matches!(error, PrintError::Undotted { .. }), "{}", error),
-            }
+            let printed = print(&documents)
+                .map_err(|error| TestCaseError::fail(error.to_string()))?;
+            let again = parsed(&printed);
+            prop_assert!(same(&again, &documents));
+            prop_assert_eq!(print(&again), Ok(printed));
         }
     }
 }

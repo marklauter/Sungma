@@ -27,15 +27,6 @@ pub enum PrintError {
     NoNamespace,
     #[error("namespace '{0}' is given twice")]
     DuplicateNamespace(String),
-    /// A namespace in a theory with a constraint naming a namespace without
-    /// a dot, which its theory's name would prefix.
-    #[error(
-        "namespace '{namespace}' is in a theory, so it can't name namespace '{constraint}', which has no dot"
-    )]
-    Undotted {
-        namespace: String,
-        constraint: String,
-    },
     #[error("the printed document would be more than {MAX_DOCUMENT_BYTES} bytes")]
     TooLarge,
 }
@@ -50,7 +41,10 @@ pub enum PrintError {
 ///
 /// A namespace whose name still has a dot once its theory's name is taken
 /// off is written in full, as is every dotted constraint outside its
-/// namespace's theory, since a dotted name is never prefixed.
+/// namespace's theory, since a dotted name is never prefixed. A dotted
+/// namespace whose constraints name a namespace without a dot, which a
+/// theory's name would prefix, is written with those without a theory, in
+/// full, its constraints too.
 pub fn print(namespaces: &[(&NamespaceName, &Named)]) -> Result<String, PrintError> {
     if namespaces.is_empty() {
         return Err(PrintError::NoNamespace);
@@ -58,7 +52,15 @@ pub fn print(namespaces: &[(&NamespaceName, &Named)]) -> Result<String, PrintErr
     let mut sorted = Vec::new();
     for &(name, relations) in namespaces {
         namespace_name(name.as_str())?;
-        let theory = name.as_str().split_once('.').map(|(theory, _)| theory);
+        let undotted = relations
+            .namespaces()
+            .iter()
+            .any(|namespace| !namespace.as_str().contains('.'));
+        let theory = name
+            .as_str()
+            .split_once('.')
+            .filter(|_| !undotted)
+            .map(|(theory, _)| theory);
         sorted.push((theory, name, relations));
     }
     // `None` sorts first, so namespaces without a dot come before every
@@ -85,7 +87,7 @@ pub fn print(namespaces: &[(&NamespaceName, &Named)]) -> Result<String, PrintErr
             text.push('\n');
         }
         let _ = writeln!(text, "namespace: {}", written(name.as_str(), theory));
-        namespace(&mut text, name, theory, relations)?;
+        namespace(&mut text, theory, relations)?;
         // Checked as it grows, so a caller's oversized input is refused
         // without being printed whole.
         if text.len() > MAX_DOCUMENT_BYTES {
@@ -107,20 +109,15 @@ fn written<'a>(name: &'a str, theory: Option<&str>) -> &'a str {
     }
 }
 
-/// Writes the relations of namespace `name`, in `theory`, sorted by name.
-fn namespace(
-    text: &mut String,
-    name: &NamespaceName,
-    theory: Option<&str>,
-    relations: &Named,
-) -> Result<(), PrintError> {
+/// Writes the relations of a namespace in `theory`, sorted by name.
+fn namespace(text: &mut String, theory: Option<&str>, relations: &Named) -> Result<(), PrintError> {
     let mut sorted: Vec<_> = relations.relations().collect();
     sorted.sort_by_key(|(relation, _)| *relation);
     for (relation, rewrite) in sorted {
         let mut constraints = relations
             .constraints(relation)
             .iter()
-            .map(|constraint| written_constraint(constraint, name, theory))
+            .map(|constraint| written_constraint(constraint, theory))
             .collect::<Result<Vec<_>, _>>()?;
         constraints.sort();
         let relation = printable(relation)?;
@@ -139,24 +136,15 @@ fn namespace(
     Ok(())
 }
 
-/// A constraint of namespace `namespace` as written under `theory`, the
-/// prefix taken off a namespace in that theory. One without a dot can't
-/// be written under a theory.
+/// A constraint as written under `theory`, the prefix taken off a
+/// namespace in that theory.
 fn written_constraint(
     constraint: &NamedConstraint,
-    namespace: &NamespaceName,
     theory: Option<&str>,
 ) -> Result<String, PrintError> {
-    let named = |name: &NamespaceName| {
+    let named = |name: &NamespaceName| -> Result<String, PrintError> {
         namespace_name(name.as_str())?;
-        let name = name.as_str();
-        if theory.is_some() && !name.contains('.') {
-            return Err(PrintError::Undotted {
-                namespace: quote(namespace.as_str()),
-                constraint: quote(name),
-            });
-        }
-        Ok(written(name, theory).to_owned())
+        Ok(written(name.as_str(), theory).to_owned())
     };
     Ok(match constraint {
         Constraint::Identity => IDENTITY.to_owned(),
