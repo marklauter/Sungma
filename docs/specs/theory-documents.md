@@ -33,17 +33,19 @@ In logic, a theory is a set of sentences closed under deduction. Here the senten
 > [!NOTE]
 > The grammars are ISO EBNF: `=` defines, `;` ends a rule, `,` joins in sequence, `|` separates alternatives, `( )` groups, `[ ]` is optional, `{ }` repeats, `-` excludes, and `? ?` describes in words.
 
-A relation reads like a signature: its name, a colon and its constraints, then `=` and its rewrite. With no `=`, it reads `this`. With no constraints, it's computed.
+A relation reads like a generic type: its name, its constraints in angle brackets, then a colon and its rewrite. `this` is implicit when no rewrite is provided. With no constraints, it's computed. A relation needs constraints, a rewrite, or both.
 
 ```ebnf
-document    = [ 'theory', ':', theory name ], namespace, { namespace } ;
-namespace   = 'namespace', ':', namespace name, { relation } ;
-relation    = relation name, ( ':', constraints, [ '=', rewrite ] | '=', rewrite ) ;
-constraints = constraint, { ',', constraint } ;
+document       = namespace, { namespace }, { theory section }
+               | theory section, { theory section } ;
+theory section = 'theory', ':', theory name, namespace, { namespace } ;
+namespace      = 'namespace', ':', namespace name, { relation } ;
+relation       = relation name, ( '<', constraints, '>', [ ':', rewrite ] | ':', rewrite ) ;
+constraints    = constraint, { ',', constraint } ;
 ```
 
 - Whitespace, line breaks included, only separates tokens. A rewrite may start on the next line and wrap.
-- A rewrite runs until the next signature (a name followed by `:` or `=`), the next `namespace:`, or the end. A constraint list ends where no comma follows.
+- A rewrite runs until the next relation (a name followed by `<` or `:`), the next `namespace:`, or the end.
 - `//` starts a comment to the end of the line. Comments aren't kept.
 - There are no quotes, escapes, numbers or booleans, so every token is a name, a keyword or punctuation.
 - A document is UTF-8 without a byte-order mark. Outside comments, a character the grammar doesn't use is refused.
@@ -65,10 +67,10 @@ A namespace name is one or more names joined by dots, such as `file` or `drive.f
 namespace name = name, { '.', name } ;
 ```
 
-A theory name has the same form as a namespace name. It's the optional prefix at the top of a document, as [The theory name](#the-theory-name) says.
+A theory name is one name: the first segment of its namespaces' names. A `theory:` line opens a section of the document, as [The theory name](#the-theory-name) says.
 
 ```ebnf
-theory name = namespace name ;
+theory name = name ;
 ```
 
 A relation name is one name. `this` is the rewrite keyword, and `namespace` and `theory` are TDL keywords, so no relation may be named any of them, in any casing: `This | owner` is refused. `namespace` and `theory` may still name namespaces and appear in constraints.
@@ -78,16 +80,14 @@ relation name = name - ? 'this', 'namespace' or 'theory', in any casing ? ;
 ```
 
 Names are parsed at the edge.
-<!-- /final -->
-
 
 ## Constraints
 
 A relation's constraints limit which subjects can be bound to its subjectsets through a fact.
 
-Only a relation whose rewrite reads `this` has facts, so only those relations declare constraints, at least one each. A relation whose rewrite doesn't read `this` is computed, and declares none.
+A relation whose rewrite reads `this` takes facts, and declares at least one constraint. A computed relation's rewrite doesn't read `this`, so it takes no facts and declares no constraints.
 
-A constraint is one of:
+There are three kinds of constraint, one for each kind of subject:
 
 - `@identity`: an identity, such as a person's or a client's `sub`. A name can't start with `@`, so `@identity` can never be a namespace;
 - a namespace, such as `folder`: a resource member of it, such as `folder:root#...`;
@@ -97,7 +97,7 @@ A constraint is one of:
 constraint = '@identity' | namespace name, [ '#', relation name ] ;
 ```
 
-A relation lists each constraint once, in any order. No constraint admits every subject, so every link can be checked.
+Constraints can be listed in any order, but no constraint may appear twice.
 
 ## Rewrite grammar
 
@@ -120,80 +120,76 @@ factset             = relation name ;
 
 ## Meaning
 
-A rewrite defines the closure of each subjectset formed from its relation:
+A relation's rewrite defines the closure of each of its subjectsets. Each kind of term adds subjects:
 
-- `this` is the subjects the facts bind to the subjectset.
-- A computed subjectset is the closure of the named relation on the same resource.
-- A fact-to-subjectset takes the subjects the factset binds on the same resource. For each that is a resource member or a subjectset, it takes the closure of the followed relation on that subject's resource. Identities are skipped.
+- `this` adds the subjects bound by the subjectset's own facts.
+- A computed subjectset adds the closure of the named relation on the same resource.
+- A fact-to-subjectset reads the facts on the same resource under the factset relation. For each subject they bind, it adds the closure of the followed relation on that subject's resource. An identity has no resource, so it adds nothing.
+
+Each term produces a set of subjects, and the operators combine those sets: `|` is union, `&` is intersection, and `!` is difference. Evaluating a rewrite applies the set of facts to the relation's definition, and the result is the closure.
 
 A subjectset whose relation isn't declared has an empty closure.
 
 ## The theory name
 
-The theory name is a prefix. The parser adds it and a dot to each unqualified namespace name, in headers and in constraints. Under `theory: sungma`, `root` means `sungma.root`, and `group#member` means `sungma.group#member`.
+The theory name is a namespace prefix. The parser prepends it and a dot to each unqualified namespace name in headers and constraints, to form a fully qualified name. Under `theory: sungma`, `namespace: root` means `namespace: sungma.root`, and `group#member` means `sungma.group#member`.
 
-- A name that already starts with the theory name and a dot gets no prefix: under `theory: t`, `a` and `t.a` both name `t.a`.
+- An unqualified name has no dot. A dotted name is already fully qualified, so under `theory: sungma`, `drive.file` stays `drive.file`.
+- A `theory:` line applies until the next `theory:` line or the end of the document, so one document can hold several theories.
+- Namespaces before the first `theory:` line get no prefix.
 - Rewrites name only relations, so the prefix never touches them.
-- Without a theory name, a document holds full names.
 
-Once parsed, the prefix is gone. Everything sees full names, and nothing records which document a namespace came from. A theory shows only in the shared first segment of its namespaces' names.
+Once parsed, every namespace name is fully qualified.
 
 ## Sample
 
 [Sungma's own authorization](sungma-authorization.md#the-model):
 
-```c
+```tdl
 theory: sungma
 
 // The deployment, one resource: sungma.root:sungma
 namespace: root
-  owner: @identity
-  admin: @identity = this | owner
-  namespace_creator: @identity, group#member = this | admin
-  group_creator: @identity, group#member = this | admin
-  operator: @identity, group#member = this | admin
-  auditor: @identity, group#member = this | admin
-  reader: @identity, group#member = this | auditor
-  writer: @identity, group#member = this | admin
-  fact_writer: @identity, group#member = this | admin
-  fact_reader: @identity, group#member
-    = this | fact_writer | auditor
-  directory_reader: @identity, group#member
-    = this | auditor
-  access_reader = auditor
+  owner<@identity>
+  admin<@identity>: this | owner
+  namespace_creator<@identity, group#member>: this | admin
+  group_creator<@identity, group#member>: this | admin
+  operator<@identity, group#member>: this | admin
+  auditor<@identity, group#member>: this | admin
+  reader<@identity, group#member>: this | auditor
+  writer<@identity, group#member>: this | admin
+  fact_writer<@identity, group#member>: this | admin
+  fact_reader<@identity, group#member>: this | fact_writer | auditor
+  directory_reader<@identity, group#member>: this | auditor
+  access_reader: auditor
 
 namespace: namespace
-  parent: root
-  protected: root
-  owner: @identity, group#member = this | (parent, owner) ! (protected, owner)
-  admin: @identity, group#member = this | owner | (parent, admin) ! (protected, admin)
-  writer: @identity, group#member = this | admin | (parent, writer) ! (protected, writer)
-  reader: @identity, group#member = this | writer | fact_reader | auditor | (parent, reader)
-  fact_writer: @identity, group#member
-    = this | admin | (parent, fact_writer) ! (protected, fact_writer)
-  fact_reader: @identity, group#member
-    = this | fact_writer | auditor | (parent, fact_reader)
-  auditor: @identity, group#member
-    = this | (parent, auditor)
-  access_reader = admin | auditor
+  parent<root>
+  protected<root>
+  owner<@identity, group#member>: this | (parent, owner) ! (protected, owner)
+  admin<@identity, group#member>: this | owner | (parent, admin) ! (protected, admin)
+  writer<@identity, group#member>: this | admin | (parent, writer) ! (protected, writer)
+  reader<@identity, group#member>: this | writer | fact_reader | auditor | (parent, reader)
+  fact_writer<@identity, group#member>: this | admin | (parent, fact_writer) ! (protected, fact_writer)
+  fact_reader<@identity, group#member>: this | fact_writer | auditor | (parent, fact_reader)
+  auditor<@identity, group#member>: this | (parent, auditor)
+  access_reader: admin | auditor
 
 namespace: relation
-  parent: namespace
-  writer: @identity, group#member = this | (parent, fact_writer)
-  reader: @identity, group#member = this | writer | (parent, fact_reader)
+  parent<namespace>
+  writer<@identity, group#member>: this | (parent, fact_writer)
+  reader<@identity, group#member>: this | writer | (parent, fact_reader)
 
 namespace: group
-  parent: root
-  owner: @identity, group#member = this | (parent, admin)
-  member: @identity, group#member
-  access_reader = owner | (parent, auditor)
+  parent<root>
+  owner<@identity, group#member>: this | (parent, admin)
+  member<@identity, group#member>
+  access_reader: owner | (parent, auditor)
 ```
 
 ## Checks
 
-A document is refused, and declares nothing, if it breaks a rule of TDL, declares one namespace twice by its full name, or holds a namespace that fails a check.
-
-A namespace is refused if:
+A document is rejected if it breaks a rule of TDL, declares one namespace twice by its full name, or holds a namespace that fails a check:
 
 - a relation is declared twice;
 - a rewrite nests deeper than the depth limit (a leaf or a run of `|` or `&` is one level, and each `!` adds one), or groups parentheses deeper than it;
@@ -201,7 +197,7 @@ A namespace is refused if:
 - a rewrite reads `this` without constraints, or a relation declares constraints without reading `this`;
 - a constraint `namespace#relation` names a relation that namespace doesn't declare;
 - a fact-to-subjectset's followed relation isn't declared by every namespace in its factset's constraints: with `parent: folder`, `(parent, viewer)` needs `folder` to declare `viewer`;
-- computed subjectsets form a cycle, such as `viewer = editor` with `editor = viewer`. A cycle through a fact-to-subjectset, such as folders in folders, is allowed.
+- computed subjectsets form a cycle, such as `viewer: editor` with `editor: viewer`. A cycle through a fact-to-subjectset, such as folders in folders, is allowed.
 
 A reference to another namespace in the same document is checked against the document, in either order. A reference outside it is checked against that namespace's latest version.
 
@@ -214,9 +210,7 @@ A reference to another namespace in the same document is checked against the doc
 
 ## Errors
 
-Errors come in document order, up to 50, then one that says there were more. Each carries a line, a column counted in characters from 1, and the namespace's full name. A whole-namespace problem, such as a cycle, is reported at its relation.
-
-One mistake reports one error:
+Errors are reported as they are encountered in the document, up to 50, then one that says there were more. Each carries a line, a column counted in characters from 1, and the namespace's full name. A whole-namespace problem, such as a cycle, is reported at its relation:
 
 - A syntax error stops its rewrite, and parsing goes on with the next relation.
 - A relation whose rewrite fails is still declared, so references to it don't dangle.
@@ -230,21 +224,22 @@ An error quotes at most 64 bytes, cut at a character boundary and marked as cut,
 
 The printer writes namespaces as a document that parses back as equal namespaces, and the same namespaces always print as the same text.
 
-- Given a theory name, it writes it once at the top and takes it off each namespace name. Every namespace must start with it. A name that would still start with it once taken off prints in full.
-- Namespaces print sorted by full name, then relations by name, then constraints, each comparing bytes. An author's order, comments and line breaks are lost.
-- Each relation is one line, indented two spaces, with one space after each colon and comma and around `=` and each operator. `= this` is left out.
+- Namespaces without a dot print first, sorted, with no `theory:` line above them. They must come first, or they would read as part of the theory above them.
+- Then each theory prints, sorted by name: its `theory:` line, then its namespaces, sorted, with the prefix taken off. Every dotted namespace prints under its theory.
+- Within a namespace, relations print sorted by name, and constraints sorted, each comparing bytes. An author's order, comments and line breaks are lost.
+- Each relation is one line, indented two spaces, with one space after each colon and comma and around each operator. `: this` is left out, since `this` is implicit when no rewrite is provided.
 - Parentheses print only where the grammar needs them: a union inside a union, a union or intersection inside an intersection or on the left of `!`, and any operator on the right of `!`.
 - Lines end in `\n`.
 - It refuses, with a `PrintError`, what the parser would refuse: a document past 2 MiB, an invalid or reserved name, and a union or intersection with one operand.
 
 Author, Sungma's UI, shows and edits namespaces in TDL.
+<!-- /final -->
 
 ## Open
 
-1. **Names outside the theory.** Under a theory name, every unqualified name gets the prefix, so a document can't name `file` or `drive.file` outside it.
-2. **Writing a document.** One write per namespace, in turn, or one atomic write, which would come with [write ids](../notes/writes-commit-through-a-write-id.md).
-3. **Namespaces that reference each other.** Neither can be written first while a reference to a missing namespace is refused.
-4. **The theory name.** Whether it must be one segment, and whether only Sungma releases write in the `sungma` theory.
+1. **Writing a document.** One write per namespace, in turn, or one atomic write, which would come with [write ids](../notes/writes-commit-through-a-write-id.md).
+2. **Namespaces that reference each other.** Neither can be written first while a reference to a missing namespace is refused.
+3. **The `sungma` theory.** Whether only Sungma releases write in it.
 
 ## Required tests
 
@@ -254,17 +249,18 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 
 1. The sample parses to Sungma's four namespaces under their full names.
 2. An empty document, or one of only comments, is refused. A namespace without relations parses.
-3. No `=` reads `this`; no constraints is computed.
-4. A rewrite on its signature's line, on the next line, or wrapped parses the same.
+3. `this` is implicit when no rewrite is provided, and a relation with no constraints is computed.
+4. A rewrite on its relation's line, on the next line, or wrapped parses the same.
 5. A comment at the end of any line changes nothing. A `#` outside a constraint is refused.
 6. A quote, an escape, a number, a NUL, a byte-order mark, or any other character outside the grammar is refused.
-7. A rewrite left open, or a missing namespace name, doesn't swallow the next signature or `namespace:`.
+7. A rewrite left open, or a missing namespace name, doesn't swallow the next relation or `namespace:`.
 8. A document with one bad namespace declares none.
 
 #### Theory name
 
-1. The prefix applies to headers and namespace constraints, never to `@identity` or rewrites.
-2. A name already starting with the theory name keeps it, and a document without one holds full names.
+1. The prefix applies to undotted names in headers and namespace constraints, never to dotted names, `@identity` or rewrites.
+2. Each `theory:` line applies until the next one, and namespaces before the first get no prefix.
+3. A theory name with a dot is refused.
 
 #### Names
 
@@ -299,13 +295,13 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 
 #### Printing
 
-1. The canonical form, `= this` left out, sorted constraints, and only needed parentheses.
-2. The theory name is written once and taken off; a namespace without it is refused; a name that would still start with it prints in full.
+1. The canonical form, `: this` left out, sorted constraints, and only needed parentheses.
+2. Undotted namespaces print first with no `theory:` line, then each theory once, sorted, with its namespaces under it and the prefix taken off.
 3. Each refusal, and a document of exactly 2 MiB is written.
 
 #### Round trips
 
-1. Generated namespaces, with and without a theory name, reaching both depth limits, with wide runs and every kind of constraint: print, parse and print again gives equal namespaces and the same text.
+1. Generated namespaces, with no theory, one, and several, reaching both depth limits, with wide runs and every kind of constraint: print, parse and print again gives equal namespaces and the same text.
 2. Rewrite text generated from the grammar's tokens parses, prints and parses to an equal tree.
 
 #### Hostile input
