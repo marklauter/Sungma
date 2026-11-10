@@ -330,6 +330,15 @@ impl<'a> Reader<'_, 'a> {
             place,
             kind,
         });
+        // Errors can arrive out of document order, as a namespace's checks
+        // follow its syntax errors, so past the cap the earliest are kept,
+        // one more than the cap to show it was passed. A stable sort keeps
+        // errors at the same place in the order found, so those kept are
+        // the first that [`finish`](Self::finish) would sort them all into.
+        if self.errors.len() > 2 * MAX_ERRORS {
+            self.errors.sort_by_key(|error| error.place);
+            self.errors.truncate(MAX_ERRORS + 1);
+        }
     }
 
     /// Skips past a problem to where the next relation or header starts.
