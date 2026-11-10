@@ -469,6 +469,9 @@ fn comments_change_nothing() {
             "editor<..group#member, @identity>: this | owner",
             "editor<@identity, // who\n    ..group#member>: this // first\n    | owner",
         );
+    // At the end of a `theory:` line.
+    let commented = commented.replacen("theory: drive\n", "theory: drive // the drive\n", 1);
+    assert!(commented.starts_with("theory: drive // the drive\n"));
     let commented = parsed(&format!("// top\n{commented}// last"));
     assert!(same(&plain, &commented));
 }
@@ -897,6 +900,26 @@ fn names_follow_the_grammar() {
     assert_eq!(error.place, place(1, 14));
     let error = only("namespace: t\n  r<a #b>\n");
     assert_eq!(error.kind.to_string(), "expected ',' or '>', found '#'");
+}
+
+#[test]
+fn checked_names_refuse_a_colon() {
+    for name in ["a:b", ":a", "a:"] {
+        assert!(name.parse::<NamespaceName>().is_err(), "{name:?}");
+        assert!(name.parse::<RelationName>().is_err(), "{name:?}");
+        assert!(tdl::constraint(name).is_err(), "{name:?}");
+        assert!(tdl::constraint(&format!("t#{name}")).is_err(), "{name:?}");
+    }
+    for text in [
+        "namespace: a:b\n",
+        "theory: t\nnamespace: a:b\n",
+        "theory: a:b\nnamespace: c\n",
+        "namespace: t\n  r:s<@identity>\n",
+        "namespace: t\n  r<a:b>\n",
+        "namespace: t\n  r<t#a:b>\n",
+    ] {
+        refused(text);
+    }
 }
 
 #[test]
@@ -1793,7 +1816,7 @@ fn the_printer_refuses_what_no_document_declares() {
         vec![("r", exclusion(This, Union(nonempty![This])), identities())],
     );
     assert_eq!(print(&[excluded]), Err(PrintError::OneOperand));
-    for namespace in ["a..b", "t.", "1t", "a b"] {
+    for namespace in ["a..b", "t.", "1t", "a b", "a:b"] {
         let bad = with(namespace, vec![]);
         assert!(
             matches!(print(&[bad]), Err(PrintError::Name(_))),
@@ -1804,6 +1827,7 @@ fn the_printer_refuses_what_no_document_declares() {
         ("this", This),
         ("This", This),
         ("r-s", This),
+        ("r:s", This),
         ("r", exclusion(This, Computed("THIS"))),
         (
             "r",
@@ -1839,6 +1863,8 @@ fn the_printer_refuses_what_no_document_declares() {
         Constraint::Subjectset(namespace_name("t"), relation("this")),
         Constraint::Subjectset(namespace_name("t"), relation("a b")),
         Constraint::Subjectset(namespace_name("a.1"), relation("member")),
+        Constraint::Resource(namespace_name("a:b")),
+        Constraint::Subjectset(namespace_name("t"), relation("a:b")),
     ] {
         let bad = with("t", vec![("r", This, vec![constraint.clone()])]);
         assert!(
@@ -2071,7 +2097,8 @@ fn small(at: usize) -> BoxedStrategy<Rewrite<RelationName>> {
 
 /// A spine of operators down to one leaf, up to the depth limit, with a
 /// leaf beside each step. A run of unions in unions, or anything on the
-/// right of `!`, nests parentheses up to the grouping limit.
+/// right of `!`, nests parentheses as deep as the printer writes them: two
+/// short of the depth limit, as only an operator below the root is grouped.
 fn deep(at: usize) -> BoxedStrategy<Rewrite<RelationName>> {
     let levels = prop_oneof![Just(DEFAULT_REWRITE_DEPTH - 1), 0..DEFAULT_REWRITE_DEPTH];
     (leaf(at), levels)
@@ -2282,6 +2309,7 @@ fn the_longest_chain_of_computed_subjectsets_is_accepted() {
     }
     relations.push_str(&format!("  r{count}<@identity>\n"));
     assert!(relations.len() <= LARGE);
+    assert!(count >= 100_000, "{count} computed subjectsets");
     let start = Instant::now();
     let document = one(&relations);
     assert!(start.elapsed() < BOUND);
