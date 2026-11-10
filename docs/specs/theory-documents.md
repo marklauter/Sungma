@@ -211,12 +211,23 @@ The parser checks each namespace on its own. It doesn't check references to othe
 
 ## References
 
+The parser works like a compiler. It compiles each namespace on its own and trusts that references to other namespaces resolve, the way a compiler trusts a function declared in another file. Resolving them is the next step's job, like linking.
+
 Alongside each namespace, the parser returns its references to other namespaces, like an object file's list of external symbols:
 
 - each namespace a constraint names, with the relation when the constraint names one, such as `group` and `group#member`;
 - each namespace a fact-to-subjectset follows into, with the followed relation: in `file`, with `parent<folder>`, `(parent, viewer)` refers to `folder#viewer`.
 
 Each reference appears once, by its fully qualified name. A reference to the namespace itself isn't listed, since the parser has already checked it.
+
+## Warnings
+
+A warning marks something legal that probably isn't what the author meant. It never refuses a document. The parser returns its warnings alongside the namespaces, each with a line, a column and the namespace's full name, and the caller decides what to do with them. The parser warns when:
+
+- a constraint written without `..` names a namespace that isn't in the document, such as `<grop#member>` under a theory with a `group` namespace. A constraint written with `..` says on purpose that the namespace is outside, so it doesn't warn;
+- `..` appears outside any theory, where it changes nothing;
+- a theory opens more than one section;
+- a namespace declares no relations.
 
 ## Limits
 
@@ -256,7 +267,7 @@ Author, Sungma's UI, shows and edits namespaces in TDL.
 ## Open
 
 1. **Writing a document.** One write per namespace, in turn, or one atomic write, which would come with [write ids](../notes/writes-commit-through-a-write-id.md).
-2. **Namespaces that reference each other.** Neither can be written first while a reference to a missing namespace is refused.
+2. **Namespaces that reference each other.** Neither can be written first while a reference to a missing namespace is refused. Resolving a whole document's references together, the way a linker resolves files that call each other, would allow it.
 3. **The `sungma` theory.** Whether only Sungma releases write in it.
 
 ## Required tests
@@ -299,6 +310,15 @@ The parser takes untrusted input in a security system, so its tests cover hostil
 2. An empty constraint list, an entry twice, or a malformed entry is refused.
 3. A dangling target within a namespace is reported once per relation that names it, and a set of relations that reach each other is one cycle error with the full path.
 4. A constraint or fact-to-subjectset that names another namespace isn't checked, whether that namespace is in the document or not.
+
+#### References
+
+1. Each namespace's references list every other namespace its constraints name, with the relation where one is named, and every followed relation of its fact-to-subjectsets, each once, by full name, and never the namespace itself.
+
+#### Warnings
+
+1. Each warning in [Warnings](#warnings) is given where it should be, with its line, column and namespace, and the document is still accepted.
+2. A constraint written with `..` doesn't warn, whether or not its namespace is in the document.
 
 #### Errors
 
