@@ -209,6 +209,15 @@ A document is rejected if it breaks a rule of TDL, declares one namespace twice 
 
 The parser checks each namespace on its own. It doesn't check references to other namespaces, in the document or outside it.
 
+## References
+
+Alongside each namespace, the parser returns its references to other namespaces, like an object file's list of external symbols:
+
+- each namespace a constraint names, with the relation when the constraint names one, such as `group` and `group#member`;
+- each namespace a fact-to-subjectset follows into, with the followed relation: in `file`, with `parent<folder>`, `(parent, viewer)` refers to `folder#viewer`.
+
+Each reference appears once, by its fully qualified name. A reference to the namespace itself isn't listed, since the parser has already checked it.
+
 ## Limits
 
 - Rewrite depth: a parser setting, 100 by default.
