@@ -45,6 +45,9 @@ constraints    = constraint, { ',', constraint } ;
 ```
 
 - Whitespace, line breaks included, only separates tokens. A rewrite may start on the next line and wrap.
+- Whitespace is a space, a tab, a CR or an LF, and a line ends in LF or CRLF. Any other whitespace, such as a form feed or a non-breaking space, is refused.
+- Names and constraints have no spaces inside them, so `a # b`, `a .b`, `.. b` and `@ identity` are refused.
+- The headers `namespace:` and `theory:` are written in lowercase.
 - A rewrite runs until the next relation (a name followed by `<` or `:`), the next `namespace:` or `theory:`, or the end.
 - `//` starts a comment to the end of the line. Comments aren't kept.
 - There are no quotes, escapes, numbers or booleans, so every token is a name, a keyword or punctuation.
@@ -97,7 +100,7 @@ There are three kinds of constraint, one for each kind of subject:
 constraint = '@identity' | [ '..' ], namespace name, [ '#', relation name ] ;
 ```
 
-Constraints can be listed in any order, but no constraint may appear twice.
+Constraints can be listed in any order, but no constraint may appear twice. Two constraints are the same when their fully qualified names are, so under `theory: drive`, `<file, ..drive.file>` lists one twice.
 
 ## Rewrite grammar
 
@@ -138,10 +141,10 @@ Evaluating a rewrite applies the set of facts to the relation's definition, and 
 
 The theory name is a namespace prefix. The parser prepends it and a dot to each namespace name in headers and constraints, to form a fully qualified name. Under `theory: sungma`, `namespace: root` means `namespace: sungma.root`, and `group#member` means `sungma.group#member`.
 
-- A `theory:` line applies to every namespace name below it until the next `theory:` line or the end of the document, so one document can hold several theories. Under `theory: x`, `y.z` means `x.y.z`.
+- A `theory:` line applies to every namespace name below it until the next `theory:` line or the end of the document, so one document can hold several theories. Under `theory: x`, `y.z` means `x.y.z`. A theory may open more than one section.
 - Namespaces before the first `theory:` line get no prefix. Their names are written fully qualified.
 - Dotted and undotted always describe the fully qualified name: `a` is undotted, and `c.d` is dotted, even when it's written `d` under `theory: c`.
-- In a constraint, `..` before a namespace name means the name is a fully qualified namespace outside the theory. Under `theory: drive`, `<file>` means `drive.file`, `<..file>` means `file`, and `<..io.file#owner>` means `io.file#owner`.
+- In a constraint, `..` before a namespace name means the name is a fully qualified namespace outside the theory. Under `theory: drive`, `<file>` means `drive.file`, `<..file>` means `file`, and `<..io.file#owner>` means `io.file#owner`. Outside any theory, `..` changes nothing.
 - Rewrites name only relations, so the prefix never touches them.
 
 Once parsed, every namespace name is fully qualified.
@@ -209,28 +212,29 @@ A reference to another namespace in the same document is checked against the doc
 ## Limits
 
 - Rewrite depth: a parser setting, 100 by default.
+- Errors: a parser setting, 50 by default.
 - A full namespace name: 256 bytes.
 - A relation name: 64 bytes.
 
 ## Errors
 
-Errors are reported as they are encountered in the document, up to 50, then one that says there were more. Each carries a line, a column counted in characters from 1, and the namespace's full name, where it has them. A whole-namespace problem, such as a cycle, is reported at its relation:
+Errors are reported as they are encountered in the document, up to the error limit, then one that says there were more. Each carries a line, a column counted in characters from 1, and the namespace's full name, where it has them. A whole-namespace problem, such as a cycle, is reported at its relation:
 
 - A syntax error stops its rewrite, and parsing goes on with the next relation.
 - A relation whose rewrite fails is still declared, so references to it don't dangle.
-- Relations that reach each other report one cycle, at the first one the check meets, with a path back to it.
+- Relations that reach each other report one cycle, at the first one the check meets, with a path back to it. The path lists at most 8 relations, then how many more.
 
 Each error is a variant of one enum, carrying the names involved. There are no string codes.
 
-An error quotes at most 64 bytes, cut at a character boundary and marked as cut, with control and invisible or reordering characters, such as U+202E and U+200B, escaped. Errors reach logs, terminals and UIs, where a raw quote could forge a line, recolor a terminal or reorder text.
+An error quotes at most 64 bytes, cut at a character boundary and marked as cut, with control and invisible or reordering characters, such as U+202E and U+200B, escaped. Errors reach logs, terminals and UIs, where a raw quote could forge a line, recolor a terminal or reorder text. Names in errors are quoted too, so a long namespace name can appear cut.
 
 ## Printing
 
 The printer writes namespaces as a document that parses back as equal namespaces, and the same namespaces always print as the same text.
 
 - Undotted namespaces print first, sorted, with no `theory:` line above them. They must come first, or they would read as part of the theory above them.
-- Then each theory prints, sorted by name: its `theory:` line, then its namespaces, sorted, with the theory name and its dot taken off. `x.y.z` prints as `y.z` under `theory: x`. A constraint that names a namespace outside its own namespace's theory prints with `..`.
-- Within a namespace, relations print sorted by name, and constraints sorted, each comparing bytes. An author's order, comments and line breaks are lost.
+- Then each theory prints once, sorted by name: its `theory:` line, then its namespaces, sorted, with the theory name and its dot taken off. `x.y.z` prints as `y.z` under `theory: x`. A constraint that names a namespace outside its own namespace's theory prints with `..`.
+- Within a namespace, relations print sorted by name, and constraints sorted as written, each comparing bytes. An author's order, comments and line breaks are lost.
 - Each relation is one line, indented two spaces, with one space after each colon and comma and around each operator. `: this` is left out, since `this` is implicit when no rewrite is provided.
 - Parentheses print only where the grammar needs them: a union inside a union, a union or intersection inside an intersection or on the left of `!`, and any operator on the right of `!`.
 - A blank line follows each `theory:` line, and one comes before each `theory:` line after the start of the document. Namespaces follow one another with no blank line between them.
